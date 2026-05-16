@@ -10,6 +10,7 @@ from rate_limiter import limiter
 from routers.health import router as health_router
 from routers.auth_router import router as auth_router
 from routers.admin_router import router as admin_router
+from routers.partners_router import router as partners_router
 
 load_dotenv()
 
@@ -33,6 +34,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(partners_router)
 
 
 @app.get("/")
