@@ -182,6 +182,29 @@ class PartnerDocument(Base):
     reviewed_at = Column(DateTime, nullable=True)
 
 
+class InvitedRole(str, enum.Enum):
+    partner_user = "partner_user"
+    partner_admin = "partner_admin"
+
+
+class PartnerUserInvite(Base):
+    __tablename__ = "partner_user_invites"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=False,
+    )
+    email = Column(String, nullable=False)
+    invited_role = Column(SAEnum(InvitedRole, name="invited_role"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    invited_by_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class PartnerProfile(Base):
     __tablename__ = "partner_profiles"
 

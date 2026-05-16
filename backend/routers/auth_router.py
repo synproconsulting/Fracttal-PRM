@@ -7,7 +7,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, PasswordResetToken
+from models import User, PasswordResetToken, PartnerUserInvite
+from audit import log_audit_event
 from auth import (
     hash_password,
     verify_password,
@@ -40,6 +41,12 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     token: str
     new_password: str
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    password: str
+    full_name: str | None = None
 
 
 @router.post("/register", status_code=201)
@@ -134,6 +141,68 @@ def password_reset_request(req: PasswordResetRequest, db: Session = Depends(get_
         reset_url = f"{frontend_url}/reset-password?token={reset_token.token}"
         print(f"[PASSWORD RESET] Reset URL for {req.email}: {reset_url}")
     return {"message": "If that email exists, a reset link has been sent"}
+
+
+@router.post("/accept-invite", status_code=201)
+def accept_invite(req: AcceptInviteRequest, request: Request, db: Session = Depends(get_db)):
+    invite = db.query(PartnerUserInvite).filter(PartnerUserInvite.token == req.token).first()
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite.accepted_at is not None:
+        raise HTTPException(status_code=400, detail="Invite already accepted")
+    if invite.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Invite has expired")
+
+    existing = db.query(User).filter(User.email == invite.email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = User(
+        id=uuid.uuid4(),
+        email=invite.email,
+        hashed_password=hash_password(req.password),
+        full_name=req.full_name,
+        role=invite.invited_role.value,
+        partner_org_id=invite.partner_org_id,
+        is_active=True,
+        is_verified=True,
+    )
+    db.add(user)
+    invite.accepted_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+
+    log_audit_event(
+        db=db,
+        actor=user,
+        action="partner_user.invite_accepted",
+        object_type="user",
+        object_id=user.id,
+        after={
+            "email": user.email,
+            "role": user.role,
+            "partner_org_id": str(user.partner_org_id),
+            "invite_id": str(invite.id),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    token = create_access_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role,
+    })
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": JWT_EXPIRY_HOURS * 3600,
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "partner_org_id": str(user.partner_org_id),
+        },
+    }
 
 
 @router.post("/password-reset/confirm")
