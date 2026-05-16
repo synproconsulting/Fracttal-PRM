@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    Numeric,
     String,
     Text,
     Uuid,
@@ -232,6 +233,50 @@ class PartnerActivity(Base):
     assigned_to_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
     is_internal = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CommissionType(str, enum.Enum):
+    autonomous_sell = "autonomous_sell"
+    indirect_sell = "indirect_sell"
+    direct_sell = "direct_sell"
+    co_sell_shared = "co_sell_shared"
+
+
+class CommissionYear(str, enum.Enum):
+    year_1 = "year_1"
+    year_2_plus = "year_2_plus"
+
+
+class PartnerCategoryConfig(Base):
+    __tablename__ = "partner_category_configs"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    deal_reg_sla_hours = Column(Integer, nullable=False)
+    max_discount_pct = Column(Numeric, nullable=False)
+    monthly_fee_usd = Column(Numeric, default=200, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CommissionStructure(Base):
+    __tablename__ = "commission_structures"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_category_code = Column(
+        String,
+        ForeignKey("partner_category_configs.code"),
+        nullable=False,
+    )
+    commission_type = Column(SAEnum(CommissionType, name="commission_type"), nullable=False)
+    year = Column(SAEnum(CommissionYear, name="commission_year"), nullable=False)
+    commission_pct = Column(Numeric, nullable=False)
+    subpartner_uplift_pct = Column(Numeric, default=10.0, nullable=False)
+    applies_to_upsell = Column(Boolean, default=True, nullable=False)
+    notes = Column(Text, nullable=True)
 
 
 class PartnerProfile(Base):
