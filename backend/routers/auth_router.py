@@ -1,11 +1,13 @@
+import os
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User
+from models import User, PasswordResetToken
 from auth import (
     hash_password,
     verify_password,
@@ -29,6 +31,15 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
 
 
 @router.post("/register", status_code=201)
@@ -105,3 +116,41 @@ def me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "full_name": current_user.full_name,
     }
+
+
+@router.post("/password-reset/request")
+def password_reset_request(req: PasswordResetRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
+    if user:
+        reset_token = PasswordResetToken(
+            id=uuid.uuid4(),
+            token=str(uuid.uuid4()),
+            user_id=user.id,
+            expires_at=datetime.utcnow() + timedelta(hours=1),
+        )
+        db.add(reset_token)
+        db.commit()
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        reset_url = f"{frontend_url}/reset-password?token={reset_token.token}"
+        print(f"[PASSWORD RESET] Reset URL for {req.email}: {reset_url}")
+    return {"message": "If that email exists, a reset link has been sent"}
+
+
+@router.post("/password-reset/confirm")
+def password_reset_confirm(req: PasswordResetConfirm, db: Session = Depends(get_db)):
+    token_record = db.query(PasswordResetToken).filter(
+        PasswordResetToken.token == req.token
+    ).first()
+    if not token_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    if token_record.used:
+        raise HTTPException(status_code=400, detail="Reset token has already been used")
+    if token_record.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+    user = db.query(User).filter(User.id == token_record.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    user.hashed_password = hash_password(req.new_password)
+    token_record.used = True
+    db.commit()
+    return {"message": "Password reset successfully"}
