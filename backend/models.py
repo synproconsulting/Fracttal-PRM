@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Uuid
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Uuid, JSON
 from database import Base
 
 
@@ -28,3 +28,19 @@ class PasswordResetToken(Base):
     expires_at = Column(DateTime, nullable=False)
     used = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    actor_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    actor_role = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    object_type = Column(String, nullable=False)
+    object_id = Column(Uuid(as_uuid=True), nullable=True)
+    before_state = Column(JSON, nullable=True)
+    after_state = Column(JSON, nullable=True)
+    ip_address = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
