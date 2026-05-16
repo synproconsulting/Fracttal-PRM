@@ -1,5 +1,5 @@
 """
-Permission matrix for Fracttal PRM RBAC system.
+Permission matrix and RBAC enforcement for Fracttal PRM.
 
 Permission strings follow the pattern: {resource}:{action}
 
@@ -10,7 +10,10 @@ Resources: partner_organization, partner_profile, partner_user,
 Actions: create, read_own, read_all, update_own, update_all,
          delete, approve, reject, export
 """
-from roles import UserRole
+from fastapi import Depends, HTTPException, status
+
+from auth import get_current_user
+from roles import UserRole, PARTNER_ROLES
 
 
 PERMISSIONS: dict[str, set[str]] = {
@@ -182,3 +185,59 @@ PERMISSIONS: dict[str, set[str]] = {
 def has_permission(role: str, permission: str) -> bool:
     """Check if a role has a specific permission."""
     return permission in PERMISSIONS.get(role, set())
+
+
+def require_permission(permission: str):
+    """
+    FastAPI dependency factory for RBAC enforcement.
+
+    Usage:
+        @router.get("/resource")
+        def get_resource(current_user = Depends(require_permission("resource:read_all"))):
+            ...
+
+    Returns 403 if the authenticated user's role lacks the permission.
+    """
+    def checker(current_user=Depends(get_current_user)):
+        if not has_permission(current_user.role, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: {permission} required",
+            )
+        return current_user
+    return checker
+
+
+def get_partner_org_filter(current_user) -> dict:
+    """
+    Return SQLAlchemy filter kwargs to enforce tenant isolation.
+
+    For partner-side roles: ``{"partner_org_id": current_user.partner_org_id}``
+    For internal roles:     ``{}`` (no filter; sees all)
+
+    Usage:
+        filters = get_partner_org_filter(current_user)
+        query = db.query(Model).filter_by(**filters)
+    """
+    if UserRole(current_user.role) in PARTNER_ROLES:
+        return {"partner_org_id": current_user.partner_org_id}
+    return {}
+
+
+def apply_tenant_filter(query, current_user, model):
+    """
+    Apply tenant isolation to a SQLAlchemy query.
+
+    Args:
+        query: active SQLAlchemy query
+        current_user: authenticated user from ``get_current_user``
+        model: SQLAlchemy model being queried (must have ``partner_org_id`` column)
+
+    Usage:
+        query = db.query(PartnerOrganization)
+        query = apply_tenant_filter(query, current_user, PartnerOrganization)
+        results = query.all()
+    """
+    if UserRole(current_user.role) in PARTNER_ROLES:
+        return query.filter(model.partner_org_id == current_user.partner_org_id)
+    return query
