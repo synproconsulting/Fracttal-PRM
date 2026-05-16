@@ -2,7 +2,7 @@
 
 > Deep implementation reference for Claude Code sessions.
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
-> Last updated: Sprint 4 (Core data model delivered — partner organizations, profiles, documents, users/invites, activities, category + commission config)
+> Last updated: Sprint 5 (Partner registration & onboarding — public application form, draft token pattern, internal review queue)
 
 ---
 
@@ -37,6 +37,11 @@
 | POST | `/auth/password-reset/confirm` | None | Body: `{token, new_password}`. 200 on success; 400 if token invalid/used/expired. |
 | POST | `/auth/accept-invite` | None | Body: `{token, password, full_name?}` → 201 `{access_token, token_type, expires_in, user}`. Creates a User with role + partner_org_id from the invite, marks invite accepted_at. 404 unknown token, 400 expired/already-accepted, 409 email-already-registered. |
 | GET | `/config/partner-categories` | None | List active partner categories — public so the registration form can render. Returns `{items: [{id, code, display_name, deal_reg_sla_hours, max_discount_pct, monthly_fee_usd, ...}]}`. |
+| POST | `/applications` | None | Create a draft partner application. Body: `{applicant_email, ...optional fields}` → 201 `{id, draft_token}`. The returned token (30-day expiry) authorises subsequent PATCH/submit/document calls — see AD-11. |
+| GET | `/applications/{id}` | None / Bearer | Fetch an application. Public via `?draft_token=...`; internal users with `partner_application:read_all` (channel_manager+) can access any application via JWT. 401 if neither is supplied. |
+| PATCH | `/applications/{id}` | None | Public draft update via `?draft_token=...`. Only writable fields are mutated. 400 if status ∉ {draft, info_required}; 403 on bad token; 410 if draft expired. |
+| POST | `/applications/{id}/submit` | None | Public submit via `?draft_token=...`. Validates `legal_name`, `applicant_email`, `applicant_name`, `terms_accepted`. On success sets `status=submitted` and `submitted_at=now`. Audit logged as `partner_application.submitted` with `actor=None`. |
+| POST | `/applications/{id}/documents` | None | Public document metadata upload via `?draft_token=...`. Body: `{document_type, document_name, file_path, file_size_bytes?, mime_type?}`. Actual file storage is pending — only metadata is persisted today. |
 
 ### Bearer-Authenticated Endpoints
 
@@ -62,6 +67,7 @@
 | POST | `/config/partner-categories` | `system_config:update_all` (channel_ops_admin, system_admin) | Create a new partner category. |
 | GET | `/config/commission-structures` | internal roles only | List all commission structures across categories. |
 | PATCH | `/config/commission-structures/{id}` | `system_config:update_all` | Update commission_pct / subpartner_uplift_pct / applies_to_upsell / notes. Audit logged. |
+| GET | `/applications` | `partner_application:read_all` (channel_manager, channel_ops_admin, system_admin) | Paginated application list. Query: `status` (comma-separated to filter multiple), `skip`, `limit` (≤200). Returns `{total, skip, limit, items}` ordered by `submitted_at` desc. |
 
 ### JWT Token Spec
 
@@ -77,13 +83,13 @@
 
 ## 2. Database Schema
 
-### Tables (as of Sprint 4)
+### Tables (as of Sprint 5)
 
 | Table | Migration | Purpose |
 |---|---|---|
 | `users` | `001_create_users_table` (+ FK added in `004`) | Authenticated users. Columns: `id` (UUID PK), `email` (unique indexed), `hashed_password`, `full_name`, `is_active`, `is_verified`, `role` (string — validated against `UserRole` enum at auth time), `partner_org_id` (UUID, nullable, FK → partner_organizations.id), `created_at`, `updated_at`. FK constraint `fk_users_partner_org_id` added in migration 004. |
 | `password_reset_tokens` | `002_create_password_reset_tokens` | Single-use password reset tokens. Columns: `id` (UUID PK), `token` (unique indexed), `user_id` (FK → users.id), `expires_at`, `used` (bool), `created_at`. 1-hour expiry enforced in handler. |
-| `audit_log` | `003_create_audit_log` | Append-only audit trail. Columns: `id` (UUID PK), `timestamp` (indexed), `actor_id` (FK → users.id, indexed), `actor_role`, `action` (dot-notation e.g. `partner_profile.update`), `object_type` (indexed), `object_id` (UUID), `before_state` / `after_state` (JSON), `ip_address`, `notes`. Write via `audit.log_audit_event(...)`; read via `GET /admin/audit-log`. |
+| `audit_log` | `003_create_audit_log` (+ `009` makes `actor_id` nullable) | Append-only audit trail. Columns: `id` (UUID PK), `timestamp` (indexed), `actor_id` (FK → users.id, **nullable since 009 for anonymous events**), `actor_role` (`"anonymous"` when actor is None), `action` (dot-notation e.g. `partner_profile.update`), `object_type` (indexed), `object_id` (UUID), `before_state` / `after_state` (JSON), `ip_address`, `notes`. Write via `audit.log_audit_event(...)`; read via `GET /admin/audit-log`. |
 | `partner_organizations` | `004_create_partner_organizations` | Central partner record. Columns: `id` (UUID PK), `legal_name` (not null), `dba_name`, `website`, `hq_address` (JSONB), `phone`, `email`, `program_type` (ENUM distributor/subpartner), `partner_category` (ENUM master/promotor/reseller), `parent_partner_id` (FK self-ref, nullable), `tier` (ENUM registered/silver/gold, nullable), `territory`/`industries`/`authorized_offerings`/`delivery_capabilities` (JSONB), `status` (ENUM applicant/active/suspended/inactive/terminated), `monthly_fee_status` (ENUM current/overdue/waived), `contract_start_date`, `contract_end_date`, `auto_renew` (bool default true), `certification_expiry_date`, `hubspot_company_id`, `created_at`, `updated_at`. |
 | `partner_profiles` | `004_create_partner_organizations` | Onboarding questionnaire. Columns: `id`, `partner_org_id` (FK unique), `year_established`, `employee_count`, `annual_revenue`, `shareholders` (JSONB), `cmms_experience` + `cmms_experience_description`, `other_software_products`, `sales_marketing_strategy`, `technical_support_team` + `technical_support_description`, `implementation_services` + `implementation_description`, `partnership_goals`, `market_growth_plan`, `additional_info`, `profile_completeness_pct` (default 0), `updated_at`. |
 | `partner_documents` | `005_create_partner_documents` | Legal/compliance documents. Columns: `id`, `partner_org_id` (FK), `document_type` (ENUM: id_legal_representative, power_of_attorney, articles_of_incorporation, beneficial_owners_list, fiscal_id, proof_of_fiscal_domicile, bank_certificate, nda, insurance, other), `document_name`, `file_path`, `file_size_bytes`, `mime_type`, `uploaded_by_user_id` (FK users), `uploaded_at`, `expiry_date`, `status` (ENUM pending_review/approved/rejected/expired, default pending_review), `review_notes`, `reviewed_by_user_id` (FK users, nullable), `reviewed_at`. Indexed on `partner_org_id`. |
@@ -91,6 +97,8 @@
 | `partner_activities` | `007_create_partner_activities` | Notes / tasks / calls / meetings / emails / status-change events. Columns: `id`, `partner_org_id` (FK indexed), `activity_type` (ENUM), `title`, `body`, `due_date`, `completed_at`, `created_by_user_id` (FK users), `assigned_to_user_id` (FK users, nullable), `is_internal` (bool, default true), `created_at`. |
 | `partner_category_configs` | `008_create_partner_category_and_commission` | Configurable partner tiers. Columns: `id`, `code` (unique indexed), `display_name`, `description`, `deal_reg_sla_hours`, `max_discount_pct` (numeric), `monthly_fee_usd` (numeric default 200), `is_active`, `created_at`, `updated_at`. **Seeded with 3 rows: master/promotor/reseller** (SLA 48/72/96h, discount cap 40/30/20%). |
 | `commission_structures` | `008_create_partner_category_and_commission` | Commission lookup per (category, type, year). Columns: `id`, `partner_category_code` (FK → partner_category_configs.code), `commission_type` (ENUM autonomous_sell/indirect_sell/direct_sell/co_sell_shared), `year` (ENUM year_1/year_2_plus), `commission_pct` (numeric), `subpartner_uplift_pct` (numeric default 10.0), `applies_to_upsell` (bool default true), `notes`. **Seeded with 24 rows** per Fracttal Distributor Agreement: autonomous_sell Y1=50% Y2+=30%, indirect_sell 30%/30%, direct_sell 10%/10%, co_sell_shared 25%/25%; subpartner uplift +10% applies only to Y1. |
+| `partner_applications` | `009_create_partner_applications` | Public partner-application drafts and submitted applications. Columns: `id` (UUID PK), `status` (ENUM `application_status`: draft/submitted/in_review/info_required/approved/rejected, default draft), `applicant_email` (not null), `applicant_name`, `applicant_phone`, `applicant_title`, `legal_name`, `dba_name`, `website`, `hq_address` (JSONB), `phone`, `requested_categories` / `territory` / `industries` (JSONB arrays), `year_established`, `employee_count`, `annual_revenue`, `shareholders` (JSONB), `other_software_products`, `cmms_experience` (bool) + `cmms_experience_description`, `sales_marketing_strategy`, `technical_support_team` (bool) + `technical_support_description`, `implementation_services` (bool) + `implementation_description`, `partnership_goals`, `market_growth_plan`, `additional_info`, `references` (JSONB array), `terms_accepted` (bool default false) + `terms_accepted_at`, `draft_token` (unique, indexed) + `draft_expires_at` (30-day TTL), `submitted_at`, `reviewer_id` (FK users, nullable — populated in Sprint 6), `review_notes`, `reviewed_at`, `partner_org_id` (FK partner_organizations, nullable — populated on approval), `created_at`, `updated_at`. |
+| `partner_application_documents` | `009_create_partner_applications` | Supporting documents uploaded with an application. Columns: `id` (UUID PK), `application_id` (FK partner_applications, indexed), `document_type` (string — free-form for the public form), `document_name`, `file_path`, `file_size_bytes`, `mime_type`, `uploaded_at`. Only metadata is recorded today — actual file storage backend is pending. |
 
 **Migration strategy:** Alembic with `alembic upgrade head` as Railway pre-deploy command on `fracttal-prm-backend`.
 
@@ -130,7 +138,23 @@ Permission strings follow `{resource}:{action}` — see `permissions.PERMISSIONS
 
 ### Frontend (`frontend/src/`)
 
-> Component tree documented here as React components are built.
+Vite + React 18, with `react-router-dom@^6` for client-side routing (introduced in Sprint 5).
+
+```
+frontend/src/
+├── main.jsx                         # ReactDOM root, wraps <App/> in <BrowserRouter>
+├── App.jsx                          # Top-level <Routes> with /, /register, /register/confirmation, /internal/applications
+├── components/
+│   └── ProtectedRoute.jsx           # JWT auth guard - decodes localStorage 'token', redirects to /login if missing/invalid or role not in allowed list
+└── pages/
+    ├── RegisterPartner.jsx          # Public 10-step partner application form (Sprint 5)
+    ├── RegisterConfirmation.jsx     # Post-submit thank-you page (?ref=<application_id>)
+    └── ApplicationQueue.jsx         # Internal queue for channel_manager+ (table with status filter + search)
+```
+
+**Public registration flow (`RegisterPartner.jsx`).** Steps 1-10 walk through Company → Contact → Business → Reseller Experience → Technical Capabilities → Partnership Goals → References → Additional Info → Documents → Review & Submit. On Step 1 completion the form calls `POST /applications` to mint `{id, draft_token}` which is cached in component state and `localStorage` under `fprm_draft_{id}`. Every field change debounces a `PATCH /applications/{id}?draft_token=...` after 2 seconds. The Save & Continue Later panel surfaces a bookmarkable URL containing the draft token; revisiting that URL pulls the draft back in via `GET /applications/{id}?draft_token=...`. Step 10's Submit button POSTs to `/applications/{id}/submit?draft_token=...`, clears the localStorage cache, and navigates to `/register/confirmation?ref={id}`.
+
+**Internal queue (`ApplicationQueue.jsx`).** Requires JWT with role in {`channel_manager`, `channel_ops_admin`, `system_admin`} (enforced by `ProtectedRoute`). Lists applications via `GET /applications` with optional `?status=` filter; client-side search across company name, applicant name, email. Status badge colours: submitted=blue, in_review=yellow, info_required=orange, approved=green, rejected=red. Row click routes to `/internal/applications/{id}` (review detail page lands Sprint 6).
 
 ---
 
@@ -304,6 +328,18 @@ These are conscious design choices — not defaults or accidents. Understanding 
 **Why:** Jira treats subtasks as fully owned by their parent — sprint and fix-version assignment cascade automatically. Setting them on the subtask returns `HTTP 400 — "Issue is a subtask and subtasks cannot be associated to a sprint"`.
 
 **Consequence:** Subtask JQL queries by sprint still work — Jira surfaces the parent's sprint membership on the subtask. The `fixVersion = X OR sprint = Y` dual-query from AD-4 catches subtasks correctly.
+
+---
+
+### AD-11 · Draft token pattern — per-application secret for unauthenticated access
+
+**Decision:** Public partner-application endpoints authenticate via a per-application `draft_token` query parameter rather than a JWT. The token is minted at `POST /applications` (returned alongside the new application id), stored as a unique column on `partner_applications`, and required on every subsequent `PATCH /applications/{id}`, `POST /applications/{id}/submit`, and `POST /applications/{id}/documents` call. `GET /applications/{id}` accepts either `?draft_token=` (public) or a Bearer JWT with `partner_application:read_all` (internal). The token has a 30-day TTL enforced by `draft_expires_at`; an expired token returns 410.
+
+**Why:** Applicants are external prospects who don't yet have user accounts — we cannot require authentication before a partner record exists, and we don't want to require account creation just to start a draft. A per-application secret threaded through the URL is simple, bookmarkable (so applicants can resume later), and limits blast radius if leaked (it only authorises that one application).
+
+**Consequence:** Routers handling these endpoints must validate the token against the database record on every call — never trust the application id alone. The `audit_log.actor_id` column is now nullable (migration 009) because `partner_application.submitted` events have no authenticated actor; `audit.log_audit_event` records `actor_role="anonymous"` in that case.
+
+**Do not:** Reuse draft tokens for any other resource. Never extend the public surface to mutating endpoints that affect anything outside the single application identified by `{id}`.
 
 ---
 
