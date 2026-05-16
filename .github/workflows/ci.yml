@@ -84,6 +84,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF: ${{ github.ref }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           BRANCH_NAME="${GITHUB_REF#refs/heads/}"
           PR_NUMBER=$(curl -s \
@@ -97,9 +98,24 @@ jobs:
             exit 0
           fi
 
-          echo "Found PR #$PR_NUMBER — merging"
-          curl -s -X PUT \
+          echo "Found PR #$PR_NUMBER — merging at SHA $GITHUB_SHA"
+          # Pass {sha: $GITHUB_SHA} so the merge is refused (409) if the PR head
+          # has advanced beyond the SHA this CI run actually tested.
+          # Resolves FPRM-36 race: ensures we only merge code that passed CI here.
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             -H "Authorization: token $PAT_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
-            -d '{"merge_method": "squash"}'
+            -d "{\"merge_method\": \"squash\", \"sha\": \"$GITHUB_SHA\"}")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "$BODY"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Merged PR #$PR_NUMBER"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "Merge refused (409): PR head has advanced past $GITHUB_SHA. A newer commit will trigger its own CI run."
+            exit 0
+          else
+            echo "Merge failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
