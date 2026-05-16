@@ -300,3 +300,63 @@ Phase 1 closes with **29 endpoints** live across `/auth/*`, `/admin/*`, `/partne
 3. **Document file uploads only store metadata.** Actual file storage (S3 / Railway Volume / similar) is queued for Sprint 5+ when partner onboarding ships.
 4. **Invite acceptance does not send email.** The invite token is currently returned in the API response — production will need an email backend, queued for Sprint 5+.
 5. **Carry-forward:** in-memory token blacklist, reset-email backend, SonarCloud configuration — all still pending from earlier sprints.
+
+---
+
+## Sprint 5 — Partner Registration & Onboarding (Phase 2 kick-off)
+
+**Started:** 2026-05-16
+**Closed:** 2026-05-16 (single-day intensive)
+**Fix Version ID:** `10564`
+**Native Sprint ID:** `537`
+**Phase 2 epic:** FPRM-74 — Partner Registration & Onboarding
+
+### Sprint 5 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-75 | PartnerApplication backend model and API | Done | #35 | Two new tables + six endpoints + draft-token pattern; `audit_log.actor_id` made nullable in same migration. 16 new tests. |
+| FPRM-76 | Registration form: Company and Contact sections | Done | #36 | Multi-step scaffold + `/register` route + Steps 1-2 + draft creation + debounced auto-save + resume via URL token. Added `react-router-dom@^6.22.0`. |
+| FPRM-77 | Registration form: Business and Experience sections | Done | #37 | Steps 3-5; fetches `/config/partner-categories` for checkbox catalog; Yes/No conditional fields for Reseller Experience and Technical Capabilities. |
+| FPRM-78 | Registration form: Goals, References, Documents and Submit | Done | #38 | Steps 6-10 + document upload (PDF/JPG/PNG ≤10MB, metadata-only persistence) + Review & Submit + terms checkbox + `RegisterConfirmation.jsx`. |
+| FPRM-79 | Internal application review queue | Done | #39 | `ApplicationQueue.jsx` at `/internal/applications` behind `ProtectedRoute`; status filter, search, status badges. |
+| FPRM-80 | Sprint 5 docs and PROJECT_CONTEXT update | Done | (this PR) | Sections 1/2/3 updated, AD-11 added, CLAUDE_HISTORY entry added. |
+
+All 7 sub-tasks (FPRM-81..87) closed Done.
+
+### What landed on `main` during Sprint 5
+
+- `backend/models.py` — `ApplicationStatus` enum + `PartnerApplication` + `PartnerApplicationDocument` models; `AuditLog.actor_id` flipped to `nullable=True`
+- `backend/audit.py` — `log_audit_event` accepts `actor=None` and records `actor_role="anonymous"` in that case
+- `backend/alembic/versions/009_create_partner_applications.py` — creates both new tables, the `application_status` enum, draft-token unique constraint, status/draft_token indexes, FKs to `users.id` and `partner_organizations.id`, and alters `audit_log.actor_id` to nullable
+- `backend/permissions.py` — `partner_application:read_all` granted to `channel_manager`, `channel_ops_admin`, `system_admin`; `partner_application:update_all` granted to `channel_ops_admin`, `system_admin` (used by Sprint 6 review workflow)
+- `backend/routers/applications_router.py` (new) — six endpoints: public draft create / get / patch / submit / documents, plus internal paginated list with `?status=` filter. Public endpoints validate the draft token on every call and return 410 on expired drafts.
+- `backend/main.py` — registers `applications_router`
+- `backend/tests/test_applications.py` (new) — 16 tests covering draft creation, field update, draft_token validation, submit validation, duplicate-submit guard, document metadata, internal list + status filter, RBAC denial for partner role; full suite ends Sprint 5 at **130/130 green**
+- `frontend/package.json` — appended `react-router-dom@^6.22.0`
+- `frontend/src/main.jsx` — wraps `App` in `<BrowserRouter>`
+- `frontend/src/App.jsx` — `<Routes>` for `/`, `/register`, `/register/confirmation`, `/internal/applications` (the last guarded by `ProtectedRoute`)
+- `frontend/src/pages/RegisterPartner.jsx` (new) — 10-step public partner application form
+- `frontend/src/pages/RegisterConfirmation.jsx` (new) — post-submit thank-you page with application reference number
+- `frontend/src/pages/ApplicationQueue.jsx` (new) — internal review queue with status filter and search
+- `frontend/src/components/ProtectedRoute.jsx` (new) — JWT auth guard
+- `PROJECT_CONTEXT.md` — Section 1 lists the six new endpoints; Section 2 documents `partner_applications` + `partner_application_documents` and the audit_log nullability change; Section 3 now contains a Frontend component tree; Section 6 introduces **AD-11 — Draft token pattern**
+
+### API endpoint count
+
+Phase 2 kicks off with 6 new endpoints across `/applications/*`. Phase 1's 29 endpoints remain unchanged; total now **35 endpoints** live.
+
+### Sprint 5 lessons
+
+1. **Public-endpoint audit needs nullable `actor_id`.** The original Sprint 3 audit_log made `actor_id` NOT NULL with a FK to `users.id`, which prevented logging events triggered by unauthenticated actors. Migration 009 relaxed this to nullable and `audit.log_audit_event` was extended to accept `actor=None` with `actor_role="anonymous"`. Captured in AD-11.
+2. **Optional auth on a single FastAPI endpoint requires a custom dependency.** `Depends(get_current_user)` always requires a Bearer token. To let `GET /applications/{id}` accept either `?draft_token=` OR a JWT, the router reads the `Authorization` header manually via `Header(default=None)` and re-decodes the token using the existing `decode_access_token` helper. Documented inline in `applications_router.py`.
+3. **Frontend routing added in Sprint 5.** The Sprint 1 scaffold shipped a single static `<App/>` component. Sprint 5 introduced `react-router-dom` and a `<Routes>` tree. All future frontend features should add their pages under `frontend/src/pages/` and register a `<Route>` in `App.jsx`.
+4. **Jira issue type for sub-tasks is `Sub-task` (hyphenated).** This project's issue scheme exposes both `Subtask` and `Sub-task` in the API listing, but only `Sub-task` is valid for the FPRM project; using `Subtask` returns `HTTP 400 — "Specify a valid issue type"`. Confirmed during Phase A6.
+
+### Known follow-ups for Sprint 6
+
+1. **Application review detail page** (`/internal/applications/{id}`) — the queue page already routes to it, but the page itself is queued for Sprint 6 along with the review workflow (approve/reject, info-required, convert to `partner_organization`).
+2. **File storage backend** — `POST /applications/{id}/documents` records metadata only; actual file persistence (S3 / Railway Volume / similar) is still pending.
+3. **Confirmation/notification email** — submit currently has no email backend. Applicants only see the in-app confirmation page. Email integration carries forward from earlier sprints.
+4. **Alembic migration 009 must run on Railway PostgreSQL** before any `/applications/*` endpoint will work in production. The Sprint 2 Railway start command (`alembic upgrade head && uvicorn ...`) should be applying it automatically — verify after first Sprint 5 deploy.
+5. **Carry-forward:** in-memory token blacklist, reset-email backend, SonarCloud configuration — all still pending from earlier sprints.
