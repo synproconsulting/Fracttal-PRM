@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** Greenfield — Sprint 1 not yet planned.
+**Current state:** Sprint 2 closed (Authentication delivered). Backend and frontend live on Railway. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 
@@ -259,14 +259,14 @@ npm run dev
 
 ## Backend Dependencies (`backend/requirements.txt`)
 
-Starting package list for Sprint 1 — read this file before modifying, never remove packages:
+Current pinned versions on `main`. **Read this file before modifying — never remove packages, only append.** Authoritative source is `backend/requirements.txt` itself; this table is a quick reference.
 
 | Package | Version | Purpose |
 |---|---|---|
 | `fastapi` | 0.104.1 | Web framework |
 | `uvicorn` | 0.24.0 | ASGI server |
 | `sqlalchemy` | 2.0.23 | ORM |
-| `pydantic` | 2.5.0 | Data validation |
+| `pydantic` | 2.7.4 | Data validation (bumped in FPRM-19 for Python 3.13 wheel) |
 | `psycopg2-binary` | 2.9.9 | PostgreSQL driver |
 | `pyjwt` | 2.8.0 | JWT handling |
 | `python-dotenv` | 1.0.0 | Env loading |
@@ -274,14 +274,20 @@ Starting package list for Sprint 1 — read this file before modifying, never re
 | `slowapi` | 0.1.9 | Rate limiting |
 | `httpx` | 0.27.0 | Async HTTP client |
 | `pytest` | 7.4.3 | Test suite |
+| `passlib[bcrypt]` | 1.7.4 | Password hashing (Sprint 2 / FPRM-23) |
+| `bcrypt` | 4.0.1 | passlib backend |
+| `email-validator` | 2.1.0 | pydantic `EmailStr` support (Sprint 2 / FPRM-23) |
 
 ---
 
 ## Known Issues / Technical Debt
 
-- Sprint IDs to be populated as sprints are created
-- Backend and frontend URLs to be updated after first Railway deployment
-- GitHub Actions `ci.yml` to be scaffolded in Sprint 1
+Active items only — historical Sprint follow-ups live in `CLAUDE_HISTORY.md`.
+
+- **Alembic migrations not yet applied to live Railway DB.** Sprint 2 added `001_create_users_table` and `002_create_password_reset_tokens` but they haven't been run against the live PostgreSQL. Auth endpoints will 500 in production until either the start command is updated to `alembic upgrade head && uvicorn …` or the migration is run once manually via Railway shell. CI tests use sqlite + `Base.metadata.create_all` so they bypass this.
+- **JWT logout blacklist is in-memory only.** Lost on backend restart; not safe for multi-instance deploys. Likely Sprint 3+ work.
+- **Password reset has no email backend yet.** Reset URLs are logged to stdout via `print`. A real email integration (SES / SendGrid / etc) is queued for a later sprint.
+- **SonarCloud scan fails on every CI run** (non-blocking — `continue-on-error: true`). Needs a `sonar-project.properties` file and a linked SonarCloud project to produce useful output.
 
 ---
 
