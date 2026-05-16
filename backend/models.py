@@ -135,6 +135,53 @@ class PartnerOrganization(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class DocumentType(str, enum.Enum):
+    id_legal_representative = "id_legal_representative"
+    power_of_attorney = "power_of_attorney"
+    articles_of_incorporation = "articles_of_incorporation"
+    beneficial_owners_list = "beneficial_owners_list"
+    fiscal_id = "fiscal_id"
+    proof_of_fiscal_domicile = "proof_of_fiscal_domicile"
+    bank_certificate = "bank_certificate"
+    nda = "nda"
+    insurance = "insurance"
+    other = "other"
+
+
+class DocumentStatus(str, enum.Enum):
+    pending_review = "pending_review"
+    approved = "approved"
+    rejected = "rejected"
+    expired = "expired"
+
+
+class PartnerDocument(Base):
+    __tablename__ = "partner_documents"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=False,
+    )
+    document_type = Column(SAEnum(DocumentType, name="document_type"), nullable=False)
+    document_name = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    file_size_bytes = Column(Integer, nullable=True)
+    mime_type = Column(String, nullable=True)
+    uploaded_by_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expiry_date = Column(Date, nullable=True)
+    status = Column(
+        SAEnum(DocumentStatus, name="document_status"),
+        nullable=False,
+        default=DocumentStatus.pending_review,
+    )
+    review_notes = Column(Text, nullable=True)
+    reviewed_by_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+
+
 class PartnerProfile(Base):
     __tablename__ = "partner_profiles"
 
