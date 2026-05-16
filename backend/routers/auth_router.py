@@ -19,6 +19,7 @@ from auth import (
     JWT_EXPIRY_HOURS,
 )
 from rate_limiter import limiter
+from roles import UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -27,6 +28,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: str | None = None
+    role: UserRole = UserRole.partner_user
 
 
 class LoginRequest(BaseModel):
@@ -60,7 +62,7 @@ def register(request: Request, req: RegisterRequest, db: Session = Depends(get_d
         email=req.email,
         hashed_password=hash_password(req.password),
         full_name=req.full_name,
-        role="partner_user",
+        role=req.role.value,
     )
     db.add(user)
     db.commit()
