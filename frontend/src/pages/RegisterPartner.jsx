@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -160,7 +160,20 @@ function validateStep(step, data) {
     if (!data.applicant_name) errors.applicant_name = 'Contact name is required'
     if (!data.applicant_email) errors.applicant_email = 'Email is required'
   }
+  if (step === 10) {
+    if (!data.terms_accepted) errors.terms_accepted = 'You must accept the terms to submit'
+    if (!data.legal_name) errors.legal_name = 'Company name is required'
+    if (!data.applicant_name) errors.applicant_name = 'Contact name is required'
+    if (!data.applicant_email) errors.applicant_email = 'Email is required'
+  }
   return errors
+}
+
+function setReferenceField(prev, idx, key, value) {
+  const refs = Array.isArray(prev.references) ? [...prev.references] : []
+  while (refs.length < idx + 1) refs.push({})
+  refs[idx] = { ...refs[idx], [key]: value }
+  return { ...prev, references: refs }
 }
 
 function setHqAddressField(prev, key, value) {
@@ -176,7 +189,10 @@ export default function RegisterPartner() {
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState(null)
   const [categories, setCategories] = useState([])
+  const [uploadedDocs, setUploadedDocs] = useState([])
+  const [submitting, setSubmitting] = useState(false)
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const saveTimer = useRef(null)
   const loadedRef = useRef(false)
 
@@ -291,6 +307,97 @@ export default function RegisterPartner() {
   }
 
   const prevStep = () => setStep((s) => Math.max(1, s - 1))
+
+  const handleReferenceField = (idx, key, value) => {
+    setFormData((prev) => setReferenceField(prev, idx, key, value))
+  }
+
+  const uploadDocument = async (file) => {
+    if (!file || !draftId || !draftToken) return
+    const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png']
+    if (file.type && !allowed.includes(file.type)) {
+      setErrors((e) => ({ ...e, _doc: 'Only PDF, JPG, or PNG files are allowed' }))
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setErrors((e) => ({ ...e, _doc: 'File must be 10 MB or less' }))
+      return
+    }
+    setErrors((e) => { const { _doc, ...rest } = e; return rest })
+    const r = await fetch(`${API}/applications/${draftId}/documents?draft_token=${draftToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        document_type: 'other',
+        document_name: file.name,
+        file_path: `uploads/${draftId}/${file.name}`,
+        file_size_bytes: file.size,
+        mime_type: file.type,
+      }),
+    })
+    if (r.ok) {
+      const doc = await r.json()
+      setUploadedDocs((docs) => [...docs, doc])
+    } else {
+      const err = await r.json().catch(() => ({}))
+      setErrors((e) => ({ ...e, _doc: err.detail || 'Upload failed' }))
+    }
+  }
+
+  const scrollToFirstError = () => {
+    if (typeof window !== 'undefined' && window.scrollTo) {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
+  const handleSubmit = async () => {
+    const stepErrors = validateStep(10, formData)
+    if (Object.keys(stepErrors).length > 0) {
+      setErrors(stepErrors)
+      scrollToFirstError()
+      return
+    }
+    if (!draftId || !draftToken) {
+      setErrors({ _global: 'No draft to submit' })
+      scrollToFirstError()
+      return
+    }
+    setSubmitting(true)
+    try {
+      // Final save before submit (auto-save debounce may not have fired yet)
+      const finalData = { ...formData, terms_accepted: true }
+      for (const k of Object.keys(finalData)) {
+        if (k.startsWith('_')) delete finalData[k]
+      }
+      delete finalData.id
+      delete finalData.draft_token
+      delete finalData.status
+      delete finalData.created_at
+      delete finalData.updated_at
+      delete finalData.submitted_at
+      await fetch(`${API}/applications/${draftId}?draft_token=${draftToken}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(finalData),
+      })
+      const r = await fetch(`${API}/applications/${draftId}/submit?draft_token=${draftToken}`, { method: 'POST' })
+      if (r.ok) {
+        try { localStorage.removeItem(`fprm_draft_${draftId}`) } catch (_) { /* ignore */ }
+        navigate(`/register/confirmation?ref=${draftId}`)
+        return
+      }
+      const err = await r.json().catch(() => ({}))
+      const apiErrors = err.detail?.errors
+      if (Array.isArray(apiErrors)) {
+        setErrors({ _global: apiErrors.join('; ') })
+      } else {
+        setErrors({ _global: err.detail || 'Submission failed' })
+      }
+      scrollToFirstError()
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const draftUrl = draftId
     ? `${window.location.origin}/register?draft_id=${draftId}&draft_token=${draftToken}`
@@ -467,22 +574,117 @@ export default function RegisterPartner() {
         </section>
       )}
 
-      {step >= 6 && (
+      {step === 6 && (
         <section>
-          <h2>{STEP_TITLES[step]}</h2>
-          <p style={{ color: '#666' }}>This section will be enabled in an upcoming release. Your draft is saved.</p>
+          <h2>Partnership Goals</h2>
+          <Textarea label="Why are you interested in becoming a Fracttal Distribution Partner? What are your goals for this partnership?" name="partnership_goals" value={formData.partnership_goals} onChange={handleField} errors={errors} rows={6} />
+          <Textarea label="How do you plan to grow the market?" name="market_growth_plan" value={formData.market_growth_plan} onChange={handleField} errors={errors} rows={5} />
+        </section>
+      )}
+
+      {step === 7 && (
+        <section>
+          <h2>References</h2>
+          {[0, 1].map((idx) => {
+            const r = (formData.references || [])[idx] || {}
+            return (
+              <div key={idx} style={{ padding: 12, border: '1px solid #eee', borderRadius: 6, marginTop: 12 }}>
+                <h3 style={{ marginTop: 0 }}>Reference {idx + 1}</h3>
+                <Field label="Name" name={`ref_${idx}_name`} value={r.name} onChange={(_n, v) => handleReferenceField(idx, 'name', v)} errors={errors} />
+                <Field label="Company" name={`ref_${idx}_company`} value={r.company} onChange={(_n, v) => handleReferenceField(idx, 'company', v)} errors={errors} />
+                <Field label="Phone" name={`ref_${idx}_phone`} value={r.phone} onChange={(_n, v) => handleReferenceField(idx, 'phone', v)} errors={errors} type="tel" />
+                <Field label="Email" name={`ref_${idx}_email`} value={r.email} onChange={(_n, v) => handleReferenceField(idx, 'email', v)} errors={errors} type="email" />
+              </div>
+            )
+          })}
+        </section>
+      )}
+
+      {step === 8 && (
+        <section>
+          <h2>Additional Information</h2>
+          <Textarea label="Anything else you'd like us to know" name="additional_info" value={formData.additional_info} onChange={handleField} errors={errors} rows={6} />
+        </section>
+      )}
+
+      {step === 9 && (
+        <section>
+          <h2>Supporting Documents</h2>
+          <p style={{ color: '#555', fontSize: 14 }}>
+            Upload supporting documentation (PDF, JPG, or PNG; max 10 MB per file).
+          </p>
+          <input
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png"
+            onChange={(e) => {
+              const file = e.target.files && e.target.files[0]
+              if (file) uploadDocument(file)
+              e.target.value = ''
+            }}
+          />
+          {errors._doc && <div style={errorStyle}>{errors._doc}</div>}
+          {uploadedDocs.length > 0 && (
+            <ul style={{ marginTop: 16 }}>
+              {uploadedDocs.map((d) => (
+                <li key={d.id}>
+                  {d.document_name} <span style={{ color: '#999', fontSize: 12 }}>
+                    ({Math.round((d.file_size_bytes || 0) / 1024)} KB)
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {step === 10 && (
+        <section>
+          <h2>Review &amp; Submit</h2>
+          <div style={{ background: '#fafafa', padding: 16, borderRadius: 6, fontSize: 14 }}>
+            <p><strong>Company:</strong> {formData.legal_name || '—'}</p>
+            <p><strong>Contact:</strong> {formData.applicant_name || '—'} ({formData.applicant_email || '—'})</p>
+            <p><strong>Year established:</strong> {formData.year_established || '—'}</p>
+            <p><strong>Employees:</strong> {formData.employee_count || '—'}</p>
+            <p><strong>Annual revenue:</strong> {formData.annual_revenue || '—'}</p>
+            <p><strong>Industries:</strong> {(formData.industries || []).join(', ') || '—'}</p>
+            <p><strong>Territory:</strong> {Array.isArray(formData.territory) ? formData.territory.join(', ') : (formData.territory || '—')}</p>
+            <p><strong>Requested categories:</strong> {(formData.requested_categories || []).join(', ') || '—'}</p>
+            <p><strong>Documents uploaded:</strong> {uploadedDocs.length}</p>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
+            <input
+              type="checkbox"
+              checked={!!formData.terms_accepted}
+              onChange={(e) => handleField('terms_accepted', e.target.checked)}
+            />
+            <span>
+              I confirm the information above is accurate and accept the Fracttal Distribution
+              Partner application terms.
+            </span>
+          </label>
+          {errors.terms_accepted && <div style={errorStyle}>{errors.terms_accepted}</div>}
         </section>
       )}
 
       <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
         {step > 1 && (
-          <button type="button" onClick={prevStep} style={{ padding: '10px 20px' }}>
+          <button type="button" onClick={prevStep} disabled={submitting} style={{ padding: '10px 20px' }}>
             Back
           </button>
         )}
         {step < TOTAL_STEPS && (
           <button type="button" onClick={nextStep} style={{ padding: '10px 20px', background: '#007aff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
             Save & Continue
+          </button>
+        )}
+        {step === TOTAL_STEPS && (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+            style={{ padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: 4, cursor: submitting ? 'not-allowed' : 'pointer' }}
+          >
+            {submitting ? 'Submitting…' : 'Submit Application'}
           </button>
         )}
       </div>
