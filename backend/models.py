@@ -1,6 +1,19 @@
+import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Uuid, JSON
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    Uuid,
+)
 from database import Base
 
 
@@ -14,7 +27,11 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     role = Column(String, nullable=False, default="partner_user")
-    partner_org_id = Column(Uuid(as_uuid=True), nullable=True)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=True,
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -44,3 +61,104 @@ class AuditLog(Base):
     after_state = Column(JSON, nullable=True)
     ip_address = Column(String, nullable=True)
     notes = Column(String, nullable=True)
+
+
+class ProgramType(str, enum.Enum):
+    distributor = "distributor"
+    subpartner = "subpartner"
+
+
+class PartnerCategory(str, enum.Enum):
+    master = "master"
+    promotor = "promotor"
+    reseller = "reseller"
+
+
+class PartnerTier(str, enum.Enum):
+    registered = "registered"
+    silver = "silver"
+    gold = "gold"
+
+
+class PartnerStatus(str, enum.Enum):
+    applicant = "applicant"
+    active = "active"
+    suspended = "suspended"
+    inactive = "inactive"
+    terminated = "terminated"
+
+
+class MonthlyFeeStatus(str, enum.Enum):
+    current = "current"
+    overdue = "overdue"
+    waived = "waived"
+
+
+class PartnerOrganization(Base):
+    __tablename__ = "partner_organizations"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    legal_name = Column(String, nullable=False)
+    dba_name = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    hq_address = Column(JSON, nullable=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    program_type = Column(SAEnum(ProgramType, name="program_type"), nullable=False)
+    partner_category = Column(SAEnum(PartnerCategory, name="partner_category"), nullable=False)
+    parent_partner_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=True,
+    )
+    tier = Column(SAEnum(PartnerTier, name="partner_tier"), nullable=True)
+    territory = Column(JSON, nullable=True)
+    industries = Column(JSON, nullable=True)
+    authorized_offerings = Column(JSON, nullable=True)
+    delivery_capabilities = Column(JSON, nullable=True)
+    status = Column(
+        SAEnum(PartnerStatus, name="partner_status"),
+        nullable=False,
+        default=PartnerStatus.applicant,
+    )
+    monthly_fee_status = Column(
+        SAEnum(MonthlyFeeStatus, name="monthly_fee_status"),
+        nullable=False,
+        default=MonthlyFeeStatus.current,
+    )
+    contract_start_date = Column(Date, nullable=True)
+    contract_end_date = Column(Date, nullable=True)
+    auto_renew = Column(Boolean, default=True, nullable=False)
+    certification_expiry_date = Column(Date, nullable=True)
+    hubspot_company_id = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PartnerProfile(Base):
+    __tablename__ = "partner_profiles"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        unique=True,
+        nullable=False,
+    )
+    year_established = Column(Integer, nullable=True)
+    employee_count = Column(Integer, nullable=True)
+    annual_revenue = Column(String, nullable=True)
+    shareholders = Column(JSON, nullable=True)
+    cmms_experience = Column(Boolean, nullable=True)
+    cmms_experience_description = Column(Text, nullable=True)
+    other_software_products = Column(Text, nullable=True)
+    sales_marketing_strategy = Column(Text, nullable=True)
+    technical_support_team = Column(Boolean, nullable=True)
+    technical_support_description = Column(Text, nullable=True)
+    implementation_services = Column(Boolean, nullable=True)
+    implementation_description = Column(Text, nullable=True)
+    partnership_goals = Column(Text, nullable=True)
+    market_growth_plan = Column(Text, nullable=True)
+    additional_info = Column(Text, nullable=True)
+    profile_completeness_pct = Column(Integer, default=0, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
