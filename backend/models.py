@@ -205,6 +205,35 @@ class PartnerUserInvite(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class ActivityType(str, enum.Enum):
+    note = "note"
+    task = "task"
+    call = "call"
+    meeting = "meeting"
+    email = "email"
+    status_change = "status_change"
+
+
+class PartnerActivity(Base):
+    __tablename__ = "partner_activities"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=False,
+    )
+    activity_type = Column(SAEnum(ActivityType, name="activity_type"), nullable=False)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=True)
+    due_date = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_by_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    assigned_to_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    is_internal = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class PartnerProfile(Base):
     __tablename__ = "partner_profiles"
 
