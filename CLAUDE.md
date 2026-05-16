@@ -22,8 +22,8 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 | Service | URL |
 |---|---|
 | Control Centre (frontend) | https://control-centre-service-production.up.railway.app |
-| Fracttal PRM Backend (FastAPI) | Not yet deployed — Sprint 1 pending |
-| Fracttal PRM Frontend (React) | Not yet deployed — Sprint 1 pending |
+| Fracttal PRM Backend (FastAPI) | https://fracttal-prm-backend-production.up.railway.app |
+| Fracttal PRM Frontend (React) | https://fracttal-prm-frontend-production.up.railway.app |
 
 > The Control Centre is shared across all products. It manages Fracttal PRM via the SynPro VSDC backend's product credentials system — no separate Control Centre deployment needed.
 
