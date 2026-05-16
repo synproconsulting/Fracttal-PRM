@@ -266,7 +266,7 @@ Current pinned versions on `main`. **Read this file before modifying — never r
 | `fastapi` | 0.104.1 | Web framework |
 | `uvicorn` | 0.24.0 | ASGI server |
 | `sqlalchemy` | 2.0.23 | ORM |
-| `pydantic` | 2.7.4 | Data validation (bumped in FPRM-19 for Python 3.13 wheel) |
+| `pydantic` | 2.11.4 | Data validation (bumped in FPRM-37 after FPRM-19's 2.7.4 still missed a Python 3.13 wheel on Railpack) |
 | `psycopg2-binary` | 2.9.9 | PostgreSQL driver |
 | `pyjwt` | 2.8.0 | JWT handling |
 | `python-dotenv` | 1.0.0 | Env loading |
