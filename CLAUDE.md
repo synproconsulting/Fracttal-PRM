@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** Sprint 2 closed (Authentication delivered). Backend and frontend live on Railway. Sprint history in CLAUDE_HISTORY.md.
+**Current state:** Sprint 4 closed (Phase 1 — Core Data Model delivered: partner organizations, profiles, documents, users/invites, activities, category + commission config). Backend and frontend live on Railway. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 

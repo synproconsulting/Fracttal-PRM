@@ -236,3 +236,67 @@ All nine Sub-tasks (FPRM-45 → FPRM-53) closed Done.
 2. **`log_audit_event` should be wired into state-change endpoints** as Sprint 4 builds out deal/quote/partner workflows. Audit utility exists; callers need to be added.
 3. **In-memory token blacklist + reset-email backend** still pending (carried from Sprint 2).
 4. **SonarCloud configuration** still pending (carried from Sprint 2).
+
+---
+
+## Sprint 4 — Core Data Model (Phase 1 closeout)
+
+**Started:** 2026-05-16
+**Closed:** 2026-05-16 (single-day intensive)
+**Fix Version ID:** `10563`
+**Native Sprint ID:** `536`
+
+### Story key renumbering
+
+The Sprint 4 prompt assumed stories would start at `FPRM-45`. In reality, Sprint 3 sub-tasks already consumed FPRM-45..53, so Sprint 4 stories landed at **FPRM-54..59** and the 13 sub-tasks at **FPRM-60..72**. The Phase B branch names were renumbered accordingly (`feature/fprm-54-partner-org-model` etc.). No work was lost — the renaming was surface-level only.
+
+### Sprint 4 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-54 | Partner Organization and Profile tables | Done | #27 | `partner_organizations` + `partner_profiles` tables, `partners_router` with tenant scoping + audit logging, FK on `users.partner_org_id` |
+| FPRM-55 | Partner Documents table | Done | #28 | 10 document types + 4-state review workflow, `proof_of_fiscal_domicile` expiry validation (>90d old rejected) |
+| FPRM-56 | Partner Users table and invite system | Done | #29 | `partner_user_invites` table (72h expiry), `partner_users_router`, `POST /auth/accept-invite` public endpoint |
+| FPRM-57 | Partner Notes, Tasks and Activities table | Done | #30 | `partner_activities` table, `is_internal` filter applied for partner-side users on GET |
+| FPRM-58 | Partner Category and Commission configuration tables | Done | #31 | `partner_category_configs` + `commission_structures` with 3 categories + 24 commission rows seeded from Distributor Agreement |
+| FPRM-59 | Phase 1 integration test and PROJECT_CONTEXT update | Done | #32 | End-to-end auth -> partner -> invite -> tenant -> audit flow; PROJECT_CONTEXT Sections 1/2/6 updated; small `auth.get_current_user` UUID-coercion fix bundled for sqlite test compat |
+
+All 13 sub-tasks (FPRM-60..72) closed Done.
+
+### What landed on `main` during Sprint 4
+
+- `backend/models.py` — extended with `ProgramType`, `PartnerCategory`, `PartnerTier`, `PartnerStatus`, `MonthlyFeeStatus`, `DocumentType`, `DocumentStatus`, `InvitedRole`, `ActivityType`, `CommissionType`, `CommissionYear` enums; new models `PartnerOrganization`, `PartnerProfile`, `PartnerDocument`, `PartnerUserInvite`, `PartnerActivity`, `PartnerCategoryConfig`, `CommissionStructure`; `Numeric` added to imports; `User.partner_org_id` upgraded to a real FK
+- `backend/auth.py` — `get_current_user` now coerces the JWT `sub` claim with `uuid.UUID(...)` before the SQLAlchemy filter (sqlite needs a UUID object; PG coerces transparently)
+- `backend/routers/partners_router.py` (new) — list / get / create / update with tenant scoping + audit logging
+- `backend/routers/documents_router.py` (new) — list / upload / review; `proof_of_fiscal_domicile` 90-day age validation
+- `backend/routers/partner_users_router.py` (new) — invite / list / patch
+- `backend/routers/activities_router.py` (new) — list / create / update with `is_internal` filter for partner-side users
+- `backend/routers/config_router.py` (new) — public `GET /config/partner-categories`, `channel_ops_admin`-only writes
+- `backend/routers/auth_router.py` (modified) — adds `POST /auth/accept-invite`
+- `backend/main.py` (modified) — registers 5 new routers (partners, documents, partner_users, activities, config)
+- `backend/alembic/versions/004_create_partner_organizations.py` (new) — creates partner_organizations + partner_profiles + users FK
+- `backend/alembic/versions/005_create_partner_documents.py` (new) — creates partner_documents
+- `backend/alembic/versions/006_create_partner_user_invites.py` (new) — creates partner_user_invites
+- `backend/alembic/versions/007_create_partner_activities.py` (new) — creates partner_activities
+- `backend/alembic/versions/008_create_partner_category_and_commission.py` (new) — creates partner_category_configs + commission_structures **and seeds 3 category rows + 24 commission rows**
+- `backend/tests/test_partners.py`, `test_documents.py`, `test_partner_users.py`, `test_activities.py`, `test_config.py`, `test_integration_phase1.py` (new) — 56 new tests; full suite ends Sprint 4 at 111/111 green
+- `PROJECT_CONTEXT.md` (modified) — Section 1 now lists all 29 Phase 1 endpoints, Section 2 documents all 10 Phase 1 tables, Section 6 adds AD-8 (portable types in models, PG types in migrations), AD-9 (four permission tiers), AD-10 (subtasks inherit sprint/fixVersion from parent)
+
+### API endpoint count
+
+Phase 1 closes with **29 endpoints** live across `/auth/*`, `/admin/*`, `/partners/*`, `/config/*`. Full table maintained in `PROJECT_CONTEXT.md` Section 1.
+
+### Sprint 4 lessons
+
+1. **Jira subtask creates must omit `fixVersions` and `customfield_10020` (sprint).** Jira returns `HTTP 400 — "Issue is a subtask and subtasks cannot be associated to a sprint"`. Subtasks inherit both from their parent. Encoded as AD-10.
+2. **`Uuid(as_uuid=True)` columns require a `uuid.UUID` argument when filtering on sqlite.** PostgreSQL coerces strings via the psycopg adapter, so this bug only surfaced when the Phase 1 integration test ran `client.get(...)` against a real sqlite DB via JWT auth. Fix is a one-liner in `auth.get_current_user`. Encoded implicitly in AD-8.
+3. **Seed-data migrations using `gen_random_uuid()` and `NOW()` are PG-only by design.** sqlite tests bypass Alembic entirely (conftest's `Base.metadata.create_all`), so the seed-data migration cannot also "seed sqlite for tests" — tests must seed via Python in their own fixtures (test_config.py does exactly this).
+4. **Per-test isolated sqlite DB files work better than the shared `test.db`.** Each Sprint 4 test module creates its own `test_partners.db`, `test_documents.db`, etc., so module-scoped engines never collide. The session-scoped conftest fixture still seeds the default `test.db` for legacy tests.
+
+### Known follow-ups for Sprint 5
+
+1. **Alembic migrations 004..008 must be applied to Railway PostgreSQL** before any Sprint 4 endpoint will function in production. The recommended Sprint 2 fix (Railway start command = `alembic upgrade head && uvicorn ...`) should now be applying these automatically on each deploy — verify after first Sprint 5 deploy.
+2. **`partner_profiles` is created but has no router yet.** A `partner_profile` CRUD router is queued for Sprint 5 alongside the partner registration flow.
+3. **Document file uploads only store metadata.** Actual file storage (S3 / Railway Volume / similar) is queued for Sprint 5+ when partner onboarding ships.
+4. **Invite acceptance does not send email.** The invite token is currently returned in the API response — production will need an email backend, queued for Sprint 5+.
+5. **Carry-forward:** in-memory token blacklist, reset-email backend, SonarCloud configuration — all still pending from earlier sprints.
