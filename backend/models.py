@@ -53,7 +53,7 @@ class AuditLog(Base):
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    actor_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    actor_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
     actor_role = Column(String, nullable=False)
     action = Column(String, nullable=False)
     object_type = Column(String, nullable=False)
@@ -277,6 +277,87 @@ class CommissionStructure(Base):
     subpartner_uplift_pct = Column(Numeric, default=10.0, nullable=False)
     applies_to_upsell = Column(Boolean, default=True, nullable=False)
     notes = Column(Text, nullable=True)
+
+
+class ApplicationStatus(str, enum.Enum):
+    draft = "draft"
+    submitted = "submitted"
+    in_review = "in_review"
+    info_required = "info_required"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class PartnerApplication(Base):
+    __tablename__ = "partner_applications"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status = Column(
+        SAEnum(ApplicationStatus, name="application_status"),
+        nullable=False,
+        default=ApplicationStatus.draft,
+    )
+    applicant_email = Column(String, nullable=False)
+    applicant_name = Column(String, nullable=True)
+    applicant_phone = Column(String, nullable=True)
+    applicant_title = Column(String, nullable=True)
+    legal_name = Column(String, nullable=True)
+    dba_name = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    hq_address = Column(JSON, nullable=True)
+    phone = Column(String, nullable=True)
+    requested_categories = Column(JSON, nullable=True)
+    territory = Column(JSON, nullable=True)
+    industries = Column(JSON, nullable=True)
+    year_established = Column(Integer, nullable=True)
+    employee_count = Column(Integer, nullable=True)
+    annual_revenue = Column(String, nullable=True)
+    shareholders = Column(JSON, nullable=True)
+    other_software_products = Column(Text, nullable=True)
+    cmms_experience = Column(Boolean, nullable=True)
+    cmms_experience_description = Column(Text, nullable=True)
+    sales_marketing_strategy = Column(Text, nullable=True)
+    technical_support_team = Column(Boolean, nullable=True)
+    technical_support_description = Column(Text, nullable=True)
+    implementation_services = Column(Boolean, nullable=True)
+    implementation_description = Column(Text, nullable=True)
+    partnership_goals = Column(Text, nullable=True)
+    market_growth_plan = Column(Text, nullable=True)
+    additional_info = Column(Text, nullable=True)
+    references = Column(JSON, nullable=True)
+    terms_accepted = Column(Boolean, default=False, nullable=False)
+    terms_accepted_at = Column(DateTime, nullable=True)
+    draft_token = Column(String, unique=True, nullable=True, index=True)
+    draft_expires_at = Column(DateTime, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    reviewer_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    review_notes = Column(Text, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PartnerApplicationDocument(Base):
+    __tablename__ = "partner_application_documents"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_applications.id"),
+        nullable=False,
+        index=True,
+    )
+    document_type = Column(String, nullable=False)
+    document_name = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    file_size_bytes = Column(Integer, nullable=True)
+    mime_type = Column(String, nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class PartnerProfile(Base):

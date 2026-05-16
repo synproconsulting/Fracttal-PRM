@@ -42,7 +42,8 @@ def log_audit_event(
 
     Args:
         db:          active database session
-        actor:       the User performing the action
+        actor:       the User performing the action, or ``None`` for unauthenticated
+                     events (e.g. public partner application submission)
         action:      dot-notation action string e.g. ``deal_registration.approve``
         object_type: the type of object being acted on e.g. ``deal_registration``
         object_id:   UUID of the object (optional for list/bulk actions)
@@ -57,8 +58,8 @@ def log_audit_event(
     entry = AuditLog(
         id=uuid.uuid4(),
         timestamp=datetime.utcnow(),
-        actor_id=actor.id,
-        actor_role=actor.role,
+        actor_id=actor.id if actor is not None else None,
+        actor_role=actor.role if actor is not None else "anonymous",
         action=action,
         object_type=object_type,
         object_id=object_id,
