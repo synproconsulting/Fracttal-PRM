@@ -267,7 +267,7 @@ Current pinned versions on `main`. **Read this file before modifying — never r
 | `uvicorn` | 0.24.0 | ASGI server |
 | `sqlalchemy` | 2.0.36 | ORM (bumped in FPRM-38 for Python 3.13 compat) |
 | `pydantic` | 2.11.4 | Data validation (bumped in FPRM-37 after FPRM-19's 2.7.4 still missed a Python 3.13 wheel on Railpack) |
-| `psycopg2-binary` | 2.9.9 | PostgreSQL driver |
+| `psycopg2-binary` | 2.9.10 | PostgreSQL driver (bumped in FPRM-39; 2.9.10+ bundles libpq, removes Railpack libpq.so.5 dependency) |
 | `pyjwt` | 2.8.0 | JWT handling |
 | `python-dotenv` | 1.0.0 | Env loading |
 | `alembic` | 1.14.0 | DB migrations (matched to sqlalchemy 2.0.36 in FPRM-38) |
