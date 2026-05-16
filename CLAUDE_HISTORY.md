@@ -167,3 +167,79 @@ Until this runs, ``/auth/register``, ``/auth/login``, and password-reset endpoin
 2. **Password reset emails** - currently logs reset URL to stdout. A real email backend (SES, SendGrid, etc) will be needed when Sprint 3+ requires it
 3. **Token blacklist persistence** - JWT logout blacklist is in-memory only; lost on backend restart. Consider Redis or DB-backed blacklist when multi-instance deploys arrive
 4. **SonarCloud scan still failing** - non-blocking; needs ``sonar-project.properties`` and linked SonarCloud project to actually produce useful output
+
+---
+
+## Inter-sprint hotfixes (between Sprint 2 closeout and Sprint 3 start)
+
+Five Python-3.13 / Railpack deploy bugs were filed and fixed between Sprint 2 closeout and Sprint 3 setup. All filed against Sprint 2 fix version (`10561`), no native sprint assigned (Sprint 2 was already closed).
+
+| Key | Bug | PR | Notes |
+|---|---|---|---|
+| FPRM-37 | pydantic-core wheel missing for Python 3.13 on Railpack — pydantic 2.7.4 insufficient fix | #16 | Bumped `pydantic` 2.7.4 → 2.11.4. FPRM-19's earlier pin to 2.7.4 was based on a wrong assumption about Railpack's wheel index. |
+| FPRM-38 | SQLAlchemy 2.0.23 incompatible with Python 3.13 — upgrade required | #18 | `sqlalchemy` 2.0.23 → 2.0.36, `alembic` 1.13.0 → 1.14.0. CLAUDE.md table bundled. |
+| FPRM-39 | psycopg2-binary missing libpq.so.5 on Railpack Python 3.13 | #19 | `psycopg2-binary` 2.9.9 → 2.9.10 (2.9.10+ bundles libpq, removes system-library dependency). |
+| FPRM-40 | Sprint 1 dependency pins pre-date Python 3.13 — proactive upgrade sweep | #20 | Proactive sweep: `fastapi` 0.115.12, `uvicorn` 0.34.2, `pyjwt` 2.10.1, `httpx` 0.28.1, `pytest` 8.3.5; new `starlette==0.46.2` pin (fastapi 0.115.x requires <0.47). `slowapi` left at 0.1.9 (PyPI latest confirmed). |
+
+PR #17 was a docs-only follow-up to FPRM-37, updating the CLAUDE.md backend dependencies table when Johan asked for the version reference to be kept in sync.
+
+**Lesson:** the original Sprint 1 pinning (Oct/Nov 2023 versions) and FPRM-19's reactive bump to pydantic 2.7.4 were both insufficient for Railway's Python 3.13 runtime. The full sweep in FPRM-40 brought every backend dependency onto a known-good version. Future package additions should be verified against Railway's actual Python version (currently 3.13) before pinning.
+
+---
+
+## Sprint 3 — RBAC & Permissions
+
+**Started:** 2026-05-16
+**Closed:** 2026-05-16 (single-day intensive)
+**Fix Version ID:** `10562`
+**Native Sprint ID:** `535`
+
+### Sprint 3 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-41 | Role definitions and permission matrix | Done | #21 | `UserRole` enum (8 roles); `PERMISSIONS` matrix; `auth.get_current_user` now validates user.role |
+| FPRM-42 | RBAC enforcement and tenant isolation | Done | #22 | `require_permission(permission)` dep factory; `get_partner_org_filter`; `apply_tenant_filter` |
+| FPRM-43 | Field-level visibility for sensitive fields | Done | #23 | `filter_sensitive_fields(data, user)`; `is_field_visible(field, user)` |
+| FPRM-44 | Audit trail foundation | Done | #24 | `AuditLog` model + migration 003; `log_audit_event(...)` utility; `GET /admin/audit-log` endpoint |
+
+All nine Sub-tasks (FPRM-45 → FPRM-53) closed Done.
+
+### What landed on `main` during Sprint 3
+
+- `backend/roles.py` (new) — `UserRole` Enum (8 roles), `PARTNER_ROLES` and `INTERNAL_ROLES` sets
+- `backend/permissions.py` (new, then extended in FPRM-42) — `PERMISSIONS` dict (role → permission set), `has_permission`, `require_permission` factory, `get_partner_org_filter`, `apply_tenant_filter`
+- `backend/field_visibility.py` (new) — `PARTNER_HIDDEN_FIELDS`, `PARTNER_VISIBLE_SENSITIVE_FIELDS`, `filter_sensitive_fields`, `is_field_visible`
+- `backend/audit.py` (new) — `log_audit_event(...)` utility
+- `backend/routers/admin_router.py` (new) — `GET /admin/audit-log` (paginated, filterable, requires system_admin via `require_permission("user_management:read_all")`)
+- `backend/models.py` (modified) — appends `AuditLog` model, imports `JSON` from sqlalchemy
+- `backend/auth.py` (modified) — validates `user.role` against `UserRole` enum (401 on unknown role)
+- `backend/main.py` (modified) — registers `admin_router`
+- `backend/alembic/versions/003_create_audit_log.py` (new) — creates `audit_log` table + 3 indexes
+- `backend/tests/test_roles.py`, `test_rbac.py`, `test_field_visibility.py`, `test_audit.py` (new)
+
+### Deviations from sprint prompt
+
+1. **`require_permission` uses direct `from auth import get_current_user`** instead of the prompt's placeholder pattern. No circular import; chain is `roles → auth → permissions`.
+2. **`admin_router` uses canonical `require_permission("user_management:read_all")`** instead of a local `require_system_admin` helper. Only `system_admin` has that permission, so behaviour is identical with fewer abstractions.
+3. **`AuditLog` model uses `Uuid(as_uuid=True)`** consistent with `User` and `PasswordResetToken` (the prompt used `sa.Uuid` which would require an additional `import sqlalchemy as sa` in `models.py`).
+
+### API endpoint added (Sprint 3)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/admin/audit-log` | Bearer (system_admin only) | Paginated `?page=N&page_size=N` (page_size ≤ 200); filters: `object_type`, `actor_id`, `date_from`, `date_to` |
+
+### Post-Sprint manual step required
+
+Migration 003 (`create_audit_log`) is in the repo but won't apply to the live Railway DB unless `alembic upgrade head` runs at deploy time. Recommended: ensure the `fracttal-prm-backend` start command is `alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT`. If still not set, this is shared with the Sprint 2 follow-up — running it once applies all three migrations (001, 002, 003) in order.
+
+Until migration 003 runs, calls to `GET /admin/audit-log` will 500 on the live backend (audit_log table missing). Tests in CI use sqlite + create_all so they pass without this step.
+
+### Known follow-ups for Sprint 4
+
+1. **Alembic upgrade on Railway** (still — same as Sprint 2 follow-up) — once the start command is updated, all 3 migrations apply in order
+2. **Use `require_permission` and `apply_tenant_filter` in every future router.** PROJECT_CONTEXT.md now documents this as the canonical pattern.
+3. **`log_audit_event` should be wired into state-change endpoints** as Sprint 4 builds out deal/quote/partner workflows. Audit utility exists; callers need to be added.
+4. **In-memory token blacklist + reset-email backend** still pending (carried from Sprint 2).
+5. **SonarCloud configuration** still pending (carried from Sprint 2).
