@@ -1,5 +1,6 @@
 import { Routes, Route, Link } from 'react-router-dom'
 import RegisterPartner from './pages/RegisterPartner.jsx'
+import RegisterConfirmation from './pages/RegisterConfirmation.jsx'
 
 function Landing() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/register" element={<RegisterPartner />} />
+      <Route path="/register/confirmation" element={<RegisterConfirmation />} />
     </Routes>
   )
 }
