@@ -1,6 +1,8 @@
 import { Routes, Route, Link } from 'react-router-dom'
 import RegisterPartner from './pages/RegisterPartner.jsx'
 import RegisterConfirmation from './pages/RegisterConfirmation.jsx'
+import ApplicationQueue from './pages/ApplicationQueue.jsx'
+import ProtectedRoute from './components/ProtectedRoute.jsx'
 
 function Landing() {
   return (
@@ -20,6 +22,14 @@ export default function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/register" element={<RegisterPartner />} />
       <Route path="/register/confirmation" element={<RegisterConfirmation />} />
+      <Route
+        path="/internal/applications"
+        element={
+          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
+            <ApplicationQueue />
+          </ProtectedRoute>
+        }
+      />
     </Routes>
   )
 }
