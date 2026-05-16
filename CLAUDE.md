@@ -265,12 +265,12 @@ Current pinned versions on `main`. **Read this file before modifying — never r
 |---|---|---|
 | `fastapi` | 0.104.1 | Web framework |
 | `uvicorn` | 0.24.0 | ASGI server |
-| `sqlalchemy` | 2.0.23 | ORM |
+| `sqlalchemy` | 2.0.36 | ORM (bumped in FPRM-38 for Python 3.13 compat) |
 | `pydantic` | 2.11.4 | Data validation (bumped in FPRM-37 after FPRM-19's 2.7.4 still missed a Python 3.13 wheel on Railpack) |
 | `psycopg2-binary` | 2.9.9 | PostgreSQL driver |
 | `pyjwt` | 2.8.0 | JWT handling |
 | `python-dotenv` | 1.0.0 | Env loading |
-| `alembic` | 1.13.0 | DB migrations |
+| `alembic` | 1.14.0 | DB migrations (matched to sqlalchemy 2.0.36 in FPRM-38) |
 | `slowapi` | 0.1.9 | Rate limiting |
 | `httpx` | 0.27.0 | Async HTTP client |
 | `pytest` | 7.4.3 | Test suite |
