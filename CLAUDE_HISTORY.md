@@ -230,16 +230,9 @@ All nine Sub-tasks (FPRM-45 → FPRM-53) closed Done.
 |---|---|---|---|
 | GET | `/admin/audit-log` | Bearer (system_admin only) | Paginated `?page=N&page_size=N` (page_size ≤ 200); filters: `object_type`, `actor_id`, `date_from`, `date_to` |
 
-### Post-Sprint manual step required
-
-Migration 003 (`create_audit_log`) is in the repo but won't apply to the live Railway DB unless `alembic upgrade head` runs at deploy time. Recommended: ensure the `fracttal-prm-backend` start command is `alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT`. If still not set, this is shared with the Sprint 2 follow-up — running it once applies all three migrations (001, 002, 003) in order.
-
-Until migration 003 runs, calls to `GET /admin/audit-log` will 500 on the live backend (audit_log table missing). Tests in CI use sqlite + create_all so they pass without this step.
-
 ### Known follow-ups for Sprint 4
 
-1. **Alembic upgrade on Railway** (still — same as Sprint 2 follow-up) — once the start command is updated, all 3 migrations apply in order
-2. **Use `require_permission` and `apply_tenant_filter` in every future router.** PROJECT_CONTEXT.md now documents this as the canonical pattern.
-3. **`log_audit_event` should be wired into state-change endpoints** as Sprint 4 builds out deal/quote/partner workflows. Audit utility exists; callers need to be added.
-4. **In-memory token blacklist + reset-email backend** still pending (carried from Sprint 2).
-5. **SonarCloud configuration** still pending (carried from Sprint 2).
+1. **Use `require_permission` and `apply_tenant_filter` in every future router.** PROJECT_CONTEXT.md now documents this as the canonical pattern.
+2. **`log_audit_event` should be wired into state-change endpoints** as Sprint 4 builds out deal/quote/partner workflows. Audit utility exists; callers need to be added.
+3. **In-memory token blacklist + reset-email backend** still pending (carried from Sprint 2).
+4. **SonarCloud configuration** still pending (carried from Sprint 2).

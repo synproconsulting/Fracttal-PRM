@@ -285,7 +285,6 @@ Current pinned versions on `main`. **Read this file before modifying — never r
 
 Active items only — historical Sprint follow-ups live in `CLAUDE_HISTORY.md`.
 
-- **Alembic migrations not yet applied to live Railway DB.** Sprint 2 added `001_create_users_table` and `002_create_password_reset_tokens` but they haven't been run against the live PostgreSQL. Auth endpoints will 500 in production until either the start command is updated to `alembic upgrade head && uvicorn …` or the migration is run once manually via Railway shell. CI tests use sqlite + `Base.metadata.create_all` so they bypass this.
 - **JWT logout blacklist is in-memory only.** Lost on backend restart; not safe for multi-instance deploys. Likely Sprint 3+ work.
 - **Password reset has no email backend yet.** Reset URLs are logged to stdout via `print`. A real email integration (SES / SendGrid / etc) is queued for a later sprint.
 - **SonarCloud scan fails on every CI run** (non-blocking — `continue-on-error: true`). Needs a `sonar-project.properties` file and a linked SonarCloud project to produce useful output.
