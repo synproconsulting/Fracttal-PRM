@@ -156,8 +156,8 @@ Fracttal-PRM/
 | Jira board ID | `67` |
 | Execution order field | `customfield_10071` |
 | Story points field | `customfield_10016` |
-| Sprint IDs (native) | Sprint 1: `501` |
-| Sprint fix version IDs | Sprint 1: `10528` |
+| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534` |
+| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561` |
 
 **Sprint query pattern:**
 ```python
