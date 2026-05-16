@@ -263,17 +263,18 @@ Current pinned versions on `main`. **Read this file before modifying — never r
 
 | Package | Version | Purpose |
 |---|---|---|
-| `fastapi` | 0.104.1 | Web framework |
-| `uvicorn` | 0.24.0 | ASGI server |
+| `fastapi` | 0.115.12 | Web framework (bumped in FPRM-40 sweep for Python 3.13 compat) |
+| `uvicorn` | 0.34.2 | ASGI server (bumped in FPRM-40 sweep) |
+| `starlette` | 0.46.2 | ASGI toolkit (pinned in FPRM-40 — fastapi vendors it; explicit pin keeps it in range fastapi 0.115.x requires) |
 | `sqlalchemy` | 2.0.36 | ORM (bumped in FPRM-38 for Python 3.13 compat) |
 | `pydantic` | 2.11.4 | Data validation (bumped in FPRM-37 after FPRM-19's 2.7.4 still missed a Python 3.13 wheel on Railpack) |
 | `psycopg2-binary` | 2.9.10 | PostgreSQL driver (bumped in FPRM-39; 2.9.10+ bundles libpq, removes Railpack libpq.so.5 dependency) |
-| `pyjwt` | 2.8.0 | JWT handling |
+| `pyjwt` | 2.10.1 | JWT handling (bumped in FPRM-40 sweep) |
 | `python-dotenv` | 1.0.0 | Env loading |
 | `alembic` | 1.14.0 | DB migrations (matched to sqlalchemy 2.0.36 in FPRM-38) |
-| `slowapi` | 0.1.9 | Rate limiting |
-| `httpx` | 0.27.0 | Async HTTP client |
-| `pytest` | 7.4.3 | Test suite |
+| `slowapi` | 0.1.9 | Rate limiting (PyPI latest as of FPRM-40 sweep — no newer release) |
+| `httpx` | 0.28.1 | Async HTTP client (bumped in FPRM-40 sweep) |
+| `pytest` | 8.3.5 | Test suite (bumped in FPRM-40 sweep) |
 | `passlib[bcrypt]` | 1.7.4 | Password hashing (Sprint 2 / FPRM-23) |
 | `bcrypt` | 4.0.1 | passlib backend |
 | `email-validator` | 2.1.0 | pydantic `EmailStr` support (Sprint 2 / FPRM-23) |
