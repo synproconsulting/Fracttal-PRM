@@ -2,7 +2,7 @@
 
 > Deep implementation reference for Claude Code sessions.
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
-> Last updated: Sprint 2 (Authentication delivered)
+> Last updated: Sprint 3 (RBAC, tenant isolation, field visibility, audit trail delivered)
 
 ---
 
@@ -43,6 +43,7 @@
 | POST | `/auth/logout` | Invalidate caller's token (in-memory blacklist). Returns 200. |
 | POST | `/auth/refresh` | Issue a new access token, invalidate the current one. Returns same shape as `/auth/login`. |
 | GET | `/auth/me` | Returns `{id, email, role, full_name}` for the authenticated user. |
+| GET | `/admin/audit-log` | Paginated audit-log query. Requires `system_admin` (via `require_permission("user_management:read_all")`). Query params: `page`, `page_size` (≤200), `object_type`, `actor_id`, `date_from`, `date_to`. Returns `{total, page, page_size, items}`. |
 
 ### JWT Token Spec
 
@@ -58,7 +59,13 @@
 
 ## 2. Database Schema
 
-> Tables documented here as Alembic migrations are written.
+### Tables (as of Sprint 3)
+
+| Table | Migration | Purpose |
+|---|---|---|
+| `users` | `001_create_users_table` | Authenticated users. Columns: `id` (UUID PK), `email` (unique indexed), `hashed_password`, `full_name`, `is_active`, `is_verified`, `role` (string — validated against `UserRole` enum at auth time), `partner_org_id` (UUID, nullable — tenant assignment for partner-side roles), `created_at`, `updated_at`. |
+| `password_reset_tokens` | `002_create_password_reset_tokens` | Single-use password reset tokens. Columns: `id` (UUID PK), `token` (unique indexed), `user_id` (FK → users.id), `expires_at`, `used` (bool), `created_at`. 1-hour expiry enforced in handler. |
+| `audit_log` | `003_create_audit_log` | Append-only audit trail. Columns: `id` (UUID PK), `timestamp` (indexed), `actor_id` (FK → users.id, indexed), `actor_role`, `action` (dot-notation e.g. `partner_profile.update`), `object_type` (indexed), `object_id` (UUID), `before_state` / `after_state` (JSON), `ip_address`, `notes`. Write via `audit.log_audit_event(...)`; read via `GET /admin/audit-log`. |
 
 **Migration strategy:** Alembic with `alembic upgrade head` as Railway pre-deploy command on `fracttal-prm-backend`.
 
@@ -79,11 +86,22 @@
 
 Flat module layout — all Python source files sit directly in `backend/`. No `src/` subdirectory, no `__init__.py` files. Tests go in `backend/tests/`. Imports are flat: `from models import ...`
 
-**Auth dependency pattern:** Always read `auth.py` before writing any new router. The correct import as of project start:
+**Auth + RBAC dependency pattern (Sprint 3 canonical).** Use these imports for any new router that needs authentication or permission gating:
+
 ```python
-from auth import get_current_user as require_auth
+from auth import get_current_user
+from permissions import require_permission, apply_tenant_filter
+from field_visibility import filter_sensitive_fields
 ```
-Verify this is still current before use — it may drift between sprints.
+
+| Need | Use |
+|---|---|
+| Authenticated route, no permission check | `Depends(get_current_user)` |
+| Authenticated + permission required | `Depends(require_permission("resource:action"))` — returns 403 if role lacks permission |
+| Partner-tenant scoping on a query | `query = apply_tenant_filter(query, current_user, ModelClass)` — partner roles filtered to own `partner_org_id`, internal roles see all |
+| Strip sensitive fields from response | `data = filter_sensitive_fields(model_dict, current_user)` — strips `margin_pct`/`internal_notes`/`cost_price` from partner-side responses |
+
+Permission strings follow `{resource}:{action}` — see `permissions.PERMISSIONS` for the full matrix. Don't duplicate the auth check inside the handler — `require_permission` handles 401 (no token, expired token, unknown role) AND 403 (token valid but role insufficient).
 
 ### Frontend (`frontend/src/`)
 
