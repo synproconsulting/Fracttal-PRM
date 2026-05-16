@@ -107,3 +107,14 @@ def test_protected_route_without_token():
 def test_health_still_public():
     response = client.get("/health")
     assert response.status_code == 200
+
+
+def test_public_routes_no_auth_required():
+    assert client.get("/health").status_code == 200
+    r = client.post("/auth/login", json={})
+    assert r.status_code != 401
+
+
+def test_private_route_requires_auth():
+    response = client.get("/auth/me")
+    assert response.status_code == 401
