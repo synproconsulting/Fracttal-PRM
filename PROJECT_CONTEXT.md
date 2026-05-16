@@ -2,7 +2,7 @@
 
 > Deep implementation reference for Claude Code sessions.
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
-> Last updated: Sprint 3 (RBAC, tenant isolation, field visibility, audit trail delivered)
+> Last updated: Sprint 4 (Core data model delivered — partner organizations, profiles, documents, users/invites, activities, category + commission config)
 
 ---
 
@@ -31,19 +31,37 @@
 |--------|------|------------|-------------|
 | GET | `/` | None | Root info — returns service name + version |
 | GET | `/health` | None | Health check — `{status, service, database}`, always 200 (DB unreachable → `database: unreachable`, never 500) |
-| POST | `/auth/register` | 10/min per IP | Create user. Body: `{email, password, full_name?}` → 201 `{id, email}`. 409 on duplicate email. |
+| POST | `/auth/register` | 10/min per IP | Create user with role `partner_user` (hardcoded — external users cannot self-elevate). Body: `{email, password, full_name?}` → 201 `{id, email}`. 409 on duplicate email. |
 | POST | `/auth/login` | 10/min per IP | Authenticate. Body: `{email, password}` → 200 `{access_token, token_type, expires_in}`. 401 on bad credentials or inactive account. |
 | POST | `/auth/password-reset/request` | None | Always returns 200 `{message: "If that email exists, …"}`. If user exists, generates a UUID reset token with 1h expiry and logs URL to stdout (no email backend yet). |
 | POST | `/auth/password-reset/confirm` | None | Body: `{token, new_password}`. 200 on success; 400 if token invalid/used/expired. |
+| POST | `/auth/accept-invite` | None | Body: `{token, password, full_name?}` → 201 `{access_token, token_type, expires_in, user}`. Creates a User with role + partner_org_id from the invite, marks invite accepted_at. 404 unknown token, 400 expired/already-accepted, 409 email-already-registered. |
+| GET | `/config/partner-categories` | None | List active partner categories — public so the registration form can render. Returns `{items: [{id, code, display_name, deal_reg_sla_hours, max_discount_pct, monthly_fee_usd, ...}]}`. |
 
 ### Bearer-Authenticated Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/auth/logout` | Invalidate caller's token (in-memory blacklist). Returns 200. |
-| POST | `/auth/refresh` | Issue a new access token, invalidate the current one. Returns same shape as `/auth/login`. |
-| GET | `/auth/me` | Returns `{id, email, role, full_name}` for the authenticated user. |
-| GET | `/admin/audit-log` | Paginated audit-log query. Requires `system_admin` (via `require_permission("user_management:read_all")`). Query params: `page`, `page_size` (≤200), `object_type`, `actor_id`, `date_from`, `date_to`. Returns `{total, page, page_size, items}`. |
+| Method | Path | Permission | Description |
+|--------|------|------------|-------------|
+| POST | `/auth/logout` | any | Invalidate caller's token (in-memory blacklist). Returns 200. |
+| POST | `/auth/refresh` | any | Issue a new access token, invalidate the current one. Returns same shape as `/auth/login`. |
+| GET | `/auth/me` | any | Returns `{id, email, role, full_name}` for the authenticated user. |
+| GET | `/admin/audit-log` | `user_management:read_all` (system_admin) | Paginated audit-log query. Query params: `page`, `page_size` (≤200), `object_type`, `actor_id`, `date_from`, `date_to`. Returns `{total, page, page_size, items}`. |
+| GET | `/partners` | `partner_organization:read_all` (internal) | List partner organizations. Query: `skip`, `limit` (≤200). Returns `{total, skip, limit, items}`. |
+| GET | `/partners/{id}` | any (tenant-scoped) | Get one partner. Partner-side users 403 unless the id matches their own `partner_org_id`. |
+| POST | `/partners` | `partner_organization:create` (channel_ops_admin, system_admin) | Create partner. Required: `legal_name`, `program_type`, `partner_category`. Audit logged. |
+| PATCH | `/partners/{id}` | channel_ops_admin / system_admin (any) or partner_admin (own only) | Update partner. `id` and `created_at` are immutable. Audit logged. |
+| GET | `/partners/{id}/documents` | any (tenant-scoped) | List documents for the partner. |
+| POST | `/partners/{id}/documents` | any (tenant-scoped) | Upload document metadata. Required: `document_type`, `document_name`, `file_path`. `proof_of_fiscal_domicile` rejected if `expiry_date < today - 90d`. Audit logged as `partner_document.upload`. |
+| PATCH | `/partners/{id}/documents/{doc_id}` | internal roles only | Review/update status, review_notes, expiry_date. Status change is logged as `partner_document.status_change`. |
+| POST | `/partners/{id}/users/invite` | partner_admin (own) / channel_ops_admin / system_admin | Generate a 72h invite token. Body: `{email, invited_role}` where invited_role ∈ {`partner_user`, `partner_admin`}. Audit `partner_user.invite_sent`. |
+| GET | `/partners/{id}/users` | any (tenant-scoped) | List users where `partner_org_id == {id}`. |
+| PATCH | `/partners/{id}/users/{user_id}` | partner_admin (own) / channel_ops_admin / system_admin | Disable/enable (`is_active`), role change (`partner_user` ↔ `partner_admin`), update `full_name`. Each change audited (`partner_user.disabled` / `partner_user.enabled` / `partner_user.role_changed`). |
+| GET | `/partners/{id}/activities` | any (tenant-scoped, internal-filtered) | List activities. Partner-side users only see `is_internal=False`. |
+| POST | `/partners/{id}/activities` | internal roles only (channel_manager+) | Create activity. Required: `activity_type`, `title`. `is_internal` defaults True. Audit `partner_activity.create`. |
+| PATCH | `/partners/{id}/activities/{activity_id}` | creator OR channel_ops_admin / system_admin | Update activity. Audit `partner_activity.update`. |
+| POST | `/config/partner-categories` | `system_config:update_all` (channel_ops_admin, system_admin) | Create a new partner category. |
+| GET | `/config/commission-structures` | internal roles only | List all commission structures across categories. |
+| PATCH | `/config/commission-structures/{id}` | `system_config:update_all` | Update commission_pct / subpartner_uplift_pct / applies_to_upsell / notes. Audit logged. |
 
 ### JWT Token Spec
 
@@ -59,13 +77,20 @@
 
 ## 2. Database Schema
 
-### Tables (as of Sprint 3)
+### Tables (as of Sprint 4)
 
 | Table | Migration | Purpose |
 |---|---|---|
-| `users` | `001_create_users_table` | Authenticated users. Columns: `id` (UUID PK), `email` (unique indexed), `hashed_password`, `full_name`, `is_active`, `is_verified`, `role` (string — validated against `UserRole` enum at auth time), `partner_org_id` (UUID, nullable — tenant assignment for partner-side roles), `created_at`, `updated_at`. |
+| `users` | `001_create_users_table` (+ FK added in `004`) | Authenticated users. Columns: `id` (UUID PK), `email` (unique indexed), `hashed_password`, `full_name`, `is_active`, `is_verified`, `role` (string — validated against `UserRole` enum at auth time), `partner_org_id` (UUID, nullable, FK → partner_organizations.id), `created_at`, `updated_at`. FK constraint `fk_users_partner_org_id` added in migration 004. |
 | `password_reset_tokens` | `002_create_password_reset_tokens` | Single-use password reset tokens. Columns: `id` (UUID PK), `token` (unique indexed), `user_id` (FK → users.id), `expires_at`, `used` (bool), `created_at`. 1-hour expiry enforced in handler. |
 | `audit_log` | `003_create_audit_log` | Append-only audit trail. Columns: `id` (UUID PK), `timestamp` (indexed), `actor_id` (FK → users.id, indexed), `actor_role`, `action` (dot-notation e.g. `partner_profile.update`), `object_type` (indexed), `object_id` (UUID), `before_state` / `after_state` (JSON), `ip_address`, `notes`. Write via `audit.log_audit_event(...)`; read via `GET /admin/audit-log`. |
+| `partner_organizations` | `004_create_partner_organizations` | Central partner record. Columns: `id` (UUID PK), `legal_name` (not null), `dba_name`, `website`, `hq_address` (JSONB), `phone`, `email`, `program_type` (ENUM distributor/subpartner), `partner_category` (ENUM master/promotor/reseller), `parent_partner_id` (FK self-ref, nullable), `tier` (ENUM registered/silver/gold, nullable), `territory`/`industries`/`authorized_offerings`/`delivery_capabilities` (JSONB), `status` (ENUM applicant/active/suspended/inactive/terminated), `monthly_fee_status` (ENUM current/overdue/waived), `contract_start_date`, `contract_end_date`, `auto_renew` (bool default true), `certification_expiry_date`, `hubspot_company_id`, `created_at`, `updated_at`. |
+| `partner_profiles` | `004_create_partner_organizations` | Onboarding questionnaire. Columns: `id`, `partner_org_id` (FK unique), `year_established`, `employee_count`, `annual_revenue`, `shareholders` (JSONB), `cmms_experience` + `cmms_experience_description`, `other_software_products`, `sales_marketing_strategy`, `technical_support_team` + `technical_support_description`, `implementation_services` + `implementation_description`, `partnership_goals`, `market_growth_plan`, `additional_info`, `profile_completeness_pct` (default 0), `updated_at`. |
+| `partner_documents` | `005_create_partner_documents` | Legal/compliance documents. Columns: `id`, `partner_org_id` (FK), `document_type` (ENUM: id_legal_representative, power_of_attorney, articles_of_incorporation, beneficial_owners_list, fiscal_id, proof_of_fiscal_domicile, bank_certificate, nda, insurance, other), `document_name`, `file_path`, `file_size_bytes`, `mime_type`, `uploaded_by_user_id` (FK users), `uploaded_at`, `expiry_date`, `status` (ENUM pending_review/approved/rejected/expired, default pending_review), `review_notes`, `reviewed_by_user_id` (FK users, nullable), `reviewed_at`. Indexed on `partner_org_id`. |
+| `partner_user_invites` | `006_create_partner_user_invites` | 72-hour invite tokens. Columns: `id`, `partner_org_id` (FK), `email`, `invited_role` (ENUM partner_user/partner_admin), `token` (unique indexed), `invited_by_user_id` (FK users), `expires_at`, `accepted_at` (nullable), `created_at`. |
+| `partner_activities` | `007_create_partner_activities` | Notes / tasks / calls / meetings / emails / status-change events. Columns: `id`, `partner_org_id` (FK indexed), `activity_type` (ENUM), `title`, `body`, `due_date`, `completed_at`, `created_by_user_id` (FK users), `assigned_to_user_id` (FK users, nullable), `is_internal` (bool, default true), `created_at`. |
+| `partner_category_configs` | `008_create_partner_category_and_commission` | Configurable partner tiers. Columns: `id`, `code` (unique indexed), `display_name`, `description`, `deal_reg_sla_hours`, `max_discount_pct` (numeric), `monthly_fee_usd` (numeric default 200), `is_active`, `created_at`, `updated_at`. **Seeded with 3 rows: master/promotor/reseller** (SLA 48/72/96h, discount cap 40/30/20%). |
+| `commission_structures` | `008_create_partner_category_and_commission` | Commission lookup per (category, type, year). Columns: `id`, `partner_category_code` (FK → partner_category_configs.code), `commission_type` (ENUM autonomous_sell/indirect_sell/direct_sell/co_sell_shared), `year` (ENUM year_1/year_2_plus), `commission_pct` (numeric), `subpartner_uplift_pct` (numeric default 10.0), `applies_to_upsell` (bool default true), `notes`. **Seeded with 24 rows** per Fracttal Distributor Agreement: autonomous_sell Y1=50% Y2+=30%, indirect_sell 30%/30%, direct_sell 10%/10%, co_sell_shared 25%/25%; subpartner uplift +10% applies only to Y1. |
 
 **Migration strategy:** Alembic with `alembic upgrade head` as Railway pre-deploy command on `fracttal-prm-backend`.
 
@@ -242,6 +267,43 @@ These are conscious design choices — not defaults or accidents. Understanding 
 **Consequence:** The SynPro VSDC backend must be running and accessible for Fracttal PRM's Control Centre data to load. The Fracttal PRM product record in the SynPro VSDC database must have correct credentials.
 
 **Do not:** Add direct Jira calls to the Control Centre frontend. The proxy pattern is load-bearing.
+
+---
+
+### AD-8 · `models.py` uses portable SQLAlchemy types; migrations use PostgreSQL-native types
+
+**Decision:** All Column definitions in `backend/models.py` use generic SQLAlchemy types (`Uuid`, `JSON`) rather than PostgreSQL-dialect types (`UUID`, `JSONB`). Alembic migration files, on the other hand, use `postgresql.UUID(as_uuid=True)` and `postgresql.JSONB` since the target is always PostgreSQL on Railway.
+
+**Why:** CI tests run against a fresh sqlite database created via `Base.metadata.create_all(...)`. Dialect-specific column types crash on sqlite (the original FPRM-35 incident in Sprint 2). Migration files only ever run against PostgreSQL via `alembic upgrade head` on Railway, so they can use the native, more efficient types.
+
+**Do not:** Import from `sqlalchemy.dialects.postgresql` inside `models.py`. If a feature genuinely needs JSONB-specific operators, gate it on the engine type at runtime rather than baking dialect-specific types into the model definition.
+
+---
+
+### AD-9 · Public + tenant-scoped + internal-only permission tiers
+
+**Decision:** Every new endpoint falls into one of four tiers:
+
+| Tier | Pattern | Examples |
+|---|---|---|
+| Public | No auth dependency | `GET /health`, `POST /auth/register`, `GET /config/partner-categories` |
+| Authenticated, tenant-scoped | `Depends(get_current_user)` + manual `partner_org_id` check for partner roles | `GET /partners/{id}`, `GET /partners/{id}/documents`, `GET /partners/{id}/activities` |
+| Permission-required | `Depends(require_permission("resource:action"))` | `POST /partners`, `GET /admin/audit-log` |
+| Internal-only | `Depends(get_current_user)` + manual `INTERNAL_ROLES` check OR a permission only internal roles hold | `PATCH /partners/{id}/documents/{doc_id}`, `GET /config/commission-structures` |
+
+**Why:** Most endpoints have a mixed permission story — for example, partner_admin can update their *own* org but not others. A single declarative permission string doesn't capture "own org only" — that requires an explicit comparison against `current_user.partner_org_id` in the handler. The `require_permission(...)` dependency handles purely-role-based gates; tenant scoping always lives in the handler.
+
+**Do not:** Try to fold tenant scoping into `require_permission`. Keep `require_permission` for role-based 403s; check tenant identity in handler bodies.
+
+---
+
+### AD-10 · Sub-tasks inherit fix-version and native sprint from their parent — never set explicitly on Sub-task issues
+
+**Decision:** When creating Sub-tasks via the Jira REST API, do not include `fixVersions` or `customfield_10020` (sprint) fields in the payload. Jira rejects subtask creates that set these fields directly.
+
+**Why:** Jira treats subtasks as fully owned by their parent — sprint and fix-version assignment cascade automatically. Setting them on the subtask returns `HTTP 400 — "Issue is a subtask and subtasks cannot be associated to a sprint"`.
+
+**Consequence:** Subtask JQL queries by sprint still work — Jira surfaces the parent's sprint membership on the subtask. The `fixVersion = X OR sprint = Y` dual-query from AD-4 catches subtasks correctly.
 
 ---
 
