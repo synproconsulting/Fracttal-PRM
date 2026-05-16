@@ -42,6 +42,114 @@ function Field({ label, name, value, onChange, errors, type = 'text', required =
   )
 }
 
+function Textarea({ label, name, value, onChange, errors, required = false, rows = 4 }) {
+  return (
+    <div>
+      <label style={labelStyle}>
+        {label} {required && <span style={{ color: '#c0392b' }}>*</span>}
+        <textarea
+          name={name}
+          value={value || ''}
+          onChange={(e) => onChange(name, e.target.value)}
+          rows={rows}
+          style={{ ...inputStyle, fontFamily: 'inherit', resize: 'vertical' }}
+        />
+      </label>
+      {errors[name] && <div style={errorStyle}>{errors[name]}</div>}
+    </div>
+  )
+}
+
+function Select({ label, name, value, onChange, options, errors, required = false, placeholder = 'Select...' }) {
+  return (
+    <div>
+      <label style={labelStyle}>
+        {label} {required && <span style={{ color: '#c0392b' }}>*</span>}
+        <select
+          name={name}
+          value={value || ''}
+          onChange={(e) => onChange(name, e.target.value)}
+          style={inputStyle}
+        >
+          <option value="">{placeholder}</option>
+          {options.map((opt) => {
+            const v = typeof opt === 'string' ? opt : opt.value
+            const l = typeof opt === 'string' ? opt : opt.label
+            return <option key={v} value={v}>{l}</option>
+          })}
+        </select>
+      </label>
+      {errors[name] && <div style={errorStyle}>{errors[name]}</div>}
+    </div>
+  )
+}
+
+function CheckboxGroup({ label, name, values, onChange, options }) {
+  const selected = Array.isArray(values) ? values : []
+  const toggle = (val) => {
+    const next = selected.includes(val)
+      ? selected.filter((s) => s !== val)
+      : [...selected, val]
+    onChange(name, next)
+  }
+  return (
+    <div>
+      <div style={labelStyle}>{label}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 6 }}>
+        {options.map((opt) => {
+          const v = typeof opt === 'string' ? opt : opt.value
+          const l = typeof opt === 'string' ? opt : opt.label
+          return (
+            <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'normal' }}>
+              <input
+                type="checkbox"
+                checked={selected.includes(v)}
+                onChange={() => toggle(v)}
+              />
+              {l}
+            </label>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function YesNoRadio({ label, name, value, onChange }) {
+  const set = (v) => onChange(name, v)
+  return (
+    <div>
+      <div style={labelStyle}>{label}</div>
+      <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'normal' }}>
+          <input type="radio" checked={value === true} onChange={() => set(true)} />
+          Yes
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'normal' }}>
+          <input type="radio" checked={value === false} onChange={() => set(false)} />
+          No
+        </label>
+      </div>
+    </div>
+  )
+}
+
+const INDUSTRY_OPTIONS = [
+  'Manufacturing',
+  'Mining',
+  'Energy',
+  'Healthcare',
+  'Facilities Management',
+  'Other',
+]
+
+const ANNUAL_REVENUE_OPTIONS = [
+  '<$1M',
+  '$1M-$5M',
+  '$5M-$20M',
+  '$20M+',
+]
+
 function validateStep(step, data) {
   const errors = {}
   if (step === 1) {
@@ -67,6 +175,7 @@ export default function RegisterPartner() {
   const [errors, setErrors] = useState({})
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState(null)
+  const [categories, setCategories] = useState([])
   const [searchParams] = useSearchParams()
   const saveTimer = useRef(null)
   const loadedRef = useRef(false)
@@ -91,6 +200,17 @@ export default function RegisterPartner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Fetch partner categories for Step 3
+  useEffect(() => {
+    fetch(`${API}/config/partner-categories`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data.items || [])
+        setCategories(list)
+      })
+      .catch(() => setCategories([]))
+  }, [])
+
   // Auto-save with debounce
   useEffect(() => {
     if (!draftId || !draftToken) return
@@ -105,6 +225,10 @@ export default function RegisterPartner() {
         delete writable.created_at
         delete writable.updated_at
         delete writable.submitted_at
+        // Strip UI-only flags (prefix _) before sending to backend
+        for (const k of Object.keys(writable)) {
+          if (k.startsWith('_')) delete writable[k]
+        }
         await fetch(`${API}/applications/${draftId}?draft_token=${draftToken}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -256,7 +380,94 @@ export default function RegisterPartner() {
         </section>
       )}
 
-      {step >= 3 && (
+      {step === 3 && (
+        <section>
+          <h2>Business Information</h2>
+          <Field label="Year Established" name="year_established" value={formData.year_established} onChange={handleField} errors={errors} type="number" />
+          <Textarea label="Shareholders / Ownership" name="shareholders_text" value={typeof formData.shareholders === 'string' ? formData.shareholders : (formData.shareholders ? JSON.stringify(formData.shareholders) : '')} onChange={(_n, v) => handleField('shareholders', v)} errors={errors} rows={3} />
+          <Field label="Number of Employees" name="employee_count" value={formData.employee_count} onChange={handleField} errors={errors} type="number" />
+          <Select label="Annual Revenue" name="annual_revenue" value={formData.annual_revenue} onChange={handleField} errors={errors} options={ANNUAL_REVENUE_OPTIONS} />
+          <CheckboxGroup label="Industry Sector Focus" name="industries" values={formData.industries} onChange={handleField} options={INDUSTRY_OPTIONS} />
+          <Field label="Countries / Regions Served (comma separated)" name="territory_text"
+            value={Array.isArray(formData.territory) ? formData.territory.join(', ') : (formData.territory || '')}
+            onChange={(_n, v) => handleField('territory', v.split(',').map((s) => s.trim()).filter(Boolean))}
+            errors={errors} />
+          {categories.length > 0 ? (
+            <CheckboxGroup
+              label="Requested Partner Categories"
+              name="requested_categories"
+              values={formData.requested_categories}
+              onChange={handleField}
+              options={categories.map((c) => ({ value: c.code, label: c.display_name || c.code }))}
+            />
+          ) : (
+            <p style={{ color: '#888', fontSize: 13, marginTop: 12 }}>Partner categories will load once the catalog is available.</p>
+          )}
+        </section>
+      )}
+
+      {step === 4 && (
+        <section>
+          <h2>Reseller Experience</h2>
+          <YesNoRadio
+            label="Do you currently resell other software?"
+            name="_resells_other"
+            value={typeof formData.other_software_products === 'string' && formData.other_software_products.length > 0 ? true : (formData._resells_other === false ? false : null)}
+            onChange={(name, v) => {
+              handleField('_resells_other', v)
+              if (v === false) handleField('other_software_products', '')
+            }}
+          />
+          {(formData._resells_other === true || (formData.other_software_products && formData.other_software_products.length > 0)) && (
+            <Textarea label="Please list the products" name="other_software_products" value={formData.other_software_products} onChange={handleField} errors={errors} />
+          )}
+          <YesNoRadio
+            label="Do you have CMMS experience?"
+            name="cmms_experience"
+            value={formData.cmms_experience}
+            onChange={(name, v) => {
+              handleField('cmms_experience', v)
+              if (v === false) handleField('cmms_experience_description', '')
+            }}
+          />
+          {formData.cmms_experience === true && (
+            <Textarea label="Please describe your CMMS experience" name="cmms_experience_description" value={formData.cmms_experience_description} onChange={handleField} errors={errors} />
+          )}
+          <Textarea label="Describe your sales and marketing strategy for CMMS software" name="sales_marketing_strategy" value={formData.sales_marketing_strategy} onChange={handleField} errors={errors} />
+        </section>
+      )}
+
+      {step === 5 && (
+        <section>
+          <h2>Technical Capabilities</h2>
+          <YesNoRadio
+            label="Do you have a technical support team?"
+            name="technical_support_team"
+            value={formData.technical_support_team}
+            onChange={(name, v) => {
+              handleField('technical_support_team', v)
+              if (v === false) handleField('technical_support_description', '')
+            }}
+          />
+          {formData.technical_support_team === true && (
+            <Textarea label="Describe your technical support team's qualifications and experience" name="technical_support_description" value={formData.technical_support_description} onChange={handleField} errors={errors} />
+          )}
+          <YesNoRadio
+            label="Do you offer implementation and training services?"
+            name="implementation_services"
+            value={formData.implementation_services}
+            onChange={(name, v) => {
+              handleField('implementation_services', v)
+              if (v === false) handleField('implementation_description', '')
+            }}
+          />
+          {formData.implementation_services === true && (
+            <Textarea label="Describe your implementation and training services" name="implementation_description" value={formData.implementation_description} onChange={handleField} errors={errors} />
+          )}
+        </section>
+      )}
+
+      {step >= 6 && (
         <section>
           <h2>{STEP_TITLES[step]}</h2>
           <p style={{ color: '#666' }}>This section will be enabled in an upcoming release. Your draft is saved.</p>
