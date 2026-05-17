@@ -7,7 +7,9 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum as SAEnum,
+    Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     Numeric,
@@ -433,3 +435,70 @@ class PartnerActivationChecklist(Base):
     activation_complete = Column(Boolean, default=False, nullable=False)
     activated_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class DealRegistration(Base):
+    """Sprint 8 / FPRM-125 — deal opportunities registered by partner_admins.
+
+    Lifecycle: draft -> submitted -> under_review -> approved | rejected | expired.
+    Commission rate is snapshotted from ``commission_structures`` at submission
+    time (immutable thereafter); conflict status is populated by the Sprint 10
+    conflict checker (defaults to ``not_checked``).
+    """
+
+    __tablename__ = "deal_registrations"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=False,
+    )
+    status = Column(String, nullable=False, default="draft")
+
+    # Customer info
+    customer_name = Column(String, nullable=False)
+    customer_domain = Column(String, nullable=True)
+    customer_contact_name = Column(String, nullable=True)
+    customer_contact_email = Column(String, nullable=True)
+    customer_contact_phone = Column(String, nullable=True)
+    customer_industry = Column(String, nullable=True)
+    customer_country = Column(String, nullable=True)
+    customer_region = Column(String, nullable=True)
+
+    # Deal info
+    deal_name = Column(String, nullable=False)
+    estimated_deal_value = Column(Float, nullable=True)
+    estimated_close_date = Column(Date, nullable=True)
+    deal_notes = Column(Text, nullable=True)
+    commission_type = Column(String, nullable=True)
+
+    # Commission snapshot (set at submission; immutable after)
+    commission_structure_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("commission_structures.id"),
+        nullable=True,
+    )
+    commission_rate_snapshot = Column(Float, nullable=True)
+
+    # Conflict check (Sprint 10 populates these; Sprint 8 leaves them as defaults)
+    conflict_checked_at = Column(DateTime, nullable=True)
+    conflict_status = Column(String, nullable=False, default="not_checked")
+    conflict_notes = Column(Text, nullable=True)
+
+    # Lifecycle + reviewer
+    submitted_at = Column(DateTime, nullable=True)
+    reviewer_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    review_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_deal_registrations_partner_status", "partner_org_id", "status"),
+    )
