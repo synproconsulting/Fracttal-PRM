@@ -5,6 +5,10 @@ import ApplicationQueue from './pages/ApplicationQueue.jsx'
 import ApplicationReview from './pages/ApplicationReview.jsx'
 import ApplicationResume from './pages/ApplicationResume.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
+import Login from './pages/Login.jsx'
+import AcceptInvite from './pages/AcceptInvite.jsx'
+import PartnerPortalLayout from './layouts/PartnerPortalLayout.jsx'
+import PartnerHome from './pages/PartnerHome.jsx'
 
 function Landing() {
   return (
@@ -14,6 +18,9 @@ function Landing() {
       <p>
         <Link to="/register">Apply to become a Fracttal Distribution Partner</Link>
       </p>
+      <p>
+        <Link to="/login">Sign in to the partner portal</Link>
+      </p>
     </div>
   )
 }
@@ -22,9 +29,23 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/login" element={<Login />} />
       <Route path="/register" element={<RegisterPartner />} />
       <Route path="/register/confirmation" element={<RegisterConfirmation />} />
       <Route path="/resume-application" element={<ApplicationResume />} />
+      <Route path="/accept-invite" element={<AcceptInvite />} />
+
+      <Route
+        path="/portal"
+        element={
+          <ProtectedRoute roles={["partner_user", "partner_admin"]}>
+            <PartnerPortalLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="home" element={<PartnerHome />} />
+      </Route>
+
       <Route
         path="/internal/applications"
         element={
