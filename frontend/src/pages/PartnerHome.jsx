@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
+import ActivationChecklist from '../components/ActivationChecklist.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -96,6 +97,11 @@ export default function PartnerHome() {
         <span style={{ fontSize: 13, color: '#666' }}>{payload?.email}</span>
       </div>
 
+      {activation && !activation.activation_complete && (
+        <div style={{ marginBottom: 24 }}>
+          <ActivationChecklist partnerId={payload.partner_org_id} token={token} />
+        </div>
+      )}
       {activationError && !activation && (
         <div
           style={{

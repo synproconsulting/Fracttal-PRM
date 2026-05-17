@@ -414,3 +414,22 @@ class PartnerApplicationMessage(Base):
     sender_email = Column(String, nullable=False)
     message = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PartnerActivationChecklist(Base):
+    __tablename__ = "partner_activation_checklists"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        unique=True,
+        nullable=False,
+    )
+    profile_complete = Column(Boolean, default=False, nullable=False)
+    documents_uploaded = Column(Boolean, default=False, nullable=False)
+    terms_signed = Column(Boolean, default=False, nullable=False)
+    baseline_training_complete = Column(Boolean, default=False, nullable=False)
+    activation_complete = Column(Boolean, default=False, nullable=False)
+    activated_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

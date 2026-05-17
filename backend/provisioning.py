@@ -7,6 +7,7 @@ application is in status=approved. Creates the full partner record:
     2. PartnerProfile linked to the new org
     3. PartnerUserInvite for the applicant_email with invited_role=partner_admin,
        7-day expiry, fresh ``token`` value (hex UUID)
+    4. PartnerActivationChecklist (all-False) — added Sprint 7 / FPRM-107
 
 Returns ``{partner_org_id, invite_token}``. The caller is responsible for
 writing the ``partner_application.approved`` audit entry (which it already does
@@ -24,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from models import (
     InvitedRole,
+    PartnerActivationChecklist,
     PartnerApplication,
     PartnerCategory,
     PartnerOrganization,
@@ -115,6 +117,14 @@ def provision_partner_from_application(
         additional_info=application.additional_info,
     )
     db.add(profile)
+
+    # Sprint 7 / FPRM-107: every new partner gets an activation checklist row
+    # with all gates False. recalculate_activation flips them as evidence arrives.
+    checklist = PartnerActivationChecklist(
+        id=uuid.uuid4(),
+        partner_org_id=org.id,
+    )
+    db.add(checklist)
 
     invite_token = uuid.uuid4().hex
     invite_invited_by = reviewer_id
