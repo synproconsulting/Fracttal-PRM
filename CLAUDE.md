@@ -71,6 +71,24 @@ Committing directly to `main` bypasses the audit trail and CI gates. If a direct
 
 **One PR at a time — no exceptions.** Before opening any PR (feature, fix, or docs), verify that zero PRs are currently open in the repository via the GitHub API. If any PR is open, wait for it to merge before opening a new one. This applies to all PR types without exception.
 
+
+**Every Claude Code session must start with a clean working tree pulled from main.** Before running `claude --dangerously-skip-permissions`, execute this sequence in order — no exceptions:
+
+```cmd
+cd "C:\Johan\SynPro Consulting\Fracttal PRM"
+git fetch origin
+git status
+git checkout main
+git reset --hard origin/main
+git clean -fd --exclude=Documentation/
+```
+
+This discards any untracked files or locally-modified tracked files left by a prior Claude Code session and aligns the working tree exactly with `origin/main`, while preserving the local-only `Documentation/` folder (RUNBOOK.md, sprint prompts, contracts, requirements docs). Everything else canonical is on GitHub — `git clean -fd --exclude=Documentation/` is always safe. If you skip this step and Claude Code operates on a stale or dirty working tree, it will read outdated CLAUDE.md, PROJECT_CONTEXT.md, and CLAUDE_HISTORY.md files and produce incorrect results.
+
+**`git pull origin main` alone is not sufficient.** A `git pull` does not remove untracked files written by prior Claude Code sessions. Use `git reset --hard origin/main && git clean -fd --exclude=Documentation/` to guarantee a clean state without losing the local `Documentation/` reference folder.
+
+**Never run `git clean -fd` without `--exclude=Documentation/`.** The repo-root `Documentation/` folder is untracked but canonical — it holds RUNBOOK.md (read by every sprint prompt), every sprint's ClaudeCode prompt, partner contracts, and requirements docs. A bare `git clean -fd` deletes all of it including the prompt currently being executed.
+
 ---
 
 ## Key Architectural Decisions
