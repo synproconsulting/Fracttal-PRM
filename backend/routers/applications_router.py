@@ -29,10 +29,12 @@ from auth import decode_access_token
 from audit import log_audit_event
 from database import get_db
 from models import (
+    ApplicationMessageSender,
     ApplicationStatus,
     AuditLog,
     PartnerApplication,
     PartnerApplicationDocument,
+    PartnerApplicationMessage,
     User,
 )
 from permissions import has_permission, require_permission
@@ -518,3 +520,98 @@ def application_timeline(
         }
         for e in entries
     ]
+
+
+# ---------------------- Sprint 6 message-thread endpoints (FPRM-91) ----------------------
+
+
+def _serialize_message(m: PartnerApplicationMessage) -> dict:
+    return jsonable_encoder({c.name: getattr(m, c.name) for c in m.__table__.columns})
+
+
+@router.get("/{application_id}/messages")
+def list_messages(
+    application_id: uuid.UUID,
+    draft_token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Public via ``?draft_token=...`` OR internal via Bearer (partner_application:read_all)."""
+    if draft_token:
+        _validate_draft_token(application_id, draft_token, db)
+    else:
+        user = _user_from_bearer(authorization, db)
+        if not user:
+            raise HTTPException(status_code=401, detail="draft_token or authentication required")
+        if not has_permission(user.role, "partner_application:read_all"):
+            raise HTTPException(
+                status_code=403,
+                detail="Permission denied: partner_application:read_all required",
+            )
+        _get_application_or_404(application_id, db)
+
+    rows = (
+        db.query(PartnerApplicationMessage)
+        .filter(PartnerApplicationMessage.application_id == application_id)
+        .order_by(PartnerApplicationMessage.created_at.asc())
+        .all()
+    )
+    return [_serialize_message(r) for r in rows]
+
+
+@router.post("/{application_id}/messages", status_code=201)
+def post_message(
+    application_id: uuid.UUID,
+    payload: dict = Body(...),
+    draft_token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Post a message to the application thread.
+
+    Public path (``?draft_token=...``) records sender_type=applicant and uses
+    ``sender_email`` from the request body (falling back to the application's
+    applicant_email). Internal path (JWT) records sender_type=internal,
+    sender_id=current_user.id, sender_email=current_user.email.
+    """
+    message_text = (payload.get("message") or "").strip() if payload else ""
+    if not message_text:
+        raise HTTPException(status_code=422, detail="message is required")
+
+    sender_type = None
+    sender_id = None
+    sender_email = ""
+
+    if draft_token:
+        app_record = _validate_draft_token(application_id, draft_token, db)
+        sender_type = ApplicationMessageSender.applicant
+        sender_email = (payload.get("sender_email") or app_record.applicant_email or "").strip()
+        if not sender_email:
+            raise HTTPException(status_code=422, detail="sender_email is required")
+    else:
+        user = _user_from_bearer(authorization, db)
+        if not user:
+            raise HTTPException(status_code=401, detail="draft_token or authentication required")
+        if not has_permission(user.role, "partner_application:read_all"):
+            raise HTTPException(
+                status_code=403,
+                detail="Permission denied: partner_application:read_all required",
+            )
+        _get_application_or_404(application_id, db)
+        sender_type = ApplicationMessageSender.internal
+        sender_id = user.id
+        sender_email = user.email
+
+    msg = PartnerApplicationMessage(
+        id=uuid.uuid4(),
+        application_id=application_id,
+        sender_type=sender_type,
+        sender_id=sender_id,
+        sender_email=sender_email,
+        message=message_text,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return _serialize_message(msg)
+
