@@ -181,6 +181,8 @@ class PartnerDocument(Base):
     review_notes = Column(Text, nullable=True)
     reviewed_by_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    info_request_message = Column(Text, nullable=True)
 
 
 class InvitedRole(str, enum.Enum):

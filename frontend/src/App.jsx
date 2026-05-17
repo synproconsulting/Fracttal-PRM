@@ -2,6 +2,7 @@ import { Routes, Route, Link } from 'react-router-dom'
 import RegisterPartner from './pages/RegisterPartner.jsx'
 import RegisterConfirmation from './pages/RegisterConfirmation.jsx'
 import ApplicationQueue from './pages/ApplicationQueue.jsx'
+import ApplicationReview from './pages/ApplicationReview.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 
 function Landing() {
@@ -27,6 +28,14 @@ export default function App() {
         element={
           <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
             <ApplicationQueue />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/internal/applications/:id"
+        element={
+          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
+            <ApplicationReview />
           </ProtectedRoute>
         }
       />
