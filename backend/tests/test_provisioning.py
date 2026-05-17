@@ -1,4 +1,4 @@
-"""Tests for backend/provisioning.py (FPRM-92)."""
+"""Tests for backend/provisioning.py (FPRM-92 + FPRM-107 checklist row)."""
 import os
 import sys
 import uuid
@@ -17,6 +17,7 @@ import models  # noqa: F401
 from models import (
     ApplicationStatus,
     InvitedRole,
+    PartnerActivationChecklist,
     PartnerApplication,
     PartnerCategory,
     PartnerOrganization,
@@ -148,6 +149,28 @@ def test_provisioning_creates_invite(db_session):
     assert invite.invited_by_user_id == reviewer.id
 
 
+def test_provisioning_creates_activation_checklist(db_session):
+    """FPRM-107 / Sprint 7 — new partners get an all-False checklist row."""
+    reviewer = make_user(UserRole.channel_manager)
+    db_session.add(reviewer)
+    db_session.commit()
+    app_record = make_submitted_application(db_session)
+
+    result = provision_partner_from_application(db_session, app_record.id, reviewer.id)
+    checklist = (
+        db_session.query(PartnerActivationChecklist)
+        .filter_by(partner_org_id=result["partner_org_id"])
+        .first()
+    )
+    assert checklist is not None
+    assert checklist.profile_complete is False
+    assert checklist.documents_uploaded is False
+    assert checklist.terms_signed is False
+    assert checklist.baseline_training_complete is False
+    assert checklist.activation_complete is False
+    assert checklist.activated_at is None
+
+
 def test_provisioning_links_application_to_org(db_session):
     reviewer = make_user(UserRole.channel_manager)
     db_session.add(reviewer)
@@ -182,7 +205,6 @@ def test_provisioning_is_idempotent(db_session):
     second = provision_partner_from_application(db_session, app_record.id, reviewer.id)
     assert first["partner_org_id"] == second["partner_org_id"]
     assert second["already_provisioned"] is True
-    # Only one org should exist for this application
     orgs = db_session.query(PartnerOrganization).filter_by(id=first["partner_org_id"]).all()
     assert len(orgs) == 1
 
@@ -210,7 +232,6 @@ def test_approve_endpoint_triggers_provisioning(db_session):
     db_session.add(reviewer)
     db_session.commit()
 
-    # public create+submit
     def _db_only():
         yield db_session
     app.dependency_overrides[get_db] = _db_only
@@ -220,7 +241,6 @@ def test_approve_endpoint_triggers_provisioning(db_session):
     finally:
         app.dependency_overrides.clear()
 
-    # reviewer approves
     def _user():
         return reviewer
     app.dependency_overrides[get_db] = _db_only
@@ -237,3 +257,9 @@ def test_approve_endpoint_triggers_provisioning(db_session):
     assert org is not None
     invite = db_session.query(PartnerUserInvite).filter_by(partner_org_id=org.id).first()
     assert invite is not None
+    # FPRM-107: approve flow must create the activation checklist too.
+    checklist = (
+        db_session.query(PartnerActivationChecklist).filter_by(partner_org_id=org.id).first()
+    )
+    assert checklist is not None
+    assert checklist.activation_complete is False
