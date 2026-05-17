@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 7 (Partner portal shell + activation checklist — Phase 2 complete)
+> Last updated: Sprint 8 (Deal registration foundation — Phase 3 underway)
 
 
 
@@ -153,6 +153,16 @@
 | PATCH | `/partner-profiles/{partner_org_id}` | partner_admin (own) / channel_ops_admin / system_admin | Sprint 7 / FPRM-106. Updates whitelisted PartnerProfile fields, recalculates `profile_completeness_pct` (fraction of 11 PROFILE_FIELDS non-null × 100), triggers `recalculate_activation` (AD-14). Audit `partner_profile.update`. |
 | GET | `/partners/{id}/activation` | partner_admin (own) / any internal role | Sprint 7 / FPRM-107. Returns the PartnerActivationChecklist. Auto-initialises the row by calling `recalculate_activation` if one is missing (for orgs that pre-date Sprint 7). |
 | POST | `/partners/{id}/activation/recalculate` | channel_manager / channel_ops_admin / system_admin | Sprint 7 / FPRM-107. Forces a recalc of every checklist flag. Audit `partner_activation.recalculated`. |
+| POST | `/deal-registrations` | partner_admin (own org) | Sprint 8 / FPRM-128. Create a draft deal. **Activation-gated** — returns `412 {detail: "Partner activation incomplete", activation_url: "/portal/home"}` if `partner_activation_checklists.activation_complete=False` (or no checklist row exists) for the user's org. Required body: `customer_name`, `deal_name`. Audit `deal_registration.created`. |
+| GET | `/deal-registrations` | any (tenant-scoped) | Sprint 8 / FPRM-128. List deals. partner roles see only own org; internal roles see all (optionally filtered by `?partner_org_id=`). Supports `?status=&limit=&offset=`. |
+| GET | `/deal-registrations/{id}` | any (tenant-scoped) | Sprint 8 / FPRM-128. Read one deal. partner_admin 403 on cross-org access. |
+| PATCH | `/deal-registrations/{id}` | partner_admin (own org, draft only) | Sprint 8 / FPRM-128. Update writable customer + deal fields. 400 if status ≠ draft. Audit `deal_registration.updated`. |
+| POST | `/deal-registrations/{id}/submit` | partner_admin (own org) | Sprint 8 / FPRM-128. Transitions `draft|info_required` → `submitted`, sets `submitted_at`, snapshots `(commission_structure_id, commission_rate_snapshot)` by resolving `commission_structures` on `(partner_category_code, commission_type, year_1)`. If no row matches, commission fields stay null (no error). Audit `deal_registration.submitted`. |
+| DELETE | `/deal-registrations/{id}` | partner_admin (own org, draft only) | Sprint 8 / FPRM-128. Hard-delete a draft. 400 if status ≠ draft. Audit `deal_registration.deleted`. |
+| GET | `/internal/deals` | channel_manager / channel_ops_admin / system_admin | Sprint 8 / FPRM-134. Internal queue. Supports `?status=&partner_org_id=&limit=&offset=`. Orders by `submitted_at` desc nulls-last. partner_admin → 403. |
+| POST | `/internal/deals/{id}/start-review` | review roles | Sprint 8 / FPRM-134. `submitted → under_review`. Records reviewer_id. Audit `deal_registration.review_started`. |
+| POST | `/internal/deals/{id}/approve` | review roles | Sprint 8 / FPRM-134. `under_review → approved`. Requires body `{review_notes}` (422 otherwise). Audit `deal_registration.approved`. |
+| POST | `/internal/deals/{id}/reject` | review roles | Sprint 8 / FPRM-134. `under_review → rejected`. Requires body `{review_notes}` (422 otherwise). Audit `deal_registration.rejected`. |
 
 
 
@@ -218,6 +228,7 @@
 
 | `partner_application_messages` | `011_create_partner_application_messages` | Message thread between applicants and internal reviewers (Sprint 6 / FPRM-91). Columns: `id` (UUID PK), `application_id` (FK partner_applications, indexed), `sender_type` (ENUM `application_message_sender`: applicant/internal), `sender_id` (FK users.id, nullable — null when sender_type=applicant), `sender_email`, `message` (TEXT), `created_at`. |
 | `partner_activation_checklists` | `012_create_partner_activation_checklists` | Sprint 7 / FPRM-107 / AD-14. One row per partner org, created by `provision_partner_from_application` with all flags False. Recomputed by `backend/activation.py` `recalculate_activation(db, partner_org_id)` after every profile update, document approval, and contract-date change. Columns: `id` (UUID PK), `partner_org_id` (UUID FK unique to `partner_organizations.id`), `profile_complete` (bool — true when `profile_completeness_pct >= 80`), `documents_uploaded` (bool — true when both `fiscal_id` + `id_legal_representative` documents are approved), `terms_signed` (bool — true when `partner_organizations.contract_start_date IS NOT NULL`), `baseline_training_complete` (bool, default False — hardcoded False until Sprint 10 replaces it), `activation_complete` (bool — true when the three required gates are all True; baseline_training intentionally excluded from the gate), `activated_at` (datetime, set on the first transition to `activation_complete=True`), `updated_at`. |
+| `deal_registrations` | `013_create_deal_registrations` | Sprint 8 / FPRM-125. Deal opportunities registered by partner_admins. Columns: `id` (UUID PK), `partner_org_id` (UUID FK to `partner_organizations.id`, not null), `status` (string, default `draft`; lifecycle: draft/submitted/under_review/info_required/approved/rejected/expired), customer info — `customer_name` (not null), `customer_domain`, `customer_contact_name`, `customer_contact_email`, `customer_contact_phone`, `customer_industry`, `customer_country`, `customer_region`; deal info — `deal_name` (not null), `estimated_deal_value` (Float), `estimated_close_date` (Date), `deal_notes` (Text), `commission_type` (string); commission snapshot (immutable after submit) — `commission_structure_id` (UUID FK to `commission_structures.id`, nullable), `commission_rate_snapshot` (Float); conflict check (Sprint 10) — `conflict_checked_at` (DateTime), `conflict_status` (string, default `not_checked`), `conflict_notes` (Text); lifecycle/review — `submitted_at`, `reviewer_id` (UUID FK to `users.id`), `reviewed_at`, `review_notes` (Text), `created_at`, `updated_at`. Index on `(partner_org_id, status)`. |
 
 
 
@@ -305,31 +316,41 @@ Vite + React 18, with `react-router-dom@^6` for client-side routing (introduced 
 
 frontend/src/
 
-├── main.jsx                         # ReactDOM root, wraps <App/> in <BrowserRouter>
+├── main.jsx                         # ReactDOM root, wraps <App/> in <BrowserRouter>; imports Fracttal One tokens
 
-├── App.jsx                          # Top-level <Routes>: /, /login, /register, /register/confirmation, /resume-application, /accept-invite, /portal/* (nested under PartnerPortalLayout), /internal/applications, /internal/applications/:id, /internal/partners/:id/profile, /internal/partners/:id/documents
+├── App.jsx                          # Top-level <Routes>: /, /login, /register, /register/confirmation, /resume-application, /accept-invite, /portal/* (nested under PartnerPortalLayout including /portal/deals*), /internal/applications, /internal/applications/:id, /internal/partners/:id/profile, /internal/partners/:id/documents, /internal/deals
+
+├── styles/
+
+│   └── tokens.css                   # Sprint 8 / FPRM-122 — Fracttal One design system: CSS custom properties (Inter font, #1A6EBB primary, #F5F7FA sidebar, status colours, spacing scale, radius) + utility classes (fp-btn, fp-card, fp-badge, fp-table, fp-modal, fp-field floating-label inputs, fp-shell portal chrome, fp-tile dashboard cards, fp-progress, fp-checklist, fp-page wrappers, fp-alert)
 
 ├── layouts/
 
-│   └── PartnerPortalLayout.jsx      # Sprint 7 / FPRM-105 — authenticated partner shell: top nav (org name + email + logout), left sidebar (Home + future items disabled), mobile hamburger, role guard
+│   └── PartnerPortalLayout.jsx      # Sprint 7 / FPRM-105 → restyled in Sprint 8 / FPRM-122. Left sidebar with icon + label nav (Home, Profile, Documents, Register a Deal, My Pipeline; Commissions/Training/Assets/Support disabled until later sprints), top header with breadcrumb left + org name / email / logout right, mobile hamburger drawer.
 
 ├── components/
 
 │   ├── ProtectedRoute.jsx           # JWT auth guard - decodes localStorage 'token', redirects to /login if missing/invalid or role not in allowed list
 
-│   └── ActivationChecklist.jsx      # Sprint 7 / FPRM-107 — fetches GET /partners/{id}/activation, renders progress bar + 3 checklist items with action links
+│   └── ActivationChecklist.jsx      # Sprint 7 / FPRM-107 → restyled Sprint 8 / FPRM-122. Card with progress bar + fraction (3 / 3), per-item left colour indicator (green when done) and call-to-action links.
 
 └── pages/
 
-    ├── Login.jsx                    # Sprint 7 / FPRM-105 — POST /auth/login + role-based redirect (partner → /portal/home, internal → /internal/applications)
+    ├── Login.jsx                    # Sprint 7 / FPRM-105 → restyled Sprint 8 / FPRM-122 — centred Fracttal-branded auth card, floating-label inputs, primary blue button.
 
-    ├── AcceptInvite.jsx             # Sprint 7 / FPRM-105 — reads ?token=, POST /auth/accept-invite, stores JWT, redirects to /portal/home
+    ├── AcceptInvite.jsx             # Sprint 7 / FPRM-105 → restyled Sprint 8 / FPRM-122 — same auth card style, floating labels.
 
-    ├── PartnerHome.jsx              # Sprint 7 / FPRM-105 — welcome banner + status badge + ActivationChecklist (when not yet complete) + disabled task tiles (deal reg / pipeline / training / assets — Sprint 8+)
+    ├── PartnerHome.jsx              # Sprint 7 / FPRM-105 → restyled Sprint 8 / FPRM-122 — welcome header + status badge + activation progress bar + ActivationChecklist + dashboard tile grid; "Register a Deal" tile **unlocked** and routes to /portal/deals/new.
 
-    ├── PartnerProfile.jsx           # Sprint 7 / FPRM-106 — adapts to /portal/profile (self-service) and /internal/partners/:id/profile (channel team). Org summary + profile fields + view/edit toggle + completeness progress bar
+    ├── PartnerProfile.jsx           # Sprint 7 / FPRM-106 → restyled Sprint 8 / FPRM-122 — adapts to /portal/profile and /internal/partners/:id/profile. Floating-label edit form, save button top-right, completeness progress bar + badge.
 
-    ├── PartnerDocuments.jsx         # Sprint 7 / FPRM-108 — list + status badges, partner upload (PDF/JPG/PNG ≤ 10 MB), internal approve/reject with reject modal that requires review_notes
+    ├── PartnerDocuments.jsx         # Sprint 7 / FPRM-108 → restyled Sprint 8 / FPRM-122. Top-right upload button opens a modal; table with status badge chips (approved=green, pending_review=yellow, rejected=red); internal Approve/Reject inline actions; reject modal requires review_notes.
+
+    ├── DealRegistrationForm.jsx     # Sprint 8 / FPRM-131 — two-section form (Customer / Deal) at /portal/deals/new and /portal/deals/:id/edit. Floating-label inputs, industry/country dropdowns, Save-as-draft + Submit (Submit calls Save first, then POST /submit). 412 response surfaces an inline activation banner with link to /portal/home. Successful submit sets a sessionStorage toast and redirects to /portal/deals.
+
+    ├── DealList.jsx                 # Sprint 8 / FPRM-131 — partner pipeline at /portal/deals. Status badge chips (draft=grey, submitted=blue, under_review/info_required=yellow, approved=green, rejected=red, expired=grey), USD-formatted value, link to edit. Empty state with CTA, success toast on first render after submit.
+
+    ├── DealQueue.jsx                # Sprint 8 / FPRM-134 — internal deal queue at /internal/deals. Filter tabs (All / Submitted / Under review / Approved / Rejected), table with partner-org snippet, status badges. Per-row context actions: Start review (submitted), Approve / Reject (under_review). Approve and Reject open a modal that requires review_notes before confirming.
 
     ├── RegisterPartner.jsx          # Public 10-step partner application form (Sprint 5)
 

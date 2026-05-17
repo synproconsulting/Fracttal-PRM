@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** Sprint 7 closed — Phase 2 complete. Authenticated partner portal is live: `PartnerPortalLayout` shell, partner-side `/portal/home`, `/portal/profile`, `/portal/documents`, and the activation checklist gate (`partner_activation_checklists` table, `activation.recalculate_activation` — AD-14). Backend gains `GET+PATCH /partner-profiles/{partner_org_id}` (Sprint 7 / FPRM-106), `GET+POST /partners/{id}/activation*` (FPRM-107), and JWT + `/auth/me` now carry `partner_org_id` (FPRM-119). Internal team has counterpart `/internal/partners/{id}/profile` and `/internal/partners/{id}/documents` review pages; document approval triggers activation recalc. Phase 3 (deal registration) is next — see CLAUDE_HISTORY.md Phase 3 readiness note. Backend and frontend live on Railway. Sprint history in CLAUDE_HISTORY.md.
+**Current state:** Sprint 8 closed — Phase 3 (Deal Registration) underway. Fracttal One design tokens (`frontend/src/styles/tokens.css`) restyle every Sprint 7 portal component. Backend `DealRegistration` model + migration 013 land (FPRM-125), partner-facing CRUD + submit endpoints (`POST/GET/PATCH/DELETE /deal-registrations`, `POST /deal-registrations/{id}/submit`) enforce the activation gate (412 with `activation_url` when `partner_activation_checklists.activation_complete=False`) and snapshot commission rate from `commission_structures` at submit (FPRM-128). Internal review queue endpoints (`GET /internal/deals`, `POST /internal/deals/{id}/{start-review,approve,reject}`) require review-role JWT and audit-log every state change (FPRM-134). Frontend gains `DealRegistrationForm` + `DealList` at `/portal/deals*` and `DealQueue` at `/internal/deals`. Sprint 8 fix version 10599 + native sprint 572 closed. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 
@@ -198,8 +198,8 @@ Fracttal-PRM/
 | Jira board ID | `67` |
 | Execution order field | `customfield_10071` |
 | Story points field | `customfield_10016` |
-| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539` |
-| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566` |
+| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539`, Sprint 8: `572` |
+| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566`, Sprint 8: `10599` |
 
 **Sprint query pattern:**
 ```python
