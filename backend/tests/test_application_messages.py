@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from main import app
-from auth import get_current_user
+from auth import get_current_user, create_access_token
 from database import Base, get_db
 import models  # noqa: F401
 from models import PartnerApplication, ApplicationStatus, User
@@ -143,24 +143,25 @@ def test_message_bad_token_403(db_session):
 
 
 def test_post_message_as_internal(db_session):
+    """The message endpoint reads the Authorization header directly (not via
+    Depends(get_current_user)), so the dependency override is not enough — we
+    must mint a real JWT for the reviewer."""
     reviewer = make_user(UserRole.channel_manager)
     db_session.add(reviewer)
     db_session.commit()
 
-    # First create an application using public endpoints
     override_db(db_session)
     client = TestClient(app)
     try:
         app_id, _ = _make_submitted(client, db_session)
-    finally:
-        clear_overrides()
 
-    # Now switch to the internal user and post a message
-    override_internal_user(db_session, reviewer)
-    try:
+        token = create_access_token(
+            {"sub": str(reviewer.id), "email": reviewer.email, "role": reviewer.role}
+        )
         r = client.post(
             f"/applications/{app_id}/messages",
             json={"message": "Need tax cert please"},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 201, r.text
         body = r.json()
