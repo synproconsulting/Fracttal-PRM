@@ -884,3 +884,75 @@ Sprint 8 begins **Deal Registration** (Phase 3). Pre-implementation notes:
 5. **Phase 2 happy-path validation** — run `Documentation/RUNBOOK.md` § 11 (added in this PR) end-to-end against production before opening Sprint 8.
 6. **Carry-forward:** in-memory token blacklist, password-reset email backend, SonarCloud configuration.
 
+---
+
+## Sprint 8 — UI Polish + Deal Registration Foundation (Phase 3 kick-off)
+
+**Started:** 2026-05-17
+**Closed:** 2026-05-17 (single-day intensive)
+**Fix Version ID:** `10599`
+**Native Sprint ID:** `572`
+**Phase 3 epic:** FPRM-121 — Deal Registration
+
+### Sprint 8 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-122 | UI polish — apply Fracttal One design language to portal components | Done | #53 | New `frontend/src/styles/tokens.css` (Inter + #1A6EBB + utility classes for buttons/cards/badges/tables/modals/floating-label inputs/portal shell/tiles/progress/checklist). PartnerPortalLayout, Login, AcceptInvite, PartnerHome, PartnerProfile, PartnerDocuments, ActivationChecklist all restyled. Sidebar nav adds Register a Deal / My Pipeline (live) and Commissions/Training/Assets/Support (disabled). Dashboard "Register a Deal" tile unlocked and routes to `/portal/deals/new` (page lands in Story 4). |
+| FPRM-125 | DealRegistration backend model and migration | Done | #54 | `DealRegistration` model in `models.py` (Uuid PK + FK to `partner_organizations`/`commission_structures`/`users`, status string defaulting to draft, conflict_status defaulting to not_checked, commission snapshot fields, audit/lifecycle timestamps, composite index on `(partner_org_id, status)`). Migration 013 with `gen_random_uuid()` + `now()` Postgres-native defaults. 8 new model tests. |
+| FPRM-128 | Deal registration submission API | Done | #55 | New `routers/deal_registrations_router.py` with `POST/GET/PATCH/DELETE /deal-registrations` + `POST /deal-registrations/{id}/submit`. Activation gate on create returns `412 {detail, activation_url}` when checklist incomplete or missing. Tenant isolation (partner_admin own only, internal roles see all). Commission snapshot on submit resolves `(partner_category_code, commission_type, year_1)`; missing match leaves snapshot null. 13 router tests. |
+| FPRM-131 | Deal registration form — partner portal frontend | Done | #56 | `DealRegistrationForm.jsx` two-section floating-label form at `/portal/deals/new` and `/portal/deals/:id/edit`, Save-as-draft + Submit. `DealList.jsx` partner pipeline at `/portal/deals` with status badges, USD formatting, empty state, and toast on successful submit. App.jsx wires three new routes nested under PartnerPortalLayout. |
+| FPRM-134 | Internal deal queue | Done | #57 | Added 4 internal endpoints to `deal_registrations_router.py`: `GET /internal/deals`, `POST /internal/deals/{id}/start-review`, `POST /internal/deals/{id}/approve`, `POST /internal/deals/{id}/reject` — review roles only, approve/reject require `review_notes`. Frontend `DealQueue.jsx` at `/internal/deals` with filter tabs, status badges, per-row context actions, review modal. 8 new endpoint tests. |
+
+All 10 sub-tasks (FPRM-123/124, 126/127, 129/130, 132/133, 135/136) closed Done.
+
+### Sprint 8 bugs
+
+None — Sprint 8 ran clean with no in-sprint bug tickets.
+
+### What landed on `main` during Sprint 8
+
+- `frontend/src/styles/tokens.css` (new) — Fracttal One design system
+- `frontend/src/main.jsx` — imports `tokens.css`
+- `frontend/src/layouts/PartnerPortalLayout.jsx` — restyled with `.fp-shell`, icon + label sidebar, top breadcrumb + actions header
+- `frontend/src/pages/Login.jsx`, `AcceptInvite.jsx`, `PartnerHome.jsx`, `PartnerProfile.jsx`, `PartnerDocuments.jsx`, `components/ActivationChecklist.jsx` — restyled
+- `frontend/src/pages/DealRegistrationForm.jsx` (new)
+- `frontend/src/pages/DealList.jsx` (new)
+- `frontend/src/pages/DealQueue.jsx` (new)
+- `frontend/src/App.jsx` — adds `/portal/deals`, `/portal/deals/new`, `/portal/deals/:id/edit`, `/internal/deals`
+- `backend/models.py` — adds `DealRegistration` model (and `Float`, `Index` to imports)
+- `backend/alembic/versions/013_create_deal_registrations.py` (new)
+- `backend/routers/deal_registrations_router.py` (new) — partner-facing CRUD + submit + internal review endpoints
+- `backend/main.py` — registers `deal_registrations_router`
+- `backend/tests/test_deal_registration_model.py` (new) — 8 model tests
+- `backend/tests/test_deal_registrations.py` (new) — 26 router tests (18 partner-facing + 8 internal review)
+- `PROJECT_CONTEXT.md` — Section 1 endpoints + Section 2 schema + Section 3 frontend tree updated
+- `CLAUDE.md` — Current state line refreshed, Sprint 8 IDs added
+- `CLAUDE_HISTORY.md` — this entry
+
+### API endpoint count
+
+Sprint 8 adds **10 new endpoints** across `/deal-registrations/*` and `/internal/deals/*`. Total surface area is now **55 endpoints**.
+
+### Sprint 8 test count
+
+Backend ends Sprint 8 at **228 tests passing** (Sprint 7 baseline 194 + 34 new model & router tests).
+
+### Sprint 8 lessons
+
+1. **Fracttal One tokens are a one-time investment that pays off immediately.** Story 1 landed before any deal-registration UI so Stories 4 and 5 could compose new pages purely from utility classes (`.fp-card`, `.fp-btn--primary`, `.fp-field`, `.fp-table`, `.fp-modal`) — no inline styling needed. Future internal pages (Sprint 9 deal detail, Sprint 10 commission rates) can do the same. The CSS-custom-property approach also lets the whole palette flip cheaply if branding changes.
+2. **Activation gate belongs on `create`, not `submit`.** Forcing the gate at draft creation prevents partners from accumulating unsubmitted drafts before they are active. Once active, drafts flow freely and only the standard tenant + status guards apply. The 412 response shape (`{detail, activation_url}`) lets the frontend show a deep-link banner without parsing the error text.
+3. **Commission snapshot is best-effort, not load-bearing.** The form's commission_type vocabulary (`reseller`, `referral`) does not match `commission_structures.commission_type` enum values (`autonomous_sell` etc) by design — Sprint 10 will surface available rates to partners and Sprint 11 will rationalise the vocabulary. For Sprint 8, a missing match silently leaves `commission_rate_snapshot` null and `_snapshot_commission` never raises, so a malformed deal cannot block submission.
+4. **Single router file, no prefix, full paths — the `/internal/deals/*` and `/deal-registrations/*` endpoints live in the same `deal_registrations_router.py`.** Using `APIRouter(tags=...)` without a `prefix` lets each handler declare its full path. This was simpler than spinning up a second router file just to host the four internal endpoints, and tests can exercise both surfaces against the same `db_session` fixture.
+5. **Lazy import of `recalculate_activation` is the right escape hatch.** Story 1's UI changes shipped before Story 3 even had the chance to look at `activation.py`. The `try: from activation import ...` pattern in `partner_profiles_router` (from Sprint 7) keeps stories independently mergeable even when call sites and helpers land in different PRs. Sprint 8 didn't need this pattern, but it remains the canonical hand-off shape (encoded in AD-12 / AD-14).
+6. **Internal endpoints should not share the partner activation gate.** `GET /internal/deals` and `POST /internal/deals/{id}/{start-review,approve,reject}` deliberately bypass the activation check — internal users review *any* partner's deal regardless of that partner's activation state. The gate is partner-scoped (own-org create only), not a global pre-condition.
+
+### Known follow-ups for Sprint 9
+
+1. **Sprint 9 (Deal Review Workflow & Collaboration Thread)** is next. Phase 3 Jira tickets doc has the full sprint-9 spec (FPRM_Phase3_Jira_Tickets.md): `DealMessage` model + thread API, `DealDetail` page (partner + internal), info_required resubmit flow. New tables: `deal_messages` (migration 014).
+2. **`FPRM-89` (`actor_id == "None"`)** still parked Low.
+3. **`FPRM-104` (`_user_from_bearer` testability)** still parked Low.
+4. **SMTP env vars on Railway** — still not set; lifecycle notifications still fall back to stdout. No code change required. Confirmed during Sprint 8 closeout that this is harmless for the deal-registration path because Sprint 8 introduces no new email side-effects.
+5. **Phase 3A happy-path validation** — Sprint 9 closeout (FPRM-129 in the Phase 3 ticket doc) will add a `RUNBOOK.md` § for the full submit → start-review → request-info → resubmit → approve flow. Sprint 8 closeout does not yet add a RUNBOOK section because the Phase 3 review flow lands incrementally over Sprints 8 and 9.
+6. **Carry-forward:** in-memory token blacklist, password-reset email backend, SonarCloud configuration.
+
