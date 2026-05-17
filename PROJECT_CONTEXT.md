@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 6 (Internal review workflow — approve/reject/request-info, message thread, partner provisioning, email notifications)
+> Last updated: Sprint 7 (Partner portal shell + activation checklist — Phase 2 complete)
 
 
 
@@ -106,7 +106,7 @@
 
 | POST | `/auth/refresh` | any | Issue a new access token, invalidate the current one. Returns same shape as `/auth/login`. |
 
-| GET | `/auth/me` | any | Returns `{id, email, role, full_name}` for the authenticated user. |
+| GET | `/auth/me` | any | Returns `{id, email, role, full_name, partner_org_id}` for the authenticated user. `partner_org_id` added Sprint 7 / FPRM-119 so the portal frontend can resolve the user's org without an extra round-trip. |
 
 | GET | `/admin/audit-log` | `user_management:read_all` (system_admin) | Paginated audit-log query. Query params: `page`, `page_size` (≤200), `object_type`, `actor_id`, `date_from`, `date_to`. Returns `{total, page, page_size, items}`. |
 
@@ -149,6 +149,10 @@
 | POST | `/applications/{id}/reject` | `partner_application:read_all` (channel_manager+) | Reject an application. Body: `{rejection_reason}` (required). Sets status=rejected. Audit `partner_application.rejected`. |
 
 | POST | `/applications/{id}/request-info` | `partner_application:read_all` (channel_manager+) | Request more info. Body: `{message}` (required). Sets status=info_required. Applicant can resume via the existing draft_token. Audit `partner_application.info_requested`. |
+| GET | `/partner-profiles/{partner_org_id}` | any (tenant-scoped) | Sprint 7 / FPRM-106. Fetch the PartnerProfile keyed by `partner_org_id` (1:1 with the org). Partner-side users 403 unless the org matches their JWT `partner_org_id`. |
+| PATCH | `/partner-profiles/{partner_org_id}` | partner_admin (own) / channel_ops_admin / system_admin | Sprint 7 / FPRM-106. Updates whitelisted PartnerProfile fields, recalculates `profile_completeness_pct` (fraction of 11 PROFILE_FIELDS non-null × 100), triggers `recalculate_activation` (AD-14). Audit `partner_profile.update`. |
+| GET | `/partners/{id}/activation` | partner_admin (own) / any internal role | Sprint 7 / FPRM-107. Returns the PartnerActivationChecklist. Auto-initialises the row by calling `recalculate_activation` if one is missing (for orgs that pre-date Sprint 7). |
+| POST | `/partners/{id}/activation/recalculate` | channel_manager / channel_ops_admin / system_admin | Sprint 7 / FPRM-107. Forces a recalc of every checklist flag. Audit `partner_activation.recalculated`. |
 
 
 
@@ -180,7 +184,7 @@
 
 
 
-### Tables (as of Sprint 6)
+### Tables (as of Sprint 7)
 
 
 
@@ -213,6 +217,7 @@
 | `partner_application_documents` | `009_create_partner_applications` | Supporting documents uploaded with an application. Columns: `id` (UUID PK), `application_id` (FK partner_applications, indexed), `document_type` (string — free-form for the public form), `document_name`, `file_path`, `file_size_bytes`, `mime_type`, `uploaded_at`. Only metadata is recorded today — actual file storage backend is pending. |
 
 | `partner_application_messages` | `011_create_partner_application_messages` | Message thread between applicants and internal reviewers (Sprint 6 / FPRM-91). Columns: `id` (UUID PK), `application_id` (FK partner_applications, indexed), `sender_type` (ENUM `application_message_sender`: applicant/internal), `sender_id` (FK users.id, nullable — null when sender_type=applicant), `sender_email`, `message` (TEXT), `created_at`. |
+| `partner_activation_checklists` | `012_create_partner_activation_checklists` | Sprint 7 / FPRM-107 / AD-14. One row per partner org, created by `provision_partner_from_application` with all flags False. Recomputed by `backend/activation.py` `recalculate_activation(db, partner_org_id)` after every profile update, document approval, and contract-date change. Columns: `id` (UUID PK), `partner_org_id` (UUID FK unique to `partner_organizations.id`), `profile_complete` (bool — true when `profile_completeness_pct >= 80`), `documents_uploaded` (bool — true when both `fiscal_id` + `id_legal_representative` documents are approved), `terms_signed` (bool — true when `partner_organizations.contract_start_date IS NOT NULL`), `baseline_training_complete` (bool, default False — hardcoded False until Sprint 10 replaces it), `activation_complete` (bool — true when the three required gates are all True; baseline_training intentionally excluded from the gate), `activated_at` (datetime, set on the first transition to `activation_complete=True`), `updated_at`. |
 
 
 
@@ -302,13 +307,29 @@ frontend/src/
 
 ├── main.jsx                         # ReactDOM root, wraps <App/> in <BrowserRouter>
 
-├── App.jsx                          # Top-level <Routes>: /, /register, /register/confirmation, /resume-application, /internal/applications, /internal/applications/:id
+├── App.jsx                          # Top-level <Routes>: /, /login, /register, /register/confirmation, /resume-application, /accept-invite, /portal/* (nested under PartnerPortalLayout), /internal/applications, /internal/applications/:id, /internal/partners/:id/profile, /internal/partners/:id/documents
+
+├── layouts/
+
+│   └── PartnerPortalLayout.jsx      # Sprint 7 / FPRM-105 — authenticated partner shell: top nav (org name + email + logout), left sidebar (Home + future items disabled), mobile hamburger, role guard
 
 ├── components/
 
-│   └── ProtectedRoute.jsx           # JWT auth guard - decodes localStorage 'token', redirects to /login if missing/invalid or role not in allowed list
+│   ├── ProtectedRoute.jsx           # JWT auth guard - decodes localStorage 'token', redirects to /login if missing/invalid or role not in allowed list
+
+│   └── ActivationChecklist.jsx      # Sprint 7 / FPRM-107 — fetches GET /partners/{id}/activation, renders progress bar + 3 checklist items with action links
 
 └── pages/
+
+    ├── Login.jsx                    # Sprint 7 / FPRM-105 — POST /auth/login + role-based redirect (partner → /portal/home, internal → /internal/applications)
+
+    ├── AcceptInvite.jsx             # Sprint 7 / FPRM-105 — reads ?token=, POST /auth/accept-invite, stores JWT, redirects to /portal/home
+
+    ├── PartnerHome.jsx              # Sprint 7 / FPRM-105 — welcome banner + status badge + ActivationChecklist (when not yet complete) + disabled task tiles (deal reg / pipeline / training / assets — Sprint 8+)
+
+    ├── PartnerProfile.jsx           # Sprint 7 / FPRM-106 — adapts to /portal/profile (self-service) and /internal/partners/:id/profile (channel team). Org summary + profile fields + view/edit toggle + completeness progress bar
+
+    ├── PartnerDocuments.jsx         # Sprint 7 / FPRM-108 — list + status badges, partner upload (PDF/JPG/PNG ≤ 10 MB), internal approve/reject with reject modal that requires review_notes
 
     ├── RegisterPartner.jsx          # Public 10-step partner application form (Sprint 5)
 
@@ -751,6 +772,40 @@ These are conscious design choices — not defaults or accidents. Understanding 
 **Consequence:** Production deploys need `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `CHANNEL_OPS_EMAIL`, `FRONTEND_URL` set on the `fracttal-prm-backend` Railway service. Without them the lifecycle still runs but no real emails are sent — they are logged to Railway's stdout.
 
 **Do not:** Add new notification call sites that re-raise SMTP errors. Do not let template formatting raise inside endpoint bodies — defensive try/except in the router is mandatory.
+
+---
+
+### AD-14 · Activation checklist recalc is the single source of truth
+
+**Decision:** `backend/activation.py` `recalculate_activation(db, partner_org_id)` is the only function that flips flags on `partner_activation_checklists`. It is called after:
+- `PATCH /partner-profiles/{id}` (profile_completeness change → `profile_complete`)
+- `PATCH /partners/{id}/documents/{doc_id}` when status flips to `approved` (`documents_uploaded`)
+- `PATCH /partners/{id}` when `contract_start_date` is in the payload (`terms_signed`)
+- `POST /partners/{id}/activation/recalculate` (manual recalc, internal only)
+
+`provision_partner_from_application` creates the row with all flags False. The function also auto-creates the row on first read (`GET /partners/{id}/activation` initialises it via `recalculate_activation` if missing) — covers orgs provisioned before Sprint 7. `baseline_training_complete` is hardcoded `False` and excluded from the `activation_complete` gate until Sprint 10 wires it to real training records.
+
+**Why:** Spreading the recalc rules across each call site invites drift — six months from now a new endpoint forgets to call recalc and partners get stuck in pending activation. Concentrating the logic in one function means a new flag only needs to be added in one place. The "best-effort" `try/except` wrapping at call sites (matching AD-13) keeps the activation recalc from blocking the primary mutation if `activation.py` has a bug.
+
+**Consequence:** `activation_complete = True` requires `profile_complete AND documents_uploaded AND terms_signed`. Sprint 8+ deal-registration endpoints check this flag before allowing submission. The `activated_at` timestamp is set on the first transition only; subsequent recalculations that flip a flag off do NOT clear it (the partner was activated at that moment; later regression is a separate state to investigate).
+
+**Do not:** Inline checklist flag-flipping logic into endpoint handlers. Do not call `recalculate_activation` from inside `activation.py` itself (no recursion). Do not let recalc failures break the parent mutation — always wrap in `try/except`.
+
+---
+
+### AD-15 · Role-based route guards in React via `ProtectedRoute`
+
+**Decision:** Authenticated React routes are wrapped in `<ProtectedRoute roles={[...]}>`, which decodes the JWT from `localStorage['token']` and:
+- Redirects to `/login` if no token or invalid token
+- Redirects to `/login` if the JWT role is not in the allowed list
+
+Partner-side routes (`/portal/*`) sit nested under `PartnerPortalLayout` which adds the chrome (top nav, sidebar, logout) and re-applies the partner-role check; internal routes (`/internal/*`) wrap the page directly. The JWT carries `partner_org_id` (FPRM-119) so the layout can fetch the user's org and pass it via `useOutletContext` to nested pages without a `/auth/me` round-trip on every navigation.
+
+**Why:** A single guard component keeps the role check consistent across every page. A lost or expired token always lands the user on `/login` with a clear path back. Layout-level chrome (sidebar, logout) shouldn't repeat on every page.
+
+**Consequence:** Every new partner-facing page goes under the `/portal` route with `<Route path="X" element={<MyPage />} />` inside the layout; the page uses `useOutletContext()` to access `{payload, orgName, token}`. Every internal page wraps in its own `<ProtectedRoute>` until a parallel `InternalLayout` is built.
+
+**Do not:** Decode the JWT manually inside individual pages. Do not store the token under any key other than `'token'`. Do not bypass `ProtectedRoute` by exporting protected pages from public routes — even one bypass breaks the model.
 
 ---
 
