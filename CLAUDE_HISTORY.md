@@ -789,3 +789,98 @@ Phase 2 kicks off with 6 new endpoints across `/applications/*`. Phase 1's 29 en
 
 5. **Carry-forward:** in-memory token blacklist, reset-email backend, SonarCloud configuration — all still pending from earlier sprints.
 
+---
+
+## Sprint 7 — Partner Portal Shell & Activation (Phase 2 closeout)
+
+**Started:** 2026-05-16
+**Closed:** 2026-05-16 (single-day intensive)
+**Fix Version ID:** `10566`
+**Native Sprint ID:** `539`
+**Phase 2 epic:** FPRM-74 — Partner Registration & Onboarding (now complete)
+
+### Sprint 7 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-105 | Partner portal shell and navigation | Done | #47 | `PartnerPortalLayout`, `Login`, `AcceptInvite`, `PartnerHome`. Nested `/portal/*` routes guarded by `ProtectedRoute(partner_user, partner_admin)`. Role-based redirect on login. Token stored in `localStorage['token']`. |
+| FPRM-106 | Partner profile page | Done | #48 | New `partner_profiles_router` with `GET+PATCH /partner-profiles/{partner_org_id}`, `calculate_profile_completeness` helper, audit logging, activation recalc stub. Frontend page adapts to `/portal/profile` (self-service) and `/internal/partners/:id/profile` (channel team). Bundles **FPRM-119** JWT fix. |
+| FPRM-107 | Activation checklist | Done | #49 | New `PartnerActivationChecklist` model + migration 012 + `backend/activation.py` with `recalculate_activation`. `GET+POST /partners/{id}/activation*` endpoints. Provisioning extended to create the all-False row. `ActivationChecklist.jsx` widget integrated into `PartnerHome`. Encodes AD-14. |
+| FPRM-108 | Partner documents portal page | Done | #50 | No new endpoints (Sprint 4 router already had them). `PATCH /partners/{id}/documents/{doc_id}` now calls `recalculate_activation` when status flips to `approved`. New `PartnerDocuments.jsx` with partner upload + internal approve/reject (with reject-notes modal). |
+| FPRM-109 | Sprint 7 docs and Phase 2 closeout | Done | (this PR) | PROJECT_CONTEXT.md endpoints / table / component tree / AD-14 / AD-15. CLAUDE.md `Current state` line refreshed (was still on Sprint 5), Sprint 4–7 IDs added, AD-8..AD-15 summaries added to the at-a-glance list. CLAUDE_HISTORY.md gains this entry + the Phase 2 complete marker + Phase 3 readiness note. Documentation/RUNBOOK.md (local, not in git) gains the Phase 2 happy-path validation section. |
+
+All 9 sub-tasks (FPRM-110..FPRM-118) closed Done.
+
+### Sprint 7 bugs — discovered and fixed in-sprint
+
+| Key | Bug | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-119 | JWT payload and `/auth/me` omit `partner_org_id` — partner portal breaks on refresh | Done | #48 (bundled with FPRM-106) | Discovered while wiring Story 1's `PartnerPortalLayout`. The Sprint 6 default `create_access_token({sub, email, role})` lost `partner_org_id`, so `PartnerPortalLayout` decoded the JWT and got `undefined`. Fix: `_token_payload(user)` helper in `auth_router.py`, used by login/refresh/accept-invite; `/auth/me` returns it too. Old tokens still validate — the claim is just absent and the frontend falls back to `/auth/me`. |
+| FPRM-104 | Endpoints using `_user_from_bearer` cannot be tested via `dependency_overrides` | To Do | — | Tech debt ticket filed at Phase A; parked Low. Affected endpoints (timeline, messages) still work with real JWTs in tests. Carries to a later sprint when the affected routers are next touched. |
+
+### What landed on `main` during Sprint 7
+
+- `backend/models.py` — adds `PartnerActivationChecklist` (Uuid PK, unique `partner_org_id` FK, six bool flags + `activated_at` + `updated_at`)
+- `backend/alembic/versions/012_create_partner_activation_checklists.py` — creates the new table with Postgres-native types and a unique constraint on `partner_org_id`
+- `backend/activation.py` (new) — `recalculate_activation(db, partner_org_id)` is the single source of truth (AD-14)
+- `backend/provisioning.py` — `provision_partner_from_application` now creates the all-False checklist row alongside the org/profile/invite
+- `backend/routers/partner_profiles_router.py` (new) — `GET+PATCH /partner-profiles/{partner_org_id}` keyed by org id (1:1 with profiles, ergonomic for the frontend), audit logged as `partner_profile.update`
+- `backend/routers/partners_router.py` — adds `GET /partners/{id}/activation` (auto-initialises checklist on first read) and `POST /partners/{id}/activation/recalculate` (internal-only). `PATCH /partners/{id}` now calls recalc when `contract_start_date` changes
+- `backend/routers/documents_router.py` — `PATCH` calls `recalculate_activation` when status flips to `approved` (no recalc on rejection)
+- `backend/routers/auth_router.py` — `_token_payload(user)` shared helper threads `partner_org_id` through JWT at login/refresh/accept-invite; `GET /auth/me` returns `partner_org_id` (FPRM-119)
+- `backend/main.py` — registers `partner_profiles_router`
+- `backend/tests/test_partner_profiles.py` (new) — 13 cases (completeness helper, GET tenant matrix, PATCH update/recalc/forbidden/audit/unknown-fields)
+- `backend/tests/test_auth_partner_org_id.py` (new) — 4 cases proving JWT and `/auth/me` carry `partner_org_id`
+- `backend/tests/test_activation.py` (new) — 15 cases (10 recalc unit tests, 5 endpoint tests)
+- `backend/tests/test_documents_activation.py` (new) — 3 cases verifying document approval triggers checklist recalc
+- `backend/tests/test_provisioning.py` — extended with `test_provisioning_creates_activation_checklist` and an assertion in the approve-endpoint test
+- `frontend/src/layouts/PartnerPortalLayout.jsx` (new) — authenticated partner shell
+- `frontend/src/pages/Login.jsx`, `AcceptInvite.jsx`, `PartnerHome.jsx`, `PartnerProfile.jsx`, `PartnerDocuments.jsx` (all new)
+- `frontend/src/components/ActivationChecklist.jsx` (new)
+- `frontend/src/App.jsx` — adds `/login`, `/accept-invite`, nested `/portal/{home,profile,documents}`, `/internal/partners/:id/{profile,documents}`
+- `PROJECT_CONTEXT.md` — Section 1 adds Sprint 7 endpoints; Section 2 documents `partner_activation_checklists` + nullable refresh of `/auth/me`; Section 3 frontend tree adds the new layout + components + pages; Section 6 introduces AD-14 (activation recalc) and AD-15 (role-based route guards)
+- `CLAUDE.md` — `Current state` line refreshed, Sprint 4–7 IDs added to the configuration table, AD-8..AD-15 summaries added to the at-a-glance list, tech debt section updated (adds FPRM-89, FPRM-104, SMTP env var pending)
+- `CLAUDE_HISTORY.md` — this Sprint 7 entry + Phase 2 complete marker + Phase 3 readiness note
+
+### API endpoint count
+
+Sprint 7 adds 4 new endpoints (`GET+PATCH /partner-profiles/{id}`, `GET+POST /partners/{id}/activation*`). The total surface area is now **45 endpoints**.
+
+### Sprint 7 lessons
+
+1. **JWT payload must include `partner_org_id` from day one of any portal that reads it client-side.** The Sprint 6 default `create_access_token({sub, email, role})` omitted it, leaving Story 1's `PartnerPortalLayout` reading `undefined`. The fix bundled into Story 2 (FPRM-119) is small but the discovery was costly. Future stories that introduce new partner-side or org-aware claims should add them to the JWT helper, not to individual endpoints.
+2. **Activation recalc belongs in a single function, called from every place that touches the inputs.** Spreading the rules across the three call sites (profile update, document approval, contract date change) would have invited drift — by Sprint 10's training integration, half of them would have forgotten the recalc. Encoded as AD-14.
+3. **PartnerProfile endpoints key by `partner_org_id`, not the profile's own UUID.** The 1:1 relationship makes the org id the natural key, the frontend already has it from the JWT, and the internal `/internal/partners/:id/profile` route shares the same `:id` shape as the org-level routes. Documented in `partner_profiles_router.py`.
+4. **`Story 2 → Story 3` lazy import handoff worked cleanly.** Story 2's PATCH `partner-profiles/{id}` wrapped the `from activation import recalculate_activation` call in `try/except`, so the endpoint shipped before `activation.py` existed and started recalculating as soon as Story 3 (PR #49) merged. The Sprint 6 pattern (AD-12 provisioning lazy import) ports cleanly to other call sites.
+5. **Cross-story App.jsx changes need to land routes incrementally.** Story 1 registered only `/portal/home`; Story 2 added `/portal/profile`; Story 4 added `/portal/documents`. Registering all five routes in Story 1 would have broken the Vite build until the matching page files existed (CI is backend-only and would not have caught it, but Railway's frontend build would have failed on the first merge). The incremental approach kept every PR independently mergeable.
+
+### Phase 2 — complete
+
+| Sprint | Theme | Stories | Points | Key delivery |
+|---|---|---|---|---|
+| 5 | Partner Registration | 6 | 18 | Public application form + `partner_applications` table + draft-token pattern (AD-11) |
+| 6 | Internal Review Workflow | 5 | 18 | Approve/reject/info-required + message thread + partner provisioning (AD-12) + email lifecycle (AD-13) |
+| 7 | Portal Shell + Activation | 5 | 16 | Authenticated partner portal + profile/documents/activation pages + activation gate (AD-14) + role-based routing (AD-15) |
+| **Total** | **Phase 2** | **16** | **52** | Partner onboarding end-to-end: application → approval → invite → portal → activation |
+
+### Phase 3 readiness note
+
+Sprint 8 begins **Deal Registration** (Phase 3). Pre-implementation notes:
+
+1. **New tables required:**
+   - `deal_registrations` — `id`, `partner_org_id` (FK to `partner_organizations.id` — provisioned by Sprint 6's `provision_partner_from_application`), customer info, deal size, requested commission type, conflict-check fields, status, created/submitted timestamps
+   - `conflict_check_results` — referenced by `deal_registrations` for the auto-conflict check (similar deal already registered by another partner?)
+   - `deal_collaboration_threads` (proposed) — internal review + partner clarification thread on a deal; conceptually parallel to `partner_application_messages` from Sprint 6
+2. **Activation gate.** Deal-registration endpoints (`POST /deal-registrations`) must check `partner_activation_checklists.activation_complete = True` for the submitting `partner_org_id` before accepting the request. Return 412 Precondition Failed (or similar) with a pointer to the partner's activation checklist if not yet activated.
+3. **Commission lookup ties to `commission_structures`.** Sprint 4 / FPRM-58 seeded 24 commission rows. Deal registration should resolve the applicable row from `(partner_category_code, commission_type, year)` at submission time and snapshot the percentage on the deal record (so later commission table changes do not retroactively alter the deal).
+4. **Frontend.** The disabled `Register a Deal` tile on `PartnerHome` becomes live. New routes under `/portal/deals/*`. Internal queue under `/internal/deals` — likely a parallel of `ApplicationQueue` from Sprint 5.
+
+### Known follow-ups for Sprint 8
+
+1. **Phase 3 ticket set must be created in a planning session before Sprint 8 starts.**
+2. **`FPRM-89` (`actor_id == "None"`)** still parked Low. Carry to Phase 3 or fix when next touching `audit.py`.
+3. **`FPRM-104` (`_user_from_bearer` testability)** still parked Low. Affected endpoints (timeline, messages) carry forward.
+4. **SMTP env vars on Railway** — set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `CHANNEL_OPS_EMAIL`, `FRONTEND_URL` on `fracttal-prm-backend` to switch lifecycle notifications from stdout-only to real email. No code change.
+5. **Phase 2 happy-path validation** — run `Documentation/RUNBOOK.md` § 11 (added in this PR) end-to-end against production before opening Sprint 8.
+6. **Carry-forward:** in-memory token blacklist, password-reset email backend, SonarCloud configuration.
+

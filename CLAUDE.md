@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** Sprint 5 closed — Phase 2 begins. Public partner registration flow delivered: `partner_applications` + `partner_application_documents` tables, six `/applications/*` endpoints with the new draft-token pattern (AD-11), the 10-step `RegisterPartner` form, and the internal `ApplicationQueue` review page behind `ProtectedRoute`. Backend and frontend live on Railway. Sprint history in CLAUDE_HISTORY.md.
+**Current state:** Sprint 7 closed — Phase 2 complete. Authenticated partner portal is live: `PartnerPortalLayout` shell, partner-side `/portal/home`, `/portal/profile`, `/portal/documents`, and the activation checklist gate (`partner_activation_checklists` table, `activation.recalculate_activation` — AD-14). Backend gains `GET+PATCH /partner-profiles/{partner_org_id}` (Sprint 7 / FPRM-106), `GET+POST /partners/{id}/activation*` (FPRM-107), and JWT + `/auth/me` now carry `partner_org_id` (FPRM-119). Internal team has counterpart `/internal/partners/{id}/profile` and `/internal/partners/{id}/documents` review pages; document approval triggers activation recalc. Phase 3 (deal registration) is next — see CLAUDE_HISTORY.md Phase 3 readiness note. Backend and frontend live on Railway. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 
@@ -116,6 +116,30 @@ The Control Centre never calls Jira directly — all Jira requests go through `/
 ### AD-7 · SonarCloud and Railway deploy are not merge-gate checks
 Both run with `continue-on-error: true` — only unit tests and bandit scan are blocking merge.
 
+### AD-8 · `models.py` uses portable types; migrations use PostgreSQL-native types
+SQLAlchemy `Uuid` and `JSON` in models keep sqlite test runs working; Alembic migrations use `postgresql.UUID`/`postgresql.JSONB` directly.
+
+### AD-9 · Public + tenant-scoped + permission-required + internal-only permission tiers
+Every endpoint falls into one of four tiers; tenant scoping always lives in the handler, never inside `require_permission`.
+
+### AD-10 · Sub-tasks inherit fix-version and sprint from their parent — never set on the Sub-task issue itself
+Setting them on the subtask returns HTTP 400. JQL dual-query still surfaces subtasks via parent membership.
+
+### AD-11 · Draft token pattern for unauthenticated public access
+Per-application `draft_token` query param authorises public partner-application endpoints; `audit_log.actor_id` nullable so anonymous events log cleanly.
+
+### AD-12 · Partner provisioning is a single function in a dedicated module
+`backend/provisioning.py` `provision_partner_from_application` creates org + profile + invite (+ activation checklist since Sprint 7); idempotent on `application.partner_org_id`. Imported lazily by the router.
+
+### AD-13 · Email notifications never raise
+`backend/notifications.py` `send_email` wraps `smtplib` with dev-mode stdout fallback; every call site wraps in `try/except` belt-and-braces.
+
+### AD-14 · Activation checklist recalc is the single source of truth
+`backend/activation.py` `recalculate_activation(db, partner_org_id)` is called after profile update, document approval, and contract-date change. Provisioning creates the all-False row; the function auto-creates one on first read for orgs that pre-date Sprint 7. `baseline_training_complete` hardcoded False until Sprint 10.
+
+### AD-15 · Role-based route guards in React via `ProtectedRoute`
+`ProtectedRoute` checks the JWT role against an allowed list; partner-only routes live under `/portal/*` inside `PartnerPortalLayout`, internal-only routes under `/internal/*`. Token stored in `localStorage` under `'token'`. JWT carries `partner_org_id` (FPRM-119) so the layout can resolve the user's org without a round-trip.
+
 ---
 
 ## Repository
@@ -174,8 +198,8 @@ Fracttal-PRM/
 | Jira board ID | `67` |
 | Execution order field | `customfield_10071` |
 | Story points field | `customfield_10016` |
-| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535` |
-| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562` |
+| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539` |
+| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566` |
 
 **Sprint query pattern:**
 ```python
@@ -303,9 +327,12 @@ Current pinned versions on `main`. **Read this file before modifying — never r
 
 Active items only — historical Sprint follow-ups live in `CLAUDE_HISTORY.md`.
 
-- **JWT logout blacklist is in-memory only.** Lost on backend restart; not safe for multi-instance deploys. Likely Sprint 3+ work.
-- **Password reset has no email backend yet.** Reset URLs are logged to stdout via `print`. A real email integration (SES / SendGrid / etc) is queued for a later sprint.
+- **JWT logout blacklist is in-memory only.** Lost on backend restart; not safe for multi-instance deploys.
+- **Password reset has no email backend yet.** Reset URLs are logged to stdout via `print`. A real email integration (SES / SendGrid / etc) is queued for a later sprint. Sprint 6 lifecycle notifications use SMTP with stdout fallback (AD-13) — the password-reset path still needs to adopt the same pattern.
 - **SonarCloud scan fails on every CI run** (non-blocking — `continue-on-error: true`). Needs a `sonar-project.properties` file and a linked SonarCloud project to produce useful output.
+- **`FPRM-89` — `audit_log.actor_id` stores string `"None"` on anonymous events.** Cosmetic; rows are otherwise correct. Parked Low.
+- **`FPRM-104` — endpoints using `_user_from_bearer` cannot be tested via `app.dependency_overrides[get_current_user]`.** Affected: `GET /applications/{id}/timeline`, `GET+POST /applications/{id}/messages`. Tests work with real JWTs in the meantime. Parked Low.
+- **SMTP env vars not yet set on the `fracttal-prm-backend` Railway service.** Lifecycle email notifications (Sprint 6 / FPRM-93) fall back to stdout in production until `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `CHANNEL_OPS_EMAIL` are set. No code change required — manual ops follow-up.
 
 ---
 
