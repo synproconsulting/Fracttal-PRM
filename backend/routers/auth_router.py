@@ -24,6 +24,19 @@ from roles import UserRole
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _token_payload(user: User) -> dict:
+    """JWT payload — includes partner_org_id so the partner portal can resolve
+    the user's org without an extra /auth/me round-trip on every page load.
+    Fixed in FPRM-119 (bundled with FPRM-106).
+    """
+    return {
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "partner_org_id": str(user.partner_org_id) if user.partner_org_id else None,
+    }
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
@@ -78,11 +91,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=401, detail="Account is inactive")
-    token = create_access_token({
-        "sub": str(user.id),
-        "email": user.email,
-        "role": user.role,
-    })
+    token = create_access_token(_token_payload(user))
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -104,11 +113,7 @@ def refresh(
     token: str = Depends(oauth2_scheme),
     current_user: User = Depends(get_current_user),
 ):
-    new_token = create_access_token({
-        "sub": str(current_user.id),
-        "email": current_user.email,
-        "role": current_user.role,
-    })
+    new_token = create_access_token(_token_payload(current_user))
     invalidate_token(token)
     return {
         "access_token": new_token,
@@ -124,6 +129,7 @@ def me(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "role": current_user.role,
         "full_name": current_user.full_name,
+        "partner_org_id": str(current_user.partner_org_id) if current_user.partner_org_id else None,
     }
 
 
@@ -189,11 +195,7 @@ def accept_invite(req: AcceptInviteRequest, request: Request, db: Session = Depe
         ip_address=request.client.host if request.client else None,
     )
 
-    token = create_access_token({
-        "sub": str(user.id),
-        "email": user.email,
-        "role": user.role,
-    })
+    token = create_access_token(_token_payload(user))
     return {
         "access_token": token,
         "token_type": "bearer",
