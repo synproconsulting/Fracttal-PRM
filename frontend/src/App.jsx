@@ -10,6 +10,7 @@ import AcceptInvite from './pages/AcceptInvite.jsx'
 import PartnerPortalLayout from './layouts/PartnerPortalLayout.jsx'
 import PartnerHome from './pages/PartnerHome.jsx'
 import PartnerProfile from './pages/PartnerProfile.jsx'
+import PartnerDocuments from './pages/PartnerDocuments.jsx'
 
 function Landing() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
       >
         <Route path="home" element={<PartnerHome />} />
         <Route path="profile" element={<PartnerProfile />} />
+        <Route path="documents" element={<PartnerDocuments />} />
       </Route>
 
       <Route
@@ -69,6 +71,14 @@ export default function App() {
         element={
           <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
             <PartnerProfile />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/internal/partners/:id/documents"
+        element={
+          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
+            <PartnerDocuments />
           </ProtectedRoute>
         }
       />

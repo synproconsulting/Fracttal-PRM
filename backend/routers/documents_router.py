@@ -1,4 +1,4 @@
-"""Partner document endpoints (FPRM-55).
+"""Partner document endpoints (FPRM-55 + FPRM-108 activation hook).
 
 Tracks legal/compliance documents required by the Fracttal Distributor Agreement.
 
@@ -6,6 +6,10 @@ Permissions:
     GET    /partners/{partner_id}/documents             - any auth (tenant-scoped)
     POST   /partners/{partner_id}/documents             - any auth (tenant-scoped); uploader = current_user
     PATCH  /partners/{partner_id}/documents/{doc_id}    - internal roles only (status/review)
+
+Sprint 7 / FPRM-108: when an internal reviewer approves a document, we call
+``recalculate_activation`` so the partner's checklist flips ``documents_uploaded``
+once both required types (fiscal_id + id_legal_representative) are approved.
 """
 import uuid
 from datetime import date, datetime, timedelta
@@ -150,9 +154,10 @@ def review_document(
 
     before = jsonable_encoder(_serialize(doc))
     status_changed = False
+    approved_now = False
     if "status" in payload:
         try:
-            from models import DocumentStatus  # local import to keep top tidy
+            from models import DocumentStatus
             new_status = DocumentStatus(payload["status"])
         except ValueError:
             raise HTTPException(status_code=422, detail="Invalid status value")
@@ -161,6 +166,8 @@ def review_document(
             status_changed = True
             doc.reviewed_by_user_id = current_user.id
             doc.reviewed_at = datetime.utcnow()
+            if new_status == DocumentStatus.approved:
+                approved_now = True
     if "review_notes" in payload:
         doc.review_notes = payload["review_notes"]
     if "expiry_date" in payload and payload["expiry_date"] is not None:
@@ -183,4 +190,14 @@ def review_document(
         after=jsonable_encoder(_serialize(doc)),
         ip_address=_client_ip(request),
     )
+
+    # FPRM-108 — flip the partner's activation checklist when a required document
+    # gets approved. Best-effort: a failure here must not roll back the review.
+    if approved_now:
+        try:
+            from activation import recalculate_activation
+            recalculate_activation(db, partner_id)
+        except Exception:
+            pass
+
     return _serialize(doc)
