@@ -366,3 +366,174 @@ def delete_deal(
     db.delete(deal)
     db.commit()
     return None
+
+
+# -------------------- Internal deal review endpoints (Sprint 8 / FPRM-134) --------------------
+
+
+REVIEW_ROLES = {UserRole.channel_manager, UserRole.system_admin, UserRole.channel_ops_admin}
+
+
+def _require_review_role(user: User) -> None:
+    if UserRole(user.role) not in REVIEW_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied: review role required",
+        )
+
+
+@router.get("/internal/deals")
+def list_internal_deals(
+    status: Optional[str] = Query(default=None),
+    partner_org_id: Optional[uuid.UUID] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Internal queue — channel_manager / channel_ops_admin / system_admin only.
+
+    Supports `?status=` and `?partner_org_id=` filters. By default returns all
+    statuses; the frontend filter tabs constrain to submitted / under_review.
+    """
+    _require_review_role(current_user)
+    query = db.query(DealRegistration)
+    if status:
+        query = query.filter(DealRegistration.status == status)
+    if partner_org_id is not None:
+        query = query.filter(DealRegistration.partner_org_id == partner_org_id)
+
+    total = query.count()
+    items = (
+        query.order_by(DealRegistration.submitted_at.desc().nullslast(), DealRegistration.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [_serialize(d) for d in items],
+    }
+
+
+@router.post("/internal/deals/{deal_id}/start-review")
+def start_review(
+    deal_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """submitted -> under_review. Records the reviewer."""
+    _require_review_role(current_user)
+    deal = _get_deal_or_404(deal_id, db)
+    if deal.status != "submitted":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot start review of deal in status '{deal.status}'",
+        )
+
+    deal.status = "under_review"
+    deal.reviewer_id = current_user.id
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.review_started",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": "submitted"},
+        after={"status": "under_review"},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)
+
+
+@router.post("/internal/deals/{deal_id}/approve")
+def approve_deal(
+    deal_id: uuid.UUID,
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """under_review -> approved. Requires review_notes."""
+    _require_review_role(current_user)
+    review_notes = (payload.get("review_notes") or "").strip() if payload else ""
+    if not review_notes:
+        raise HTTPException(status_code=422, detail="review_notes is required")
+
+    deal = _get_deal_or_404(deal_id, db)
+    if deal.status != "under_review":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot approve deal in status '{deal.status}'",
+        )
+
+    before_status = deal.status
+    deal.status = "approved"
+    deal.review_notes = review_notes
+    deal.reviewer_id = current_user.id
+    deal.reviewed_at = datetime.utcnow()
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.approved",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": before_status},
+        after={"status": "approved", "review_notes": review_notes},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)
+
+
+@router.post("/internal/deals/{deal_id}/reject")
+def reject_deal(
+    deal_id: uuid.UUID,
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """under_review -> rejected. Requires review_notes."""
+    _require_review_role(current_user)
+    review_notes = (payload.get("review_notes") or "").strip() if payload else ""
+    if not review_notes:
+        raise HTTPException(status_code=422, detail="review_notes is required")
+
+    deal = _get_deal_or_404(deal_id, db)
+    if deal.status != "under_review":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot reject deal in status '{deal.status}'",
+        )
+
+    before_status = deal.status
+    deal.status = "rejected"
+    deal.review_notes = review_notes
+    deal.reviewer_id = current_user.id
+    deal.reviewed_at = datetime.utcnow()
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.rejected",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": before_status},
+        after={"status": "rejected", "review_notes": review_notes},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)

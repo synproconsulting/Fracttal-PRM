@@ -13,6 +13,7 @@ import PartnerProfile from './pages/PartnerProfile.jsx'
 import PartnerDocuments from './pages/PartnerDocuments.jsx'
 import DealList from './pages/DealList.jsx'
 import DealRegistrationForm from './pages/DealRegistrationForm.jsx'
+import DealQueue from './pages/DealQueue.jsx'
 
 function Landing() {
   return (
@@ -84,6 +85,14 @@ export default function App() {
         element={
           <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
             <PartnerDocuments />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/internal/deals"
+        element={
+          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
+            <DealQueue />
           </ProtectedRoute>
         }
       />

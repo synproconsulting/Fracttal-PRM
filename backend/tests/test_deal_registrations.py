@@ -475,3 +475,152 @@ def test_delete_other_orgs_deal_returns_403(db_session):
         assert r.status_code == 403
     finally:
         clear_overrides()
+
+
+# ------------------ Internal deal review endpoints (Story 5 / FPRM-134) ------------------
+
+
+def test_internal_list_returns_all_deals_for_review_role(db_session):
+    org_a = make_org(db_session)
+    org_b = make_org(db_session)
+    make_deal(db_session, org_a.id, status="submitted", name="QueueA")
+    make_deal(db_session, org_b.id, status="under_review", name="QueueB")
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get("/internal/deals")
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        names = [it["deal_name"] for it in items]
+        assert "QueueA" in names and "QueueB" in names
+    finally:
+        clear_overrides()
+
+
+def test_internal_list_supports_status_and_partner_filters(db_session):
+    org_a = make_org(db_session)
+    org_b = make_org(db_session)
+    make_deal(db_session, org_a.id, status="submitted", name="FilterA")
+    make_deal(db_session, org_b.id, status="approved", name="FilterB")
+    user = make_user(UserRole.system_admin)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get("/internal/deals?status=submitted")
+        assert r.status_code == 200
+        names = [it["deal_name"] for it in r.json()["items"]]
+        assert "FilterA" in names and "FilterB" not in names
+
+        r2 = client.get(f"/internal/deals?partner_org_id={org_a.id}")
+        items = r2.json()["items"]
+        assert all(it["partner_org_id"] == str(org_a.id) for it in items)
+    finally:
+        clear_overrides()
+
+
+def test_internal_list_rejects_partner_admin(db_session):
+    org = make_org(db_session)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get("/internal/deals")
+        assert r.status_code == 403
+    finally:
+        clear_overrides()
+
+
+def test_start_review_transitions_submitted_to_under_review(db_session):
+    org = make_org(db_session)
+    deal = make_deal(db_session, org.id, status="submitted")
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post(f"/internal/deals/{deal.id}/start-review")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "under_review"
+        assert body["reviewer_id"] == str(user.id)
+    finally:
+        clear_overrides()
+
+
+def test_start_review_rejects_non_submitted_status(db_session):
+    org = make_org(db_session)
+    deal = make_deal(db_session, org.id, status="draft")
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post(f"/internal/deals/{deal.id}/start-review")
+        assert r.status_code == 400
+    finally:
+        clear_overrides()
+
+
+def test_approve_requires_review_notes_and_transitions(db_session):
+    org = make_org(db_session)
+    deal = make_deal(db_session, org.id, status="under_review")
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r_missing = client.post(f"/internal/deals/{deal.id}/approve", json={})
+        assert r_missing.status_code == 422
+
+        r = client.post(f"/internal/deals/{deal.id}/approve", json={"review_notes": "Looks good"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "approved"
+        assert body["review_notes"] == "Looks good"
+        assert body["reviewer_id"] == str(user.id)
+
+        entry = (
+            db_session.query(AuditLog)
+            .filter(AuditLog.object_id == deal.id, AuditLog.action == "deal_registration.approved")
+            .first()
+        )
+        assert entry is not None
+    finally:
+        clear_overrides()
+
+
+def test_reject_requires_review_notes_and_transitions(db_session):
+    org = make_org(db_session)
+    deal = make_deal(db_session, org.id, status="under_review")
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r_missing = client.post(f"/internal/deals/{deal.id}/reject", json={"review_notes": ""})
+        assert r_missing.status_code == 422
+
+        r = client.post(f"/internal/deals/{deal.id}/reject", json={"review_notes": "Conflicting deal"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "rejected"
+        assert body["review_notes"] == "Conflicting deal"
+
+        entry = (
+            db_session.query(AuditLog)
+            .filter(AuditLog.object_id == deal.id, AuditLog.action == "deal_registration.rejected")
+            .first()
+        )
+        assert entry is not None
+    finally:
+        clear_overrides()
+
+
+def test_approve_partner_admin_blocked(db_session):
+    org = make_org(db_session)
+    deal = make_deal(db_session, org.id, status="under_review")
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post(f"/internal/deals/{deal.id}/approve", json={"review_notes": "OK"})
+        assert r.status_code == 403
+    finally:
+        clear_overrides()
