@@ -61,56 +61,56 @@ export default function Login() {
   }
 
   return (
-    <div style={{ maxWidth: 360, margin: '80px auto', padding: '0 20px', fontFamily: 'system-ui, sans-serif' }}>
-      <h1 style={{ color: '#102a43', marginBottom: 8 }}>Sign in</h1>
-      <p style={{ color: '#555', marginBottom: 24, fontSize: 14 }}>
-        Use the credentials you set when accepting your invitation.
-      </p>
-      <form onSubmit={onSubmit}>
-        <label style={{ display: 'block', marginBottom: 12, fontSize: 13, color: '#333' }}>
-          Email
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: '100%', padding: 10, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
-          />
-        </label>
-        <label style={{ display: 'block', marginBottom: 16, fontSize: 13, color: '#333' }}>
-          Password
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%', padding: 10, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
-          />
-        </label>
-        {error && (
-          <div style={{ color: '#c0392b', marginBottom: 12, fontSize: 13 }}>{error}</div>
-        )}
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            width: '100%',
-            padding: 12,
-            background: loading ? '#90caf9' : '#1976d2',
-            color: 'white',
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: loading ? 'wait' : 'pointer',
-          }}
-        >
-          {loading ? 'Signing in…' : 'Sign in'}
-        </button>
-      </form>
-      <p style={{ marginTop: 20, fontSize: 13, color: '#666' }}>
-        Not yet a partner? <Link to="/register">Apply to become a Fracttal Distribution Partner</Link>
-      </p>
+    <div className="fp-auth-page">
+      <div className="fp-auth-card">
+        <div className="fp-auth-card__brand">
+          <span className="fp-auth-card__brand-mark">F</span>
+          <span className="fp-auth-card__brand-text">Fracttal PRM</span>
+        </div>
+        <h1 className="fp-auth-card__title">Sign in</h1>
+        <p className="fp-auth-card__subtitle">
+          Use the credentials you set when accepting your invitation.
+        </p>
+        <form onSubmit={onSubmit} noValidate>
+          <div className="fp-field">
+            <input
+              id="login-email"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder=" "
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <label htmlFor="login-email">Email</label>
+          </div>
+          <div className="fp-field">
+            <input
+              id="login-password"
+              type="password"
+              required
+              autoComplete="current-password"
+              placeholder=" "
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <label htmlFor="login-password">Password</label>
+          </div>
+          {error && (
+            <div className="fp-alert fp-alert--danger">{error}</div>
+          )}
+          <button
+            type="submit"
+            disabled={loading}
+            className="fp-btn fp-btn--primary fp-btn--block"
+          >
+            {loading ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+        <p style={{ marginTop: 24, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)', textAlign: 'center' }}>
+          Not yet a partner? <Link to="/register" style={{ color: 'var(--fp-primary)', textDecoration: 'none', fontWeight: 600 }}>Apply to become a Fracttal Distribution Partner</Link>
+        </p>
+      </div>
     </div>
   )
 }

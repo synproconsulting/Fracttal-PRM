@@ -20,37 +20,11 @@ const ITEMS = [
   {
     key: 'terms_signed',
     label: 'Sign the partnership agreement',
-    actionLabel: null,  // contract date is set by internal team — no self-service link
+    actionLabel: null,
     actionTo: null,
     fallbackHint: 'Your Fracttal channel manager will set this once the agreement is signed.',
   },
 ]
-
-function Tick({ done }) {
-  if (done) {
-    return (
-      <span
-        aria-label="Completed"
-        style={{
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 22, height: 22, borderRadius: '50%',
-          background: '#4caf50', color: 'white', fontSize: 14, fontWeight: 600,
-        }}
-      >
-        ✓
-      </span>
-    )
-  }
-  return (
-    <span
-      aria-label="Pending"
-      style={{
-        display: 'inline-block', width: 22, height: 22, borderRadius: '50%',
-        border: '2px solid #bdbdbd',
-      }}
-    />
-  )
-}
 
 export default function ActivationChecklist({ partnerId, token: tokenProp }) {
   const [checklist, setChecklist] = useState(null)
@@ -80,90 +54,67 @@ export default function ActivationChecklist({ partnerId, token: tokenProp }) {
       .finally(() => setLoading(false))
   }, [partnerId, token])
 
-  if (loading) return <div style={{ padding: 16, color: '#666', fontSize: 13 }}>Loading activation status…</div>
+  if (loading) {
+    return <div className="fp-card" style={{ color: 'var(--fp-text-secondary)', fontSize: 'var(--fp-fs-sm)' }}>Loading activation status…</div>
+  }
   if (error) {
     return (
-      <div
-        style={{
-          padding: 16, background: '#fdecea', border: '1px solid #f5c6cb',
-          color: '#b71c1c', borderRadius: 6, fontSize: 13,
-        }}
-      >
+      <div className="fp-alert fp-alert--danger">
         Could not load activation checklist: {error}
       </div>
     )
   }
   if (!checklist) return null
 
-  const visibleItems = ITEMS  // baseline_training intentionally excluded from display
-  const doneCount = visibleItems.filter((i) => checklist[i.key]).length
-  const total = visibleItems.length
+  const doneCount = ITEMS.filter((i) => checklist[i.key]).length
+  const total = ITEMS.length
   const pct = Math.round((doneCount / total) * 100)
   const allDone = checklist.activation_complete
 
   return (
-    <section
-      style={{
-        background: 'white',
-        border: '1px solid #e0e0e0',
-        borderRadius: 8,
-        padding: 20,
-      }}
-    >
+    <section className="fp-card">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18, color: '#102a43' }}>
+        <h2 className="fp-section-title" style={{ margin: 0 }}>
           {allDone ? 'Account activated' : 'Activate your account'}
         </h2>
-        <span style={{ fontSize: 13, color: '#555' }}>{doneCount}/{total} complete</span>
+        <span style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+          {doneCount} / {total}
+        </span>
       </div>
-      <div style={{ height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden', marginBottom: 16 }}>
-        <div
-          style={{
-            width: `${pct}%`,
-            height: '100%',
-            background: allDone ? '#4caf50' : '#1976d2',
-            transition: 'width 0.3s ease',
-          }}
-        />
+      <div className="fp-progress" style={{ marginBottom: 16 }}>
+        <div className={`fp-progress__fill${allDone ? ' fp-progress__fill--success' : ''}`} style={{ width: `${pct}%` }} />
       </div>
 
       {allDone && (
-        <div
-          style={{
-            background: '#e8f5e9', color: '#1b5e20', padding: '10px 14px',
-            borderRadius: 6, marginBottom: 12, fontSize: 14,
-          }}
-        >
+        <div className="fp-alert fp-alert--success" style={{ marginBottom: 12 }}>
           Your account is activated — you can now register deals.
         </div>
       )}
 
-      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-        {visibleItems.map((item) => {
+      <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0 16px' }}>
+        {ITEMS.map((item) => {
           const done = !!checklist[item.key]
           return (
             <li
               key={item.key}
-              style={{
-                display: 'flex', alignItems: 'flex-start', gap: 12,
-                padding: '10px 0', borderTop: '1px solid #f0f0f0',
-              }}
+              className={`fp-checklist__item${done ? ' fp-checklist__item--done' : ''}`}
             >
-              <Tick done={done} />
+              <span className={`fp-checklist__tick${done ? ' fp-checklist__tick--done' : ''}`}>
+                {done ? '✓' : ''}
+              </span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, color: done ? '#444' : '#102a43', textDecoration: done ? 'line-through' : 'none' }}>
+                <div className={`fp-checklist__label${done ? ' fp-checklist__label--done' : ''}`}>
                   {item.label}
                 </div>
                 {!done && item.actionTo && (
-                  <Link
-                    to={item.actionTo}
-                    style={{ fontSize: 13, color: '#1976d2', textDecoration: 'none' }}
-                  >
+                  <Link to={item.actionTo} className="fp-checklist__link">
                     {item.actionLabel} →
                   </Link>
                 )}
                 {!done && !item.actionTo && item.fallbackHint && (
-                  <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>{item.fallbackHint}</div>
+                  <div style={{ fontSize: 'var(--fp-fs-xs)', color: 'var(--fp-text-secondary)', marginTop: 4 }}>
+                    {item.fallbackHint}
+                  </div>
                 )}
               </div>
             </li>
