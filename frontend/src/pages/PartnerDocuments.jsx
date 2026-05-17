@@ -18,13 +18,6 @@ function decodeJwt(token) {
   }
 }
 
-const STATUS_COLORS = {
-  approved: '#4caf50',
-  pending_review: '#ffc107',
-  rejected: '#f44336',
-  expired: '#9e9e9e',
-}
-
 const STATUS_LABELS = {
   approved: 'Approved',
   pending_review: 'Pending review',
@@ -32,18 +25,16 @@ const STATUS_LABELS = {
   expired: 'Expired',
 }
 
+const STATUS_TONE = {
+  approved: 'fp-badge--success',
+  pending_review: 'fp-badge--warning',
+  rejected: 'fp-badge--danger',
+  expired: 'fp-badge--neutral',
+}
+
 function StatusBadge({ status }) {
   return (
-    <span
-      style={{
-        background: STATUS_COLORS[status] || '#9e9e9e',
-        color: 'white',
-        padding: '2px 10px',
-        borderRadius: 12,
-        fontSize: 12,
-        fontWeight: 500,
-      }}
-    >
+    <span className={`fp-badge ${STATUS_TONE[status] || 'fp-badge--neutral'}`}>
       {STATUS_LABELS[status] || status}
     </span>
   )
@@ -66,7 +57,7 @@ const ACCEPT_TYPES = '.pdf,.jpg,.jpeg,.png'
 const ACCEPT_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png'])
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 
-function UploadPanel({ partnerId, token, onUploaded }) {
+function UploadModal({ partnerId, token, onClose, onUploaded }) {
   const [docType, setDocType] = useState('fiscal_id')
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
@@ -105,7 +96,7 @@ function UploadPanel({ partnerId, token, onUploaded }) {
         body: JSON.stringify({
           document_type: docType,
           document_name: file.name,
-          file_path: `/uploads/${partnerId}/${file.name}`,  // metadata-only — actual storage pending
+          file_path: `/uploads/${partnerId}/${file.name}`,
           file_size_bytes: file.size,
           mime_type: file.type,
         }),
@@ -114,9 +105,8 @@ function UploadPanel({ partnerId, token, onUploaded }) {
       if (!r.ok) {
         throw new Error(data.detail || `HTTP ${r.status}`)
       }
-      setFile(null)
-      setDocType('fiscal_id')
       onUploaded?.(data)
+      onClose()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -125,91 +115,77 @@ function UploadPanel({ partnerId, token, onUploaded }) {
   }
 
   return (
-    <form
-      onSubmit={onUpload}
-      style={{
-        background: 'white', border: '1px solid #e0e0e0', borderRadius: 8,
-        padding: 16, marginBottom: 24,
-        display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap',
-      }}
-    >
-      <label style={{ display: 'flex', flexDirection: 'column', fontSize: 13, color: '#333', minWidth: 220 }}>
-        Document type
-        <select
-          value={docType}
-          onChange={(e) => setDocType(e.target.value)}
-          style={{ padding: 8, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
-        >
-          {DOCUMENT_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>{t.label}</option>
-          ))}
-        </select>
-      </label>
-      <label style={{ display: 'flex', flexDirection: 'column', fontSize: 13, color: '#333', flex: 1, minWidth: 220 }}>
-        File (PDF, JPG, PNG; max 10 MB)
-        <input
-          type="file"
-          accept={ACCEPT_TYPES}
-          onChange={onFileChange}
-          style={{ padding: 6, marginTop: 4, fontSize: 13 }}
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={busy || !file}
-        style={{
-          padding: '10px 16px', background: busy || !file ? '#90caf9' : '#1976d2',
-          color: 'white', border: 'none', borderRadius: 4,
-          cursor: busy || !file ? 'not-allowed' : 'pointer', fontSize: 14,
-        }}
-      >
-        {busy ? 'Uploading…' : 'Upload'}
-      </button>
-      {error && (
-        <div style={{ flexBasis: '100%', color: '#c0392b', fontSize: 13 }}>{error}</div>
-      )}
-    </form>
+    <div className="fp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="upload-modal-title">
+      <form className="fp-modal" onSubmit={onUpload}>
+        <h3 id="upload-modal-title" className="fp-modal__title">Upload document</h3>
+        <p className="fp-modal__subtitle">PDF, JPG, or PNG — max 10 MB.</p>
+
+        <div className="fp-field fp-field--filled">
+          <select
+            id="upload-doc-type"
+            value={docType}
+            onChange={(e) => setDocType(e.target.value)}
+          >
+            {DOCUMENT_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <label htmlFor="upload-doc-type">Document type</label>
+        </div>
+
+        <label style={{ display: 'block', marginTop: 8, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+          File
+          <input
+            type="file"
+            accept={ACCEPT_TYPES}
+            onChange={onFileChange}
+            style={{ display: 'block', marginTop: 6, fontSize: 'var(--fp-fs-sm)' }}
+          />
+        </label>
+
+        {error && (
+          <div className="fp-alert fp-alert--danger" style={{ marginTop: 12 }}>{error}</div>
+        )}
+
+        <div className="fp-modal__actions">
+          <button type="button" onClick={onClose} disabled={busy} className="fp-btn fp-btn--ghost">
+            Cancel
+          </button>
+          <button type="submit" disabled={busy || !file} className="fp-btn fp-btn--primary">
+            {busy ? 'Uploading…' : 'Upload'}
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }
 
 function RejectModal({ doc, onClose, onConfirm, saving }) {
   const [notes, setNotes] = useState('')
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-      }}
-    >
-      <div style={{ background: 'white', borderRadius: 8, padding: 24, maxWidth: 480, width: '90%' }}>
-        <h3 style={{ marginTop: 0, color: '#102a43' }}>Reject document</h3>
-        <p style={{ fontSize: 14, color: '#555', margin: '0 0 12px' }}>
-          {doc.document_name}
-        </p>
-        <label style={{ display: 'block', fontSize: 13, color: '#333', marginBottom: 16 }}>
-          Reason (visible to the partner)
+    <div className="fp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reject-modal-title">
+      <div className="fp-modal">
+        <h3 id="reject-modal-title" className="fp-modal__title">Reject document</h3>
+        <p className="fp-modal__subtitle">{doc.document_name}</p>
+        <div className="fp-field fp-field--filled">
           <textarea
+            id="reject-notes"
             rows={4}
-            required
+            placeholder=" "
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            style={{ width: '100%', padding: 8, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
           />
-        </label>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            style={{ padding: '10px 16px', background: 'white', border: '1px solid #ccc', borderRadius: 4, cursor: saving ? 'not-allowed' : 'pointer' }}
-          >
+          <label htmlFor="reject-notes">Reason (visible to the partner)</label>
+        </div>
+        <div className="fp-modal__actions">
+          <button type="button" onClick={onClose} disabled={saving} className="fp-btn fp-btn--ghost">
             Cancel
           </button>
           <button
             type="button"
             onClick={() => onConfirm(notes)}
             disabled={saving || !notes.trim()}
-            style={{ padding: '10px 16px', background: saving ? '#ef9a9a' : '#c62828', color: 'white', border: 'none', borderRadius: 4, cursor: saving || !notes.trim() ? 'not-allowed' : 'pointer' }}
+            className="fp-btn fp-btn--solid-danger"
           >
             {saving ? 'Rejecting…' : 'Reject'}
           </button>
@@ -231,7 +207,8 @@ export default function PartnerDocuments() {
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [actionDoc, setActionDoc] = useState(null)  // doc being rejected
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [actionDoc, setActionDoc] = useState(null)
   const [actionSaving, setActionSaving] = useState(false)
 
   const reload = useMemo(() => {
@@ -297,97 +274,85 @@ export default function PartnerDocuments() {
     }
   }
 
-  const wrapperStyle = internalMode
-    ? { maxWidth: 980, margin: '24px auto', padding: '0 24px', fontFamily: 'system-ui, sans-serif' }
-    : {}
-
-  return (
-    <div style={wrapperStyle}>
-      <h1 style={{ color: '#102a43', margin: '0 0 16px' }}>Documents</h1>
+  const content = (
+    <>
+      <div className="fp-page-header">
+        <h1 className="fp-page-title">Documents</h1>
+        {!isInternal && (
+          <button type="button" className="fp-btn fp-btn--primary" onClick={() => setUploadOpen(true)}>
+            Upload document
+          </button>
+        )}
+      </div>
 
       {error && (
-        <div style={{ background: '#fdecea', color: '#b71c1c', padding: 12, borderRadius: 4, marginBottom: 16, fontSize: 13 }}>
-          {error}
-        </div>
+        <div className="fp-alert fp-alert--danger">{error}</div>
       )}
 
-      {!isInternal && (
-        <UploadPanel
-          partnerId={partnerOrgId}
-          token={token}
-          onUploaded={() => reload()}
-        />
-      )}
-
-      {loading && <div style={{ color: '#666', fontSize: 13 }}>Loading documents…</div>}
+      {loading && <div className="fp-card" style={{ color: 'var(--fp-text-secondary)' }}>Loading documents…</div>}
 
       {!loading && docs.length === 0 && (
-        <div
-          style={{
-            background: 'white', border: '1px solid #e0e0e0',
-            borderRadius: 8, padding: 20, color: '#666', fontSize: 14,
-          }}
-        >
-          No documents yet.
+        <div className="fp-card" style={{ color: 'var(--fp-text-secondary)', textAlign: 'center', padding: 40 }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>📄</div>
+          <div style={{ fontSize: 'var(--fp-fs-base)' }}>No documents yet.</div>
+          {!isInternal && (
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="fp-btn fp-btn--secondary" onClick={() => setUploadOpen(true)}>
+                Upload your first document
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {!loading && docs.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, background: 'white' }}>
+        <table className="fp-table">
           <thead>
-            <tr style={{ background: '#f5f5f5', textAlign: 'left' }}>
-              <th style={{ padding: 10 }}>Type</th>
-              <th style={{ padding: 10 }}>Name</th>
-              <th style={{ padding: 10 }}>Status</th>
-              <th style={{ padding: 10 }}>Uploaded</th>
-              <th style={{ padding: 10 }}>Expires</th>
-              {isInternal && <th style={{ padding: 10 }}>Actions</th>}
+            <tr>
+              <th>Type</th>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Uploaded</th>
+              <th>Expires</th>
+              {isInternal && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {docs.map((d) => (
-              <tr key={d.id} style={{ borderBottom: '1px solid #eee' }}>
-                <td style={{ padding: 10 }}>{d.document_type}</td>
-                <td style={{ padding: 10 }}>{d.document_name}</td>
-                <td style={{ padding: 10 }}>
+              <tr key={d.id}>
+                <td>{d.document_type}</td>
+                <td>{d.document_name}</td>
+                <td>
                   <StatusBadge status={d.status} />
                   {d.review_notes && d.status === 'rejected' && (
-                    <div style={{ fontSize: 12, color: '#b71c1c', marginTop: 4, maxWidth: 320 }}>
+                    <div style={{ fontSize: 'var(--fp-fs-xs)', color: 'var(--fp-danger)', marginTop: 4, maxWidth: 320 }}>
                       {d.review_notes}
                     </div>
                   )}
                 </td>
-                <td style={{ padding: 10 }}>
-                  {d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}
-                </td>
-                <td style={{ padding: 10 }}>{d.expiry_date || '—'}</td>
+                <td>{d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}</td>
+                <td>{d.expiry_date || '—'}</td>
                 {isInternal && (
-                  <td style={{ padding: 10 }}>
+                  <td>
                     {d.status === 'pending_review' ? (
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button
                           onClick={() => approve(d)}
                           disabled={actionSaving}
-                          style={{
-                            padding: '6px 12px', background: '#4caf50', color: 'white',
-                            border: 'none', borderRadius: 4, cursor: actionSaving ? 'not-allowed' : 'pointer', fontSize: 13,
-                          }}
+                          className="fp-btn fp-btn--success fp-btn--sm"
                         >
                           Approve
                         </button>
                         <button
                           onClick={() => setActionDoc(d)}
                           disabled={actionSaving}
-                          style={{
-                            padding: '6px 12px', background: 'white', color: '#c62828',
-                            border: '1px solid #c62828', borderRadius: 4, cursor: actionSaving ? 'not-allowed' : 'pointer', fontSize: 13,
-                          }}
+                          className="fp-btn fp-btn--danger fp-btn--sm"
                         >
                           Reject
                         </button>
                       </div>
                     ) : (
-                      <span style={{ color: '#888', fontSize: 13 }}>—</span>
+                      <span style={{ color: 'var(--fp-text-muted)', fontSize: 'var(--fp-fs-sm)' }}>—</span>
                     )}
                   </td>
                 )}
@@ -397,6 +362,14 @@ export default function PartnerDocuments() {
         </table>
       )}
 
+      {uploadOpen && (
+        <UploadModal
+          partnerId={partnerOrgId}
+          token={token}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => reload()}
+        />
+      )}
       {actionDoc && (
         <RejectModal
           doc={actionDoc}
@@ -405,6 +378,11 @@ export default function PartnerDocuments() {
           onConfirm={(notes) => reject(actionDoc, notes)}
         />
       )}
-    </div>
+    </>
   )
+
+  if (internalMode) {
+    return <div className="fp-page">{content}</div>
+  }
+  return content
 }

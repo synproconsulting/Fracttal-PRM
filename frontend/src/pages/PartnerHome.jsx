@@ -1,42 +1,37 @@
 import { useEffect, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { Link, useOutletContext } from 'react-router-dom'
 import ActivationChecklist from '../components/ActivationChecklist.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
-function Tile({ label, description, disabled }) {
-  return (
-    <div
-      style={{
-        background: 'white',
-        border: '1px solid #e0e0e0',
-        borderRadius: 8,
-        padding: 20,
-        opacity: disabled ? 0.55 : 1,
-        cursor: disabled ? 'not-allowed' : 'default',
-        position: 'relative',
-      }}
-    >
-      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6, color: '#102a43' }}>{label}</div>
-      <div style={{ fontSize: 13, color: '#555' }}>{description}</div>
-      {disabled && (
-        <span
-          style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            background: '#eee',
-            color: '#666',
-            fontSize: 11,
-            padding: '2px 8px',
-            borderRadius: 10,
-          }}
-        >
-          Coming soon
+function Tile({ label, description, icon, to, disabled, badge }) {
+  const content = (
+    <>
+      <div className="fp-tile__icon">{icon}</div>
+      <h3 className="fp-tile__title">{label}</h3>
+      <p className="fp-tile__description">{description}</p>
+      {badge && (
+        <span className={`fp-badge ${badge.tone === 'success' ? 'fp-badge--success' : 'fp-badge--neutral'} fp-tile__badge`}>
+          {badge.label}
         </span>
       )}
-    </div>
+    </>
+  )
+  if (disabled || !to) {
+    return (
+      <div className="fp-tile fp-tile--disabled" aria-disabled="true" title={disabled ? 'Coming soon' : undefined}>
+        {content}
+        {disabled && !badge && (
+          <span className="fp-badge fp-badge--neutral fp-tile__badge">Coming soon</span>
+        )}
+      </div>
+    )
+  }
+  return (
+    <Link to={to} className="fp-tile">
+      {content}
+    </Link>
   )
 }
 
@@ -75,54 +70,60 @@ export default function PartnerHome() {
   const fullName = me?.full_name || payload?.email?.split('@')[0] || 'Partner'
   const isActive = activation && activation.activation_complete
 
+  const checklistItems = activation
+    ? ['profile_complete', 'documents_uploaded', 'terms_signed']
+    : []
+  const doneCount = activation ? checklistItems.filter((k) => activation[k]).length : 0
+  const totalCount = checklistItems.length || 3
+  const pct = activation ? Math.round((doneCount / totalCount) * 100) : 0
+
   return (
     <div>
-      <h1 style={{ margin: '0 0 6px', color: '#102a43' }}>
-        Welcome, {fullName}
-        {orgName ? ` — ${orgName}` : ''}
-      </h1>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-        <span
-          style={{
-            background: isActive ? '#4caf50' : '#ff9800',
-            color: 'white',
-            padding: '4px 12px',
-            borderRadius: 12,
-            fontSize: 12,
-            fontWeight: 500,
-          }}
-        >
-          {isActive ? 'Active' : 'Pending Activation'}
-        </span>
-        <span style={{ fontSize: 13, color: '#666' }}>{payload?.email}</span>
+      <div className="fp-page-header">
+        <div>
+          <h1 className="fp-page-title">
+            Welcome, {fullName}
+            {orgName ? <span style={{ color: 'var(--fp-text-secondary)', fontWeight: 500 }}>{' — '}{orgName}</span> : null}
+          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+            <span className={`fp-badge ${isActive ? 'fp-badge--success' : 'fp-badge--warning'}`}>
+              {isActive ? 'Active' : 'Pending Activation'}
+            </span>
+            <span style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>{payload?.email}</span>
+          </div>
+        </div>
       </div>
 
       {activation && !activation.activation_complete && (
         <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 'var(--fp-fs-sm)', fontWeight: 600, color: 'var(--fp-text)' }}>
+              Activation progress
+            </span>
+            <span style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+              {doneCount} / {totalCount}
+            </span>
+          </div>
+          <div className="fp-progress">
+            <div className="fp-progress__fill" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {activation && !activation.activation_complete && (
+        <div style={{ marginBottom: 32 }}>
           <ActivationChecklist partnerId={payload.partner_org_id} token={token} />
         </div>
       )}
       {activationError && !activation && (
-        <div
-          style={{
-            background: '#fff8e1',
-            border: '1px solid #ffe082',
-            color: '#7d6608',
-            padding: 12,
-            borderRadius: 6,
-            marginBottom: 24,
-            fontSize: 13,
-          }}
-        >
-          {activationError}
-        </div>
+        <div className="fp-alert fp-alert--warning">{activationError}</div>
       )}
 
-      <h2 style={{ color: '#102a43', fontSize: 18, margin: '0 0 12px' }}>What you can do</h2>
+      <h2 className="fp-section-title">What you can do</h2>
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
           gap: 16,
           marginBottom: 32,
         }}
@@ -130,37 +131,40 @@ export default function PartnerHome() {
         <Tile
           label="Register a Deal"
           description="Submit a new opportunity for protection and approval."
-          disabled
+          icon="🤝"
+          to="/portal/deals/new"
+          badge={isActive ? null : { tone: 'neutral', label: 'Activation required' }}
         />
         <Tile
-          label="View Pipeline"
+          label="My Pipeline"
           description="Track all your registered deals and their status."
-          disabled
+          icon="📈"
+          to="/portal/deals"
+        />
+        <Tile
+          label="Profile"
+          description="Update your organisation and business details."
+          icon="🏢"
+          to="/portal/profile"
+        />
+        <Tile
+          label="Documents"
+          description="Upload and manage your partnership documents."
+          icon="📄"
+          to="/portal/documents"
         />
         <Tile
           label="Access Training"
           description="Browse certification courses and partner enablement."
+          icon="🎓"
           disabled
         />
         <Tile
           label="Browse Assets"
           description="Logos, brochures, sales collateral and demo videos."
+          icon="🎨"
           disabled
         />
-      </div>
-
-      <h2 style={{ color: '#102a43', fontSize: 18, margin: '0 0 12px' }}>Pending items</h2>
-      <div
-        style={{
-          background: 'white',
-          border: '1px solid #e0e0e0',
-          borderRadius: 8,
-          padding: 20,
-          color: '#666',
-          fontSize: 14,
-        }}
-      >
-        No pending items.
       </div>
     </div>
   )

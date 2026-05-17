@@ -62,62 +62,63 @@ export default function AcceptInvite() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '80px auto', padding: '0 20px', fontFamily: 'system-ui, sans-serif' }}>
-      <h1 style={{ color: '#102a43', marginBottom: 8 }}>Accept your invitation</h1>
-      <p style={{ color: '#555', marginBottom: 24, fontSize: 14 }}>
-        Set a password to activate your Fracttal partner portal account.
-      </p>
-      <form onSubmit={onSubmit}>
-        <label style={{ display: 'block', marginBottom: 12, fontSize: 13, color: '#333' }}>
-          Full name
-          <input
-            type="text"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            style={{ width: '100%', padding: 10, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
-          />
-        </label>
-        <label style={{ display: 'block', marginBottom: 12, fontSize: 13, color: '#333' }}>
-          Password
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%', padding: 10, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
-          />
-        </label>
-        <label style={{ display: 'block', marginBottom: 16, fontSize: 13, color: '#333' }}>
-          Confirm password
-          <input
-            type="password"
-            required
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            style={{ width: '100%', padding: 10, marginTop: 4, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
-          />
-        </label>
-        {error && (
-          <div style={{ color: '#c0392b', marginBottom: 12, fontSize: 13 }}>{error}</div>
-        )}
-        <button
-          type="submit"
-          disabled={loading || !token}
-          style={{
-            width: '100%',
-            padding: 12,
-            background: loading || !token ? '#90caf9' : '#1976d2',
-            color: 'white',
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: loading || !token ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {loading ? 'Activating…' : 'Activate account'}
-        </button>
-      </form>
+    <div className="fp-auth-page">
+      <div className="fp-auth-card">
+        <div className="fp-auth-card__brand">
+          <span className="fp-auth-card__brand-mark">F</span>
+          <span className="fp-auth-card__brand-text">Fracttal PRM</span>
+        </div>
+        <h1 className="fp-auth-card__title">Accept your invitation</h1>
+        <p className="fp-auth-card__subtitle">
+          Set a password to activate your Fracttal partner portal account.
+        </p>
+        <form onSubmit={onSubmit} noValidate>
+          <div className="fp-field">
+            <input
+              id="invite-name"
+              type="text"
+              placeholder=" "
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+            />
+            <label htmlFor="invite-name">Full name</label>
+          </div>
+          <div className="fp-field">
+            <input
+              id="invite-password"
+              type="password"
+              required
+              placeholder=" "
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <label htmlFor="invite-password">Password</label>
+          </div>
+          <div className="fp-field">
+            <input
+              id="invite-confirm"
+              type="password"
+              required
+              placeholder=" "
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+            <label htmlFor="invite-confirm">Confirm password</label>
+          </div>
+          {error && (
+            <div className="fp-alert fp-alert--danger">{error}</div>
+          )}
+          <button
+            type="submit"
+            disabled={loading || !token}
+            className="fp-btn fp-btn--primary fp-btn--block"
+          >
+            {loading ? 'Activating…' : 'Activate account'}
+          </button>
+        </form>
+      </div>
     </div>
   )
 }
