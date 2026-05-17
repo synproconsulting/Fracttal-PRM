@@ -55,6 +55,12 @@ def make_user(role: UserRole) -> User:
     )
 
 
+def override_db_only(db_session):
+    def _override_db():
+        yield db_session
+    app.dependency_overrides[get_db] = _override_db
+
+
 def override_internal_user(db_session, user: User):
     def _override_db():
         yield db_session
@@ -70,8 +76,11 @@ def clear_overrides():
     app.dependency_overrides.clear()
 
 
-def _create_and_submit(client, db_session) -> str:
-    """Create + populate + submit one application; return its id."""
+def _create_and_submit(client, db_session):
+    """Create + populate + submit one application; return (id, draft_token).
+
+    Caller must already have at least the get_db override active (public path).
+    """
     r = client.post("/applications", json={"applicant_email": f"sub-{uuid.uuid4().hex[:6]}@acme.test"})
     body = r.json()
     app_id, token = body["id"], body["draft_token"]
@@ -81,7 +90,7 @@ def _create_and_submit(client, db_session) -> str:
     )
     sub = client.post(f"/applications/{app_id}/submit?draft_token={token}")
     assert sub.status_code == 200, sub.text
-    return app_id
+    return app_id, token
 
 
 # ---------------- approve ----------------
@@ -91,10 +100,18 @@ def test_approve_sets_status_approved(db_session):
     reviewer = make_user(UserRole.channel_manager)
     db_session.add(reviewer)
     db_session.commit()
+
+    # Public create+submit
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, _token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
+    # Reviewer approves
     override_internal_user(db_session, reviewer)
     try:
-        client = TestClient(app)
-        app_id = _create_and_submit(client, db_session)
         r = client.post(f"/applications/{app_id}/approve")
     finally:
         clear_overrides()
@@ -108,18 +125,16 @@ def test_approve_rejects_partner_user(db_session):
     user = make_user(UserRole.partner_user)
     db_session.add(user)
     db_session.commit()
+
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, _token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
     override_internal_user(db_session, user)
     try:
-        client = TestClient(app)
-        # First create + submit an application with no overrides
-        clear_overrides()
-        def _db_only():
-            yield db_session
-        app.dependency_overrides[get_db] = _db_only
-        client2 = TestClient(app)
-        app_id = _create_and_submit(client2, db_session)
-        # Now switch to the partner_user override and try to approve
-        override_internal_user(db_session, user)
         r = client.post(f"/applications/{app_id}/approve")
     finally:
         clear_overrides()
@@ -148,10 +163,16 @@ def test_reject_requires_reason(db_session):
     reviewer = make_user(UserRole.channel_ops_admin)
     db_session.add(reviewer)
     db_session.commit()
+
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, _token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
     override_internal_user(db_session, reviewer)
     try:
-        client = TestClient(app)
-        app_id = _create_and_submit(client, db_session)
         r = client.post(f"/applications/{app_id}/reject", json={})
     finally:
         clear_overrides()
@@ -162,10 +183,16 @@ def test_reject_stores_reason_and_sets_status(db_session):
     reviewer = make_user(UserRole.channel_ops_admin)
     db_session.add(reviewer)
     db_session.commit()
+
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, _token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
     override_internal_user(db_session, reviewer)
     try:
-        client = TestClient(app)
-        app_id = _create_and_submit(client, db_session)
         r = client.post(
             f"/applications/{app_id}/reject",
             json={"rejection_reason": "Not enough CMMS experience"},
@@ -185,10 +212,16 @@ def test_request_info_sets_status_info_required(db_session):
     reviewer = make_user(UserRole.channel_manager)
     db_session.add(reviewer)
     db_session.commit()
+
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, _token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
     override_internal_user(db_session, reviewer)
     try:
-        client = TestClient(app)
-        app_id = _create_and_submit(client, db_session)
         r = client.post(
             f"/applications/{app_id}/request-info",
             json={"message": "Please attach your tax certificate."},
@@ -205,10 +238,16 @@ def test_request_info_requires_message(db_session):
     reviewer = make_user(UserRole.channel_manager)
     db_session.add(reviewer)
     db_session.commit()
+
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, _token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
     override_internal_user(db_session, reviewer)
     try:
-        client = TestClient(app)
-        app_id = _create_and_submit(client, db_session)
         r = client.post(f"/applications/{app_id}/request-info", json={})
     finally:
         clear_overrides()
@@ -219,44 +258,49 @@ def test_request_info_requires_message(db_session):
 
 
 def test_timeline_returns_audit_entries_after_review(db_session):
+    """Submit publicly, reviewer requests-info, then read timeline via draft_token.
+
+    The internal `GET /applications/{id}/timeline` path validates the Bearer header
+    directly (no dependency injection), so test coverage of the internal-JWT path
+    needs a real JWT; the public draft_token path is the simpler smoke test.
+    """
     reviewer = make_user(UserRole.channel_manager)
     db_session.add(reviewer)
     db_session.commit()
+
+    override_db_only(db_session)
+    client = TestClient(app)
+    try:
+        app_id, token = _create_and_submit(client, db_session)
+    finally:
+        clear_overrides()
+
     override_internal_user(db_session, reviewer)
     try:
-        client = TestClient(app)
-        app_id = _create_and_submit(client, db_session)
-        client.post(
+        r_info = client.post(
             f"/applications/{app_id}/request-info",
             json={"message": "Need more info"},
         )
-        r = client.get(f"/applications/{app_id}/timeline")
+        assert r_info.status_code == 200, r_info.text
+    finally:
+        clear_overrides()
+
+    override_db_only(db_session)
+    try:
+        r = client.get(f"/applications/{app_id}/timeline?draft_token={token}")
     finally:
         clear_overrides()
     assert r.status_code == 200, r.text
-    entries = r.json()
-    actions = [e["action"] for e in entries]
+    actions = [e["action"] for e in r.json()]
     assert "partner_application.submitted" in actions
     assert "partner_application.info_requested" in actions
 
 
 def test_timeline_public_with_draft_token(db_session):
-    def _db_only():
-        yield db_session
-
-    app.dependency_overrides[get_db] = _db_only
+    override_db_only(db_session)
     try:
         client = TestClient(app)
-        r = client.post("/applications", json={"applicant_email": "timeline@acme.test"})
-        body = r.json()
-        app_id, token = body["id"], body["draft_token"]
-        # Submit so we have at least one audit entry
-        client.patch(
-            f"/applications/{app_id}?draft_token={token}",
-            json={"applicant_name": "P", "legal_name": "Acme", "terms_accepted": True},
-        )
-        client.post(f"/applications/{app_id}/submit?draft_token={token}")
-
+        app_id, token = _create_and_submit(client, db_session)
         r2 = client.get(f"/applications/{app_id}/timeline?draft_token={token}")
     finally:
         clear_overrides()
