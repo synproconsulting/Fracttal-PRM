@@ -17,6 +17,7 @@ from routers.partner_users_router import router as partner_users_router
 from routers.activities_router import router as activities_router
 from routers.config_router import router as config_router
 from routers.applications_router import router as applications_router
+from routers.deal_registrations_router import router as deal_registrations_router
 
 load_dotenv()
 
@@ -47,6 +48,7 @@ app.include_router(partner_users_router)
 app.include_router(activities_router)
 app.include_router(config_router)
 app.include_router(applications_router)
+app.include_router(deal_registrations_router)
 
 
 @app.get("/")
