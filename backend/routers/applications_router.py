@@ -38,6 +38,12 @@ from models import (
     User,
 )
 from permissions import has_permission, require_permission
+from notifications import (
+    notify_application_approved,
+    notify_application_rejected,
+    notify_application_submitted,
+    notify_info_required,
+)
 
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -274,6 +280,11 @@ def submit_application(
         ip_address=_client_ip(request),
     )
 
+    try:
+        notify_application_submitted(app_record)
+    except Exception:  # pragma: no cover  — email failures must never fail the endpoint
+        pass
+
     return {
         "id": str(app_record.id),
         "status": _status_value(app_record.status),
@@ -343,10 +354,12 @@ def approve_application(
     db.refresh(app_record)
 
     # Provisioning hook — implemented in FPRM-92 (Story 3 / Sprint 6).
+    invite_token = ""
     try:
         from provisioning import provision_partner_from_application  # noqa: WPS433
 
-        provision_partner_from_application(db, app_record.id, current_user.id)
+        result = provision_partner_from_application(db, app_record.id, current_user.id)
+        invite_token = result.get("invite_token") or ""
         db.refresh(app_record)
     except ImportError:
         pass  # Provisioning module not yet present (Story 1 ships ahead of Story 3).
@@ -364,6 +377,11 @@ def approve_application(
         },
         ip_address=_client_ip(request),
     )
+
+    try:
+        notify_application_approved(app_record, invite_token)
+    except Exception:  # pragma: no cover  — email failures must never fail the endpoint
+        pass
 
     return {
         "id": str(app_record.id),
@@ -418,6 +436,11 @@ def reject_application(
         ip_address=_client_ip(request),
     )
 
+    try:
+        notify_application_rejected(app_record, rejection_reason)
+    except Exception:  # pragma: no cover
+        pass
+
     return {
         "id": str(app_record.id),
         "status": _status_value(app_record.status),
@@ -470,6 +493,11 @@ def request_info(
         after={"status": "info_required", "info_request_message": message},
         ip_address=_client_ip(request),
     )
+
+    try:
+        notify_info_required(app_record, message)
+    except Exception:  # pragma: no cover
+        pass
 
     return {
         "id": str(app_record.id),
