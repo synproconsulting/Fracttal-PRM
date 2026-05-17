@@ -3,6 +3,7 @@ import RegisterPartner from './pages/RegisterPartner.jsx'
 import RegisterConfirmation from './pages/RegisterConfirmation.jsx'
 import ApplicationQueue from './pages/ApplicationQueue.jsx'
 import ApplicationReview from './pages/ApplicationReview.jsx'
+import ApplicationResume from './pages/ApplicationResume.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 
 function Landing() {
@@ -23,6 +24,7 @@ export default function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/register" element={<RegisterPartner />} />
       <Route path="/register/confirmation" element={<RegisterConfirmation />} />
+      <Route path="/resume-application" element={<ApplicationResume />} />
       <Route
         path="/internal/applications"
         element={

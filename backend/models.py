@@ -389,3 +389,28 @@ class PartnerProfile(Base):
     additional_info = Column(Text, nullable=True)
     profile_completeness_pct = Column(Integer, default=0, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ApplicationMessageSender(str, enum.Enum):
+    applicant = "applicant"
+    internal = "internal"
+
+
+class PartnerApplicationMessage(Base):
+    __tablename__ = "partner_application_messages"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_applications.id"),
+        nullable=False,
+        index=True,
+    )
+    sender_type = Column(
+        SAEnum(ApplicationMessageSender, name="application_message_sender"),
+        nullable=False,
+    )
+    sender_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    sender_email = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
