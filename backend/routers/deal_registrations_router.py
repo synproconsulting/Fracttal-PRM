@@ -792,3 +792,55 @@ def request_info(
         ip_address=_client_ip(request),
     )
     return _serialize(deal)
+
+
+@router.post("/internal/deals/{deal_id}/cancel-info-request")
+def cancel_info_request(
+    deal_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sprint 11 / FPRM-186 — reverse an outstanding info request on a deal.
+
+    info_required -> under_review. Posts a system message to the deal thread
+    so the partner has a thread-level record that the request was cancelled.
+    Allowed roles: channel_manager, channel_ops_admin, system_admin.
+    """
+    _require_review_role(current_user)
+    deal = _get_deal_or_404(deal_id, db)
+    if deal.status != "info_required":
+        raise HTTPException(
+            status_code=400,
+            detail="Deal is not in info_required status",
+        )
+
+    before_status = deal.status
+    deal.status = "under_review"
+    deal.reviewer_id = current_user.id
+    deal.updated_at = datetime.utcnow()
+
+    system_message = DealMessage(
+        id=uuid.uuid4(),
+        deal_id=deal.id,
+        sender_type="internal",
+        sender_id=current_user.id,
+        sender_email=current_user.email,
+        message="Info request cancelled by reviewer.",
+    )
+    db.add(system_message)
+    db.commit()
+    db.refresh(deal)
+    db.refresh(system_message)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.info_request_cancelled",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": before_status},
+        after={"status": "under_review", "message_id": str(system_message.id)},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)
