@@ -16,13 +16,24 @@ const COUNTRY_OPTIONS = [
   'Other',
 ]
 
-const COMMISSION_OPTIONS = [
-  { value: '', label: 'Select…' },
-  { value: 'autonomous_sell', label: 'Autonomous Sell' },
-  { value: 'indirect_sell', label: 'Indirect Sell' },
-  { value: 'direct_sell', label: 'Direct Sell' },
-  { value: 'co_sell_shared', label: 'Co-Sell (Shared)' },
-]
+const COMMISSION_LABEL_MAP = {
+  autonomous_sell: 'Autonomous Sell',
+  indirect_sell: 'Indirect Sell',
+  direct_sell: 'Direct Sell',
+  co_sell_shared: 'Co-Sell (Shared)',
+}
+
+function humanizeCommissionType(code) {
+  if (COMMISSION_LABEL_MAP[code]) return COMMISSION_LABEL_MAP[code]
+  return String(code)
+    .split('_')
+    .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : ''))
+    .join(' ')
+}
+
+const COMMISSION_FALLBACK_OPTIONS = Object.entries(COMMISSION_LABEL_MAP).map(
+  ([value, label]) => ({ value, label }),
+)
 
 const TEXT_FIELDS_CUSTOMER = [
   { key: 'customer_name', label: 'Customer name', required: true, type: 'text' },
@@ -60,7 +71,7 @@ function FloatingSelect({ id, label, value, onChange, options, required }) {
   return (
     <div className="fp-field fp-field--filled">
       <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value)} required={required}>
-        <option value="">Select…</option>
+        <option value="">Select.</option>
         {options.map((opt) => (
           typeof opt === 'string'
             ? <option key={opt} value={opt}>{opt}</option>
@@ -122,7 +133,7 @@ export default function DealRegistrationForm() {
 
   // FPRM-158: fetch the partner's commission rates so we can preview the
   // applicable percentage once the user picks a commission_type. Fetch
-  // failures are silent — we never block the form because of this.
+  // failures are silent - we never block the form because of this.
   useEffect(() => {
     if (!partnerOrgId || !token) return
     fetch(`${API}/partners/${partnerOrgId}/commission-rates`, {
@@ -144,6 +155,24 @@ export default function DealRegistrationForm() {
     }
     return 'Rate not on file for this commission type'
   }, [deal.commission_type, commissionRates])
+
+  // FPRM-173: derive commission_type options from the partner's commission
+  // rates so a new vocabulary entry seeded in commission_structures shows up
+  // here automatically. Falls back to the canonical four-value list while the
+  // fetch is in flight or if it fails.
+  const commissionOptions = useMemo(() => {
+    const items = commissionRates?.items
+    if (!items || items.length === 0) return COMMISSION_FALLBACK_OPTIONS
+    const seen = new Set()
+    const out = []
+    for (const item of items) {
+      const code = item.commission_type
+      if (!code || seen.has(code)) continue
+      seen.add(code)
+      out.push({ value: code, label: humanizeCommissionType(code) })
+    }
+    return out.length > 0 ? out : COMMISSION_FALLBACK_OPTIONS
+  }, [commissionRates])
 
   useEffect(() => {
     if (!id || !token) return
@@ -253,7 +282,7 @@ export default function DealRegistrationForm() {
   }
 
   if (loading) {
-    return <div className="fp-card" style={{ color: 'var(--fp-text-secondary)' }}>Loading deal…</div>
+    return <div className="fp-card" style={{ color: 'var(--fp-text-secondary)' }}>Loading deal.</div>
   }
 
   const isExistingSubmittable = !deal.id || deal.status === 'draft' || deal.status === 'info_required'
@@ -274,7 +303,7 @@ export default function DealRegistrationForm() {
           <div>
             <strong>Your partner account is not yet fully activated.</strong>{' '}
             <a href="/portal/home" style={{ color: 'inherit', textDecoration: 'underline', fontWeight: 600 }}>
-              Complete activation →
+              Complete activation ?
             </a>
           </div>
         </div>
@@ -341,7 +370,7 @@ export default function DealRegistrationForm() {
               label="Commission type"
               value={deal.commission_type}
               onChange={(v) => setField('commission_type', v)}
-              options={COMMISSION_OPTIONS.slice(1)}
+              options={commissionOptions}
             />
             {rateHint && (
               <p
@@ -378,7 +407,7 @@ export default function DealRegistrationForm() {
             onClick={saveDraft}
             disabled={saving || submitting || !isExistingSubmittable}
           >
-            {saving ? 'Saving…' : 'Save as draft'}
+            {saving ? 'Saving.' : 'Save as draft'}
           </button>
           <button
             type="button"
@@ -386,7 +415,7 @@ export default function DealRegistrationForm() {
             onClick={submitDeal}
             disabled={submitDisabled || !isExistingSubmittable}
           >
-            {submitting ? 'Submitting…' : 'Submit deal'}
+            {submitting ? 'Submitting.' : 'Submit deal'}
           </button>
         </div>
       </div>

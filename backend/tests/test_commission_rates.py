@@ -18,7 +18,10 @@ from database import Base, get_db
 import models  # noqa: F401  registers all models
 from models import (
     CommissionStructure,
+    CommissionType,
     CommissionYear,
+    DealRegistration,
+    PartnerActivationChecklist,
     PartnerCategoryConfig,
     PartnerOrganization,
     User,
@@ -216,3 +219,48 @@ def test_empty_items_when_no_rows_seeded(db_session):
         app.dependency_overrides.clear()
     assert r.status_code == 200
     assert r.json()["items"] == []
+
+
+def test_submit_deal_snapshots_commission_rate(db_session):
+    """FPRM-173: a deal submitted with a seeded commission_type must populate
+    commission_rate_snapshot with the year_1 percentage for the partner's
+    category. Regression test for the "snapshot always null" bug.
+    """
+    partner = _make_partner(db_session, "reseller")
+    _seed_commission_rows(db_session, "reseller")
+    # Activation gate must pass for the submit endpoint's create precondition.
+    db_session.add(
+        PartnerActivationChecklist(
+            id=uuid.uuid4(),
+            partner_org_id=partner.id,
+            profile_complete=True,
+            documents_uploaded=True,
+            terms_signed=True,
+            baseline_training_complete=True,
+            activation_complete=True,
+        )
+    )
+    db_session.commit()
+    pa = _make_user(db_session, UserRole.partner_admin, partner_org_id=partner.id)
+    _override(db_session, pa)
+    try:
+        client = TestClient(app)
+        create = client.post(
+            "/deal-registrations",
+            json={
+                "customer_name": "Snapshot Customer",
+                "deal_name": "Snapshot Deal",
+                "commission_type": CommissionType.autonomous_sell.value,
+            },
+        )
+        assert create.status_code == 201, create.text
+        deal_id = create.json()["id"]
+        submit = client.post(f"/deal-registrations/{deal_id}/submit")
+    finally:
+        app.dependency_overrides.clear()
+    assert submit.status_code == 200, submit.text
+    body = submit.json()
+    assert body["status"] == "submitted"
+    assert body["commission_structure_id"] is not None
+    # Seeded autonomous_sell + year_1 for the reseller category is 50%.
+    assert body["commission_rate_snapshot"] == pytest.approx(50.0)
