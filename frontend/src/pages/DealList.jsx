@@ -122,10 +122,7 @@ export default function DealList() {
           </thead>
           <tbody>
             {deals.map((d) => {
-              const editable = d.status === 'draft' || d.status === 'info_required'
-              const linkTo = editable
-                ? `/portal/deals/${d.id}/edit`
-                : `/portal/deals/${d.id}/edit`
+              const linkTo = `/portal/deals/${d.id}`
               return (
                 <tr key={d.id}>
                   <td>
