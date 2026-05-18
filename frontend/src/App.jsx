@@ -8,6 +8,7 @@ import ProtectedRoute from './components/ProtectedRoute.jsx'
 import Login from './pages/Login.jsx'
 import AcceptInvite from './pages/AcceptInvite.jsx'
 import PartnerPortalLayout from './layouts/PartnerPortalLayout.jsx'
+import InternalLayout from './layouts/InternalLayout.jsx'
 import PartnerHome from './pages/PartnerHome.jsx'
 import PartnerProfile from './pages/PartnerProfile.jsx'
 import PartnerDocuments from './pages/PartnerDocuments.jsx'
@@ -32,6 +33,29 @@ function Landing() {
     </div>
   )
 }
+
+// Internal home is built in FPRM-179. Render a lightweight placeholder so
+// the /internal/home route resolves cleanly when InternalLayout's sidebar
+// links to it from FPRM-176 onwards.
+function InternalHomePlaceholder() {
+  return (
+    <div style={{ padding: 24 }}>
+      <h2 style={{ marginTop: 0 }}>Internal Home</h2>
+      <p style={{ color: 'var(--fp-text-secondary, #5A6478)' }}>
+        Dashboard arriving in FPRM-179. Use the sidebar to navigate.
+      </p>
+    </div>
+  )
+}
+
+const INTERNAL_ROLES = [
+  'system_admin',
+  'channel_ops_admin',
+  'channel_manager',
+  'sales_rep',
+  'sales_ops',
+  'finance_approver',
+]
 
 export default function App() {
   return (
@@ -62,53 +86,21 @@ export default function App() {
       </Route>
 
       <Route
-        path="/internal/applications"
+        path="/internal"
         element={
-          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
-            <ApplicationQueue />
+          <ProtectedRoute roles={INTERNAL_ROLES}>
+            <InternalLayout />
           </ProtectedRoute>
         }
-      />
-      <Route
-        path="/internal/applications/:id"
-        element={
-          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
-            <ApplicationReview />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/internal/partners/:id/profile"
-        element={
-          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
-            <PartnerProfile />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/internal/partners/:id/documents"
-        element={
-          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
-            <PartnerDocuments />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/internal/deals"
-        element={
-          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
-            <DealQueue />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/internal/deals/:id"
-        element={
-          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
-            <InternalDealDetail />
-          </ProtectedRoute>
-        }
-      />
+      >
+        <Route path="home" element={<InternalHomePlaceholder />} />
+        <Route path="applications" element={<ApplicationQueue />} />
+        <Route path="applications/:id" element={<ApplicationReview />} />
+        <Route path="partners/:id/profile" element={<PartnerProfile />} />
+        <Route path="partners/:id/documents" element={<PartnerDocuments />} />
+        <Route path="deals" element={<DealQueue />} />
+        <Route path="deals/:id" element={<InternalDealDetail />} />
+      </Route>
     </Routes>
   )
 }
