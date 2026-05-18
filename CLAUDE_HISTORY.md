@@ -956,3 +956,89 @@ Backend ends Sprint 8 at **228 tests passing** (Sprint 7 baseline 194 + 34 new m
 5. **Phase 3A happy-path validation** — Sprint 9 closeout (FPRM-129 in the Phase 3 ticket doc) will add a `RUNBOOK.md` § for the full submit → start-review → request-info → resubmit → approve flow. Sprint 8 closeout does not yet add a RUNBOOK section because the Phase 3 review flow lands incrementally over Sprints 8 and 9.
 6. **Carry-forward:** in-memory token blacklist, password-reset email backend, SonarCloud configuration.
 
+### Inter-sprint hotfixes (Sprint 8 closeout → Sprint 9 start)
+
+| Key | Bug | PR | Notes |
+|---|---|---|---|
+| FPRM-137 | `partner_documents` missing `rejection_reason` + `info_request_message` columns (model included them, DB did not) | #59 | Migration 014 adds the two TEXT columns; idempotent. |
+| FPRM-138 | `commission_structures.commission_type` PG enum rejects deal-submitted values like "reseller" with 500 (InvalidTextRepresentation) | #60 | Migration 015 converts the column to VARCHAR + drops the enum. Aligns with `deal_registrations.commission_type` being plain string. Pattern is now codified — any future broadening of a Postgres enum used as a join target should convert to VARCHAR rather than ALTER TYPE add values. |
+
+---
+
+## Sprint 9 — Deal Review Workflow + Collaboration Thread + Admin Configurability
+
+**Started:** 2026-05-17
+**Closed:** 2026-05-17 (single-day intensive)
+**Fix Version ID:** `10632`
+**Native Sprint ID:** `605`
+**Phase 3 epic:** FPRM-121 — Deal Registration
+
+### Sprint 9 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-139 | Deal collaboration thread model and API | Done | #61 | `DealMessage` model + migration 016 (`deal_messages`, FK to `deal_registrations`/`users`, index on `(deal_id, created_at)`); `GET/POST /deal-registrations/{id}/messages`; `POST /internal/deals/{id}/request-info` posts the reviewer note inline; existing submit already accepted `info_required → submitted`. 13 new tests. |
+| FPRM-140 | Deal detail page — partner portal | Done | #62 | `DealDetail.jsx` at `/portal/deals/:id`; read-only fields, status banners, collab thread, info_required → message + resubmit. `DealList.jsx` deal name now links to detail; draft state shows "Edit draft" → existing form. |
+| FPRM-141 | Deal detail page — internal review | Done | #63 | `InternalDealDetail.jsx` at `/internal/deals/:id`; commission snapshot + conflict status (read-only) + always-on thread + status-sensitive Quick Actions (Start Review / Request Info / Approve / Reject). `DealQueue.jsx` inline approve/reject modals removed; rows link to detail; Start Review kept inline. |
+| FPRM-142 | Sprint 9 docs and Phase 3A closeout | Done | (this PR) | PROJECT_CONTEXT.md (Sections 1, 2, 3) updated; CLAUDE.md `Current state` + sprint IDs table; CLAUDE_HISTORY.md gains this entry; RUNBOOK.md gains §12 Phase 3A happy-path validation. |
+| FPRM-143 | Deal Queue shows truncated UUID instead of partner org legal name | Done (Bug) | #64 | `_serialize_with_org()` + `_bulk_org_names()` add `partner_legal_name` to single-deal + list responses. Bulk lookup avoids N+1. 3 new tests. |
+| FPRM-144 | Document types admin-configurable | Done | #65 | `DocumentTypeConfig` model + migration 017 (table + seed of 10 original values + ENUM→VARCHAR conversion). `GET /config/document-types` (public), `POST/PATCH /config/document-types/{id}` (system_admin / channel_ops_admin). `documents_router.upload_document` validates against the DB table with a legacy-enum fallback for migration safety. 9 new tests. |
+| FPRM-145 | `baseline_training_complete` has no set endpoint — activation checklist stuck | Done | #66 | `POST /partners/{id}/activation/training-complete` and `training-reset` (channel_manager / channel_ops_admin / system_admin only). `activation.recalculate_activation` now (a) preserves whatever the endpoints set, and (b) **includes the flag in the `activation_complete` gate**. Migration 018 backfills `baseline_training_complete=true` for partners currently `activation_complete=true` so the gate change does not deactivate anyone. Existing activation/document tests updated. 8 new endpoint tests. |
+
+All 10 subtasks (FPRM-146..FPRM-155) closed Done.
+
+### What landed on `main` during Sprint 9
+
+- `backend/models.py` — adds `DealMessage`, `DocumentTypeConfig`. `PartnerDocument.document_type` now plain String (was PG enum) — see migration 017.
+- `backend/routers/deal_registrations_router.py` — `GET/POST /deal-registrations/{id}/messages`, `POST /internal/deals/{id}/request-info`, `_serialize_with_org` / `_bulk_org_names` for `partner_legal_name`.
+- `backend/routers/config_router.py` — three new document-type endpoints.
+- `backend/routers/documents_router.py` — upload validates against `document_types` table (legacy-enum fallback if table empty).
+- `backend/routers/partners_router.py` — `_set_training` helper + `POST /partners/{id}/activation/training-complete | training-reset`.
+- `backend/activation.py` — preserves `baseline_training_complete`; gate now includes it.
+- `backend/alembic/versions/016_create_deal_messages.py` (new).
+- `backend/alembic/versions/017_create_document_types_config.py` (new) — creates table + seed + ENUM→VARCHAR conversion.
+- `backend/alembic/versions/018_backfill_baseline_training.py` (new) — one-line UPDATE.
+- `backend/tests/test_deal_messages.py` (13 cases), `test_deal_partner_legal_name.py` (3 cases), `test_document_types_config.py` (9 cases), `test_training_complete.py` (8 cases). `test_activation.py` + `test_documents_activation.py` updated for new gate.
+- `frontend/src/pages/DealDetail.jsx` (new), `InternalDealDetail.jsx` (new).
+- `frontend/src/pages/DealList.jsx`, `DealQueue.jsx` — link to detail, simplified row actions.
+- `frontend/src/App.jsx` — `/portal/deals/:id` + `/internal/deals/:id` routes.
+- `PROJECT_CONTEXT.md` — Sections 1, 2, 3 updated.
+- `CLAUDE.md` — Current state line refreshed; Sprint 9 IDs added.
+- `CLAUDE_HISTORY.md` — this entry.
+- `RUNBOOK.md` — §12 Phase 3A happy-path validation added.
+
+### API endpoint count
+
+Sprint 9 adds **8 new endpoints**:
+- `GET /deal-registrations/{id}/messages`
+- `POST /deal-registrations/{id}/messages`
+- `POST /internal/deals/{id}/request-info`
+- `GET /config/document-types`
+- `POST /config/document-types`
+- `PATCH /config/document-types/{id}`
+- `POST /partners/{id}/activation/training-complete`
+- `POST /partners/{id}/activation/training-reset`
+
+Total surface area is now **63 endpoints**.
+
+### Sprint 9 test count
+
+Backend ends Sprint 9 at **261 tests passing** (Sprint 8 baseline 228 + 33 new across deal_messages, deal_partner_legal_name, document_types_config, training_complete — plus updated activation/documents_activation tests).
+
+### Sprint 9 lessons
+
+1. **Backfill migrations are mandatory when gate logic tightens.** FPRM-145 added `baseline_training_complete` to the activation gate. Without migration 018, the next recalc against any currently-active partner would have flipped them back to `activation_complete=False`. Pattern: when an activation rule changes from "ignored" to "required", always backfill the prerequisite state for entities currently passing the gate. Cheap one-line `UPDATE … WHERE` statements prevent silent regressions in production data.
+2. **Enum → VARCHAR conversions follow a stable recipe.** FPRM-138 migration 015 introduced the pattern (commission_type). FPRM-144 migration 017 repeated it (document_type) without re-discovery. The recipe: `ALTER COLUMN … TYPE VARCHAR USING …::text` then `DROP TYPE`. Anywhere a PG enum is used as a *join target* with a value-source that might broaden (form field, admin config table), prefer VARCHAR from the start. Codified.
+3. **N+1 avoidance in serialisers is cheap when done up-front.** `_bulk_org_names` does one IN-query for the whole page; trivially small. Adding `partner_legal_name` row-by-row would have been a hidden N+1 for the deal queue. The price of "one query per page" is paid before the first regression. Pattern is reusable for any list endpoint that needs to join one related-name field.
+4. **Frontend graceful fallbacks insulate against PR ordering.** Story 3 (`InternalDealDetail.jsx`) was merged before Addendum A (`partner_legal_name` backend). The frontend reads `deal.partner_legal_name || deal.partner_org_id` — when the field was missing the page still rendered with the UUID; after Addendum A landed, the same code instantly upgraded. No coordination across PRs was needed.
+5. **Existing routers absorb new endpoints best.** All three thread + request-info endpoints + the `partner_legal_name` join landed inside the existing `deal_registrations_router.py`. Creating a `deal_messages_router.py` would have meant a new file, new `app.include_router`, and split test fixtures. AD-style observation: when new endpoints share dependency + tenant guards with an existing router, keep them co-located.
+
+### Known follow-ups for Sprint 10
+
+1. **Sprint 10 (Conflict Checking + Commission Visibility — Phase 3 closeout)** is next. New backend module `conflict_checker.py` wires into `POST /deal-registrations/{id}/submit`. Conflict override button replaces the `{/* TODO Sprint 10 */}` comment in `InternalDealDetail.jsx`. Commission rate visibility for partners (new portal view of `commission_structures`).
+2. **`FPRM-89` (`actor_id == "None"`)** still parked Low.
+3. **`FPRM-104` (`_user_from_bearer` testability)** still parked Low.
+4. **SMTP env vars on Railway** — still not set; lifecycle notifications still fall back to stdout. No code change required.
+5. **Phase 3A happy-path validation** — RUNBOOK.md §12 must be run against production before Sprint 10 begins. Validates submit → start-review → request-info → resubmit → approve end-to-end.
+6. **Carry-forward:** in-memory token blacklist, password-reset email backend, SonarCloud configuration.
+

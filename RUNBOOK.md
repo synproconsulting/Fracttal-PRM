@@ -472,7 +472,100 @@ The whole flow exercises Sprints 5, 6, and 7 end-to-end. If any step fails, capt
 
 ---
 
+## 12. End-to-End Happy Path Validation — Phase 3A (Deal Registration & Review Workflow)
+
+Run this end-to-end against the production Railway backend before starting Sprint 10. Exercises the full Sprint 8 + Sprint 9 deal lifecycle — submit, internal review, info request, partner reply, resubmit, approve.
+
+### Prerequisites
+
+- A fully activated partner (`activation_complete = True`) exists in the system. Use the partner created in Phase 2 validation (§ 11), then mark training complete via `POST /partners/{partner_id}/activation/training-complete` as `system_admin` (FPRM-145 added training to the gate — existing happy-path partners must also have `baseline_training_complete=True`).
+- A `partner_admin` JWT for that partner (see § 2 for token-fetching).
+- A `channel_manager` or `system_admin` JWT for the internal reviewer.
+
+### Step 1 — Submit a deal registration
+
+```cmd
+set ptoken=<partner_admin token>
+
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations" -H "Authorization: Bearer %ptoken%" -H "Content-Type: application/json" -d "{\"customer_name\":\"Test Customer Corp\",\"customer_domain\":\"testcustomer.com\",\"deal_name\":\"Phase 3A Test Deal\",\"commission_type\":\"reseller\",\"estimated_deal_value\":15000}"
+```
+
+Expect `201`, `status=draft`, `partner_org_id` set, `commission_rate_snapshot=null` (not yet submitted). Capture the returned `id` as `%deal_id%`.
+
+### Step 2 — Submit the draft
+
+```cmd
+set deal_id=<id from step 1>
+
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations/%deal_id%/submit" -H "Authorization: Bearer %ptoken%"
+```
+
+Expect `200`, `status=submitted`, `submitted_at` set, `commission_rate_snapshot` populated (if a `commission_structures` row exists for the partner's category + `commission_type=reseller` + `year_1`).
+
+### Step 3 — Internal reviewer starts review
+
+```cmd
+set itoken=<channel_manager or system_admin token>
+
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/start-review" -H "Authorization: Bearer %itoken%"
+```
+
+Expect `200`, `status=under_review`, `reviewer_id` populated.
+
+### Step 4 — Internal reviewer requests more info
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/request-info" -H "Authorization: Bearer %itoken%" -H "Content-Type: application/json" -d "{\"message\":\"Please provide the customer's registered address.\"}"
+```
+
+Expect `200`, `status=info_required`. Verify the message landed in the thread:
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/deal-registrations/%deal_id%/messages" -H "Authorization: Bearer %itoken%"
+```
+
+Expect at least one message with `sender_type=internal`.
+
+### Step 5 — Partner responds and resubmits
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations/%deal_id%/messages" -H "Authorization: Bearer %ptoken%" -H "Content-Type: application/json" -d "{\"message\":\"Customer address: 123 Main St, Buenos Aires.\"}"
+```
+
+Expect `201`, message appears in subsequent `GET /messages` with `sender_type=partner`.
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations/%deal_id%/submit" -H "Authorization: Bearer %ptoken%"
+```
+
+Expect `200`, `status=submitted` (transition from `info_required → submitted`).
+
+### Step 6 — Internal reviewer approves
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/start-review" -H "Authorization: Bearer %itoken%"
+
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/approve" -H "Authorization: Bearer %itoken%" -H "Content-Type: application/json" -d "{\"review_notes\":\"Deal approved — Phase 3A validation.\"}"
+```
+
+Expect `200`, `status=approved`, `reviewed_at` populated, `review_notes` set.
+
+All six steps green = Phase 3A chain confirmed. Safe to proceed with Sprint 10.
+
+### Frontend smoke check
+
+After backend validation, open `https://fracttal-prm-frontend-production.up.railway.app`:
+
+1. Sign in as the partner. `/portal/deals` lists the deal; click the deal name → lands on `/portal/deals/:deal_id`. Status banner reflects `approved` with green tone.
+2. Sign in as the internal reviewer. `/internal/deals` lists the deal with the **partner org legal name** in the Partner column (not the UUID — FPRM-143). Click the deal name → lands on `/internal/deals/:deal_id`. Commission snapshot, conflict status (not_checked), and the full collab thread render.
+
+### Known operational note: training gate (FPRM-145)
+
+Any partner that has not yet had `POST /partners/{id}/activation/training-complete` called for them will have `activation_complete=False`, so step 1 returns `412 {detail, activation_url}`. This is intentional. Before running this validation against a fresh partner, ensure training has been marked complete by an admin.
+
+---
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–7 closeout*
-*Last updated: Sprint 7 closeout / Phase 2 complete — May 2026*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–7 closeout, Sprint 8 closeout, Sprint 9 closeout*
+*Last updated: Sprint 9 closeout / Phase 3A complete — May 2026*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
