@@ -159,12 +159,20 @@ def test_recalculate_documents_uploaded_when_required_types_approved(db_session)
     assert checklist.documents_uploaded is True
 
 
-def test_recalculate_documents_uploaded_false_when_only_one_required_type(db_session):
+def test_recalculate_documents_uploaded_false_with_no_approved_docs(db_session):
+    """FPRM-156: at least one approved document flips documents_uploaded True."""
+    partner = _make_partner(db_session)
+    checklist = recalculate_activation(db_session, partner.id)
+    assert checklist.documents_uploaded is False
+
+
+def test_recalculate_documents_uploaded_true_with_one_approved_doc(db_session):
+    """FPRM-156: single approved doc is sufficient (rule simplified after FPRM-144)."""
     partner = _make_partner(db_session)
     uploader = _make_user(db_session, UserRole.channel_ops_admin)
     _make_approved_doc(db_session, partner.id, DocumentType.fiscal_id, uploader.id)
     checklist = recalculate_activation(db_session, partner.id)
-    assert checklist.documents_uploaded is False
+    assert checklist.documents_uploaded is True
 
 
 def test_recalculate_terms_signed_when_contract_start_date_present(db_session):

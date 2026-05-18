@@ -114,38 +114,46 @@ def _override(db_session, user):
     app.dependency_overrides[get_current_user] = _u
 
 
-def test_approving_required_doc_flips_checklist_when_both_required_present(db_session):
+def test_approving_a_single_doc_flips_checklist(db_session):
+    """FPRM-156: any one approved document flips documents_uploaded True.
+
+    Earlier rule required both fiscal_id and id_legal_representative; that
+    broke once FPRM-144 made document_types admin-configurable so partners
+    outside the original two-type list could never activate.
+    """
     partner = _make_partner(db_session)
     reviewer = _make_user(db_session, UserRole.channel_ops_admin)
     uploader = _make_user(db_session, UserRole.partner_admin, partner_org_id=partner.id)
-    doc_fiscal = _make_pending_doc(db_session, partner.id, DocumentType.fiscal_id, uploader.id)
-    doc_id_legal = _make_pending_doc(db_session, partner.id, DocumentType.id_legal_representative, uploader.id)
+    doc = _make_pending_doc(db_session, partner.id, DocumentType.nda, uploader.id)
 
     _override(db_session, reviewer)
     try:
         client = TestClient(app)
-        # Approve fiscal_id first — checklist should still be False (only one required type).
-        r1 = client.patch(
-            f"/partners/{partner.id}/documents/{doc_fiscal.id}",
+        r = client.patch(
+            f"/partners/{partner.id}/documents/{doc.id}",
             json={"status": "approved"},
         )
-        assert r1.status_code == 200
+        assert r.status_code == 200
         ck = (
             db_session.query(PartnerActivationChecklist)
             .filter_by(partner_org_id=partner.id).first()
         )
-        assert ck.documents_uploaded is False
-
-        # Approve id_legal_representative — checklist flips True.
-        r2 = client.patch(
-            f"/partners/{partner.id}/documents/{doc_id_legal.id}",
-            json={"status": "approved"},
-        )
-        assert r2.status_code == 200
-        db_session.refresh(ck)
         assert ck.documents_uploaded is True
     finally:
         app.dependency_overrides.clear()
+
+
+def test_documents_uploaded_regression_single_approved(db_session):
+    """FPRM-156 regression: upload 1 document, approve it, call recalculate, assert documents_uploaded=True."""
+    from activation import recalculate_activation
+    partner = _make_partner(db_session)
+    uploader = _make_user(db_session, UserRole.channel_ops_admin)
+    doc = _make_pending_doc(db_session, partner.id, DocumentType.fiscal_id, uploader.id)
+    doc.status = DocumentStatus.approved
+    db_session.commit()
+
+    ck = recalculate_activation(db_session, partner.id)
+    assert ck.documents_uploaded is True
 
 
 def test_rejecting_a_doc_does_not_flip_documents_uploaded(db_session):
