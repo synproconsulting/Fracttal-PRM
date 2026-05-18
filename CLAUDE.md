@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** Sprint 9 closed — Phase 3 (Deal Registration) underway; Sprint 10 (conflict checking + commission visibility) remains. Backend adds `DealMessage` model + migration 016, collaboration thread endpoints (`GET/POST /deal-registrations/{id}/messages`, `POST /internal/deals/{id}/request-info`) and the existing submit accepts `info_required → submitted` (FPRM-139). `partner_legal_name` surfaces in deal list + detail responses (FPRM-143). Document type vocabulary is admin-configurable via new `document_types` table + migration 017 (FPRM-144); `partner_documents.document_type` converted from PG enum to VARCHAR. `baseline_training_complete` now has admin endpoints (`POST /partners/{id}/activation/training-complete|training-reset`) and is part of the activation_complete gate (migration 018 backfills already-active partners) (FPRM-145). Frontend gains `DealDetail` at `/portal/deals/:id` and `InternalDealDetail` at `/internal/deals/:id` with collab thread, status banners, and action panel. Sprint 9 fix version 10632 + native sprint 605 closed. Sprint history in CLAUDE_HISTORY.md.
+**Current state:** Sprint 10 complete — Phase 3 (Deal Registration) complete — Phase 4 pending. Sprint 10 added the `conflict_checker.py` utility wired into `POST /deal-registrations/{id}/submit`, new `POST /internal/deals/{id}/override-conflict` endpoint (channel_manager + system_admin only, FPRM-157), `GET /partners/{id}/commission-rates` endpoint with `CommissionRates.jsx` partner-portal page at `/portal/commissions` (FPRM-158), and a conflict status badge + override modal inside `InternalDealDetail.jsx` (FPRM-159). The Sprint 10 bug-fix (FPRM-156) simplified the `documents_uploaded` activation gate from "fiscal_id + id_legal_representative both approved" to "≥1 approved document" — the original rule was incompatible with FPRM-144's admin-configurable document_types. Sprint 10 fix version 10665 + native sprint 638 closed. Phase 3 totals: 17 stories, 58 points, deal registration end-to-end. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 
@@ -198,8 +198,8 @@ Fracttal-PRM/
 | Jira board ID | `67` |
 | Execution order field | `customfield_10071` |
 | Story points field | `customfield_10016` |
-| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539`, Sprint 8: `572`, Sprint 9: `605` |
-| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566`, Sprint 8: `10599`, Sprint 9: `10632` |
+| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539`, Sprint 8: `572`, Sprint 9: `605`, Sprint 10: `638` |
+| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566`, Sprint 8: `10599`, Sprint 9: `10632`, Sprint 10: `10665` |
 
 **Sprint query pattern:**
 ```python
