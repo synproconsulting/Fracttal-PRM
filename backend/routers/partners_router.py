@@ -194,6 +194,93 @@ def get_activation(
     return _serialize_checklist(checklist)
 
 
+REVIEW_ROLES = {UserRole.channel_manager, UserRole.channel_ops_admin, UserRole.system_admin}
+
+
+def _set_training(
+    partner_id: uuid.UUID,
+    request: Request,
+    db: Session,
+    current_user: User,
+    *,
+    value: bool,
+    action: str,
+):
+    """Shared body for training-complete / training-reset endpoints (FPRM-145)."""
+    partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    if UserRole(current_user.role) not in REVIEW_ROLES:
+        raise HTTPException(status_code=403, detail="Internal role required")
+
+    checklist = (
+        db.query(PartnerActivationChecklist)
+        .filter(PartnerActivationChecklist.partner_org_id == partner_id)
+        .first()
+    )
+    from activation import recalculate_activation
+    if not checklist:
+        checklist = recalculate_activation(db, partner_id)
+        # Re-query to get the persisted instance
+        checklist = (
+            db.query(PartnerActivationChecklist)
+            .filter(PartnerActivationChecklist.partner_org_id == partner_id)
+            .first()
+        )
+
+    before = jsonable_encoder(_serialize_checklist(checklist))
+    checklist.baseline_training_complete = value
+    db.commit()
+    # Run recalc so activation_complete + activated_at update accordingly
+    checklist = recalculate_activation(db, partner_id)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action=action,
+        object_type="partner_activation_checklist",
+        object_id=checklist.id,
+        before=before,
+        after=jsonable_encoder(_serialize_checklist(checklist)),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_checklist(checklist)
+
+
+@router.post("/{partner_id}/activation/training-complete")
+def post_training_complete(
+    partner_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark baseline training complete for a partner (FPRM-145).
+
+    Allowed roles: ``system_admin``, ``channel_ops_admin``, ``channel_manager``.
+    Sets the checklist flag and runs ``recalculate_activation`` so the gate
+    can flip to ``activation_complete=True`` when the other three gates pass.
+    """
+    return _set_training(partner_id, request, db, current_user,
+                         value=True, action="partner_activation.training_complete")
+
+
+@router.post("/{partner_id}/activation/training-reset")
+def post_training_reset(
+    partner_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reverse a previously-set baseline training completion (FPRM-145).
+
+    Resets the flag to False and recalculates the checklist. ``activated_at``
+    is intentionally not cleared — the partner *was* activated at that moment,
+    later regression is a separate state we want preserved for audit.
+    """
+    return _set_training(partner_id, request, db, current_user,
+                         value=False, action="partner_activation.training_reset")
+
+
 @router.post("/{partner_id}/activation/recalculate")
 def post_activation_recalculate(
     partner_id: uuid.UUID,

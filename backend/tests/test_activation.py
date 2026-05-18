@@ -179,17 +179,28 @@ def test_recalculate_terms_signed_false_without_contract_date(db_session):
     assert checklist.terms_signed is False
 
 
-def test_recalculate_baseline_training_always_false_until_sprint_10(db_session):
+def test_recalculate_baseline_training_preserved_and_blocks_activation(db_session):
+    """FPRM-145: baseline_training_complete is no longer hardcoded False.
+
+    All three other gates True is no longer sufficient — training must also
+    be true (set via POST /partners/{id}/activation/training-complete).
+    """
     partner = _make_partner(db_session, contract_start_date=date(2026, 5, 1))
     _make_profile(db_session, partner.id, pct=100)
     uploader = _make_user(db_session, UserRole.channel_ops_admin)
     _make_approved_doc(db_session, partner.id, DocumentType.fiscal_id, uploader.id)
     _make_approved_doc(db_session, partner.id, DocumentType.id_legal_representative, uploader.id)
     checklist = recalculate_activation(db_session, partner.id)
-    # All three required gates True, but baseline_training stays False — and
-    # activation_complete is True because baseline_training is intentionally
-    # excluded from the gate set per AD-14.
+    assert checklist.profile_complete is True
+    assert checklist.documents_uploaded is True
+    assert checklist.terms_signed is True
     assert checklist.baseline_training_complete is False
+    assert checklist.activation_complete is False  # now gated on training
+
+    # Flip training True (simulating the endpoint), recalc → activation_complete True
+    checklist.baseline_training_complete = True
+    db_session.commit()
+    checklist = recalculate_activation(db_session, partner.id)
     assert checklist.activation_complete is True
 
 
@@ -208,6 +219,10 @@ def test_recalculate_sets_activated_at_on_first_complete(db_session):
     uploader = _make_user(db_session, UserRole.channel_ops_admin)
     _make_approved_doc(db_session, partner.id, DocumentType.fiscal_id, uploader.id)
     _make_approved_doc(db_session, partner.id, DocumentType.id_legal_representative, uploader.id)
+    # FPRM-145: training must be set True before activation_complete can flip
+    checklist = recalculate_activation(db_session, partner.id)
+    checklist.baseline_training_complete = True
+    db_session.commit()
     checklist = recalculate_activation(db_session, partner.id)
     assert checklist.activation_complete is True
     assert checklist.activated_at is not None

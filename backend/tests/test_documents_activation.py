@@ -204,5 +204,10 @@ def test_approving_full_set_triggers_activation_complete(db_session):
     assert ck.profile_complete is True
     assert ck.documents_uploaded is True
     assert ck.terms_signed is True
+    # FPRM-145: training is also required for activation_complete now
+    ck.baseline_training_complete = True
+    db_session.commit()
+    from activation import recalculate_activation
+    ck = recalculate_activation(db_session, partner.id)
     assert ck.activation_complete is True
     assert ck.activated_at is not None
