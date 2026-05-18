@@ -22,7 +22,12 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from audit import log_audit_event
 from database import get_db
-from models import PartnerActivationChecklist, PartnerOrganization, User
+from models import (
+    CommissionStructure,
+    PartnerActivationChecklist,
+    PartnerOrganization,
+    User,
+)
 from permissions import require_permission
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 
@@ -279,6 +284,60 @@ def post_training_reset(
     """
     return _set_training(partner_id, request, db, current_user,
                          value=False, action="partner_activation.training_reset")
+
+
+@router.get("/{partner_id}/commission-rates")
+def get_commission_rates(
+    partner_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return commission_structures rows for a partner's category (FPRM-158).
+
+    Access:
+        - ``partner_admin`` (own org only — 403 on other orgs)
+        - ``channel_manager`` / ``system_admin`` / any other internal role
+
+    The rates are static per category; partner_admin should see exactly what
+    applies to their own contract. Internal users can inspect any partner.
+    """
+    partner = (
+        db.query(PartnerOrganization)
+        .filter(PartnerOrganization.id == partner_id)
+        .first()
+    )
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+
+    role = UserRole(current_user.role)
+    if role in PARTNER_ROLES:
+        if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner.id):
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif role not in INTERNAL_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    code = (
+        partner.partner_category.value
+        if hasattr(partner.partner_category, "value")
+        else str(partner.partner_category)
+    )
+    rows = (
+        db.query(CommissionStructure)
+        .filter(CommissionStructure.partner_category_code == code)
+        .all()
+    )
+    items = []
+    for r in rows:
+        year_val = r.year.value if hasattr(r.year, "value") else str(r.year)
+        items.append({
+            "commission_type": r.commission_type,
+            "year": year_val,
+            "percentage": float(r.commission_pct) if r.commission_pct is not None else None,
+            "subpartner_uplift_pct": float(r.subpartner_uplift_pct) if r.subpartner_uplift_pct is not None else None,
+            "applies_to_upsell": bool(r.applies_to_upsell),
+            "notes": r.notes,
+        })
+    return {"partner_category_code": code, "items": items}
 
 
 @router.post("/{partner_id}/activation/recalculate")
