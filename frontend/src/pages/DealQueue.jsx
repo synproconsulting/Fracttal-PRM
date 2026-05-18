@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -51,57 +52,12 @@ function formatDate(value) {
   try { return new Date(value).toLocaleDateString() } catch { return value }
 }
 
-function ReviewModal({ mode, deal, onClose, onConfirm, saving }) {
-  const [notes, setNotes] = useState('')
-  const isApprove = mode === 'approve'
-  return (
-    <div className="fp-modal-overlay" role="dialog" aria-modal="true">
-      <div className="fp-modal">
-        <h3 className="fp-modal__title">
-          {isApprove ? 'Approve deal' : 'Reject deal'}
-        </h3>
-        <p className="fp-modal__subtitle">
-          {deal.deal_name} — {deal.customer_name}
-        </p>
-        <div className="fp-field fp-field--filled">
-          <textarea
-            id="review-notes"
-            rows={4}
-            placeholder=" "
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-          <label htmlFor="review-notes">
-            {isApprove ? 'Approval notes (visible to partner)' : 'Reason for rejection (visible to partner)'}
-          </label>
-        </div>
-        <div className="fp-modal__actions">
-          <button type="button" onClick={onClose} disabled={saving} className="fp-btn fp-btn--ghost">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onConfirm(notes)}
-            disabled={saving || !notes.trim()}
-            className={`fp-btn ${isApprove ? 'fp-btn--success' : 'fp-btn--solid-danger'}`}
-          >
-            {saving
-              ? (isApprove ? 'Approving…' : 'Rejecting…')
-              : (isApprove ? 'Confirm approve' : 'Confirm reject')}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function DealQueue() {
   const token = localStorage.getItem('token')
   const [tab, setTab] = useState('submitted')
   const [deals, setDeals] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [actionDeal, setActionDeal] = useState(null) // {deal, mode}
   const [actionSaving, setActionSaving] = useState(false)
 
   const activeFilter = useMemo(() => TABS.find((t) => t.key === tab)?.filter, [tab])
@@ -139,27 +95,6 @@ export default function DealQueue() {
         const body = await r.json().catch(() => ({}))
         throw new Error(body.detail || `HTTP ${r.status}`)
       }
-      reload()
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setActionSaving(false)
-    }
-  }
-
-  async function submitReview(mode, deal, notes) {
-    setActionSaving(true)
-    try {
-      const r = await fetch(`${API}/internal/deals/${deal.id}/${mode}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ review_notes: notes }),
-      })
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}))
-        throw new Error(body.detail || `HTTP ${r.status}`)
-      }
-      setActionDeal(null)
       reload()
     } catch (e) {
       setError(e.message)
@@ -223,9 +158,14 @@ export default function DealQueue() {
           <tbody>
             {deals.map((d) => (
               <tr key={d.id}>
-                <td>{d.deal_name || '(unnamed)'}</td>
+                <td>
+                  <Link to={`/internal/deals/${d.id}`}
+                        style={{ color: 'var(--fp-primary)', fontWeight: 600, textDecoration: 'none' }}>
+                    {d.deal_name || '(unnamed)'}
+                  </Link>
+                </td>
                 <td style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
-                  {d.partner_org_id?.slice(0, 8)}…
+                  {d.partner_legal_name || (d.partner_org_id ? `${d.partner_org_id.slice(0, 8)}…` : '—')}
                 </td>
                 <td>{d.customer_name || '—'}</td>
                 <td><StatusBadge status={d.status} /></td>
@@ -242,28 +182,12 @@ export default function DealQueue() {
                       Start review
                     </button>
                   )}
-                  {d.status === 'under_review' && (
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        type="button"
-                        className="fp-btn fp-btn--success fp-btn--sm"
-                        disabled={actionSaving}
-                        onClick={() => setActionDeal({ deal: d, mode: 'approve' })}
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        className="fp-btn fp-btn--danger fp-btn--sm"
-                        disabled={actionSaving}
-                        onClick={() => setActionDeal({ deal: d, mode: 'reject' })}
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                  {(d.status === 'approved' || d.status === 'rejected' || d.status === 'expired' || d.status === 'draft') && (
-                    <span style={{ color: 'var(--fp-text-muted)', fontSize: 'var(--fp-fs-sm)' }}>—</span>
+                  {d.status !== 'submitted' && (
+                    <Link to={`/internal/deals/${d.id}`}
+                          className="fp-btn fp-btn--ghost fp-btn--sm"
+                          style={{ textDecoration: 'none' }}>
+                      Open
+                    </Link>
                   )}
                 </td>
               </tr>
@@ -272,15 +196,6 @@ export default function DealQueue() {
         </table>
       )}
 
-      {actionDeal && (
-        <ReviewModal
-          mode={actionDeal.mode}
-          deal={actionDeal.deal}
-          saving={actionSaving}
-          onClose={() => setActionDeal(null)}
-          onConfirm={(notes) => submitReview(actionDeal.mode, actionDeal.deal, notes)}
-        />
-      )}
     </div>
   )
 }
