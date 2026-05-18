@@ -18,6 +18,7 @@ import DealDetail from './pages/DealDetail.jsx'
 import DealQueue from './pages/DealQueue.jsx'
 import InternalDealDetail from './pages/InternalDealDetail.jsx'
 import CommissionRates from './pages/CommissionRates.jsx'
+import InternalHome from './pages/InternalHome.jsx'
 
 function Landing() {
   return (
@@ -29,20 +30,6 @@ function Landing() {
       </p>
       <p>
         <Link to="/login">Sign in to the partner portal</Link>
-      </p>
-    </div>
-  )
-}
-
-// Internal home is built in FPRM-179. Render a lightweight placeholder so
-// the /internal/home route resolves cleanly when InternalLayout's sidebar
-// links to it from FPRM-176 onwards.
-function InternalHomePlaceholder() {
-  return (
-    <div style={{ padding: 24 }}>
-      <h2 style={{ marginTop: 0 }}>Internal Home</h2>
-      <p style={{ color: 'var(--fp-text-secondary, #5A6478)' }}>
-        Dashboard arriving in FPRM-179. Use the sidebar to navigate.
       </p>
     </div>
   )
@@ -93,7 +80,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="home" element={<InternalHomePlaceholder />} />
+        <Route path="home" element={<InternalHome />} />
         <Route path="applications" element={<ApplicationQueue />} />
         <Route path="applications/:id" element={<ApplicationReview />} />
         <Route path="partners/:id/profile" element={<PartnerProfile />} />
