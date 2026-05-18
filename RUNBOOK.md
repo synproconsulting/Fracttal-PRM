@@ -1,6 +1,6 @@
 # Fracttal PRM — Operational Runbook
 
-> This file captures hard-won procedural knowledge from Sprints 1–7.
+> This file captures hard-won procedural knowledge from Sprints 1–10.
 > It is the single source of truth for HOW to do operational tasks — not what to build.
 > Load this file alongside CLAUDE.md at the start of every session and before any pre-sprint validation.
 
@@ -89,6 +89,8 @@ Note `%token%` (cmd syntax) — not `$token` (PowerShell syntax).
 | `admin2@test.com` | `TestPass123!` | `system_admin` | Created after FPRM-73 role bug fix. Use this for all system_admin endpoint tests. |
 | `partneradmin@testcorp.com` | `PartnerPass123!` | `partner_admin` | Created via invite flow test. Linked to Test Partner Corp org. |
 | `s8test@partner.com` | `PartnerPass123!` | `partner_admin` | Sprint 8 test user. Linked to Sprint 8 Test Corp org (8b1dfc59-380a-4fc3-809e-949880cbb3b0). |
+| `phase3a-v2@testpartner.com` | `PartnerPass123!` | `partner_admin` | Phase 3A Test Partner Ltd — fully activated. Org `b223c3b0-623e-405c-b056-6f076811e518`. |
+| `conflicttest2@testpartner.com` | `PartnerPass123!` | `partner_admin` | Conflict Test Partner 2 — fully activated. Org `bf6dcf16-65e4-4ef9-b5e8-9a36608b82a8`. Use as second org for §13 conflict-detected path. |
 
 **Important:** If you need a fresh user with a specific role, always register a new user — do not try to update an existing user's role in the database. The `role` column is set at registration and not exposed via a patch endpoint.
 
@@ -136,6 +138,16 @@ curl -X POST "https://fracttal-prm-backend-production.up.railway.app/partners" -
 ```
 
 Copy the `id` from the response — you'll need it for invite and application tests.
+
+### Document Upload Field Names
+
+`POST /partners/{id}/documents` requires `document_name` and `file_path` — **not** `file_name` or `file_url` as their names might suggest. The API returns sequential 422 validation errors that do not name the expected fields, so picking the wrong names burns time.
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/partners/<partner_id>/documents" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"document_type\":\"nda\",\"document_name\":\"nda.pdf\",\"file_path\":\"uploads/nda.pdf\"}"
+```
+
+Discovered Sprint 10 — tracked as FPRM-174. The same field names apply to the public application upload endpoint `POST /applications/{id}/documents?draft_token=...`.
 
 ### Invite Flow Test
 
@@ -312,6 +324,16 @@ Bug tickets discovered after a sprint closes cannot be added to the closed nativ
 
 The Control Centre never calls Jira directly — all Jira requests in the frontend go through `/proxy/jira/*` on the shared SynPro VSDC backend with `product_id` identifying Fracttal PRM. Claude Code calls Jira directly via REST API using credentials from `.env`.
 
+### Auto-merger 405 Race Condition
+
+The rule-based auto-merger occasionally returns `HTTP 405` on its merge attempt even when all blocking checks are green. Observed on Sprint 10 PR #73 (FPRM-160). When it happens:
+
+1. Confirm the blocking checks (`Test (Python 3.11)`, `Test (Python 3.12)`, bandit security scan) are all green on the PR.
+2. Merge the PR manually via the GitHub UI — do not retry the auto-merger dispatch and do not rebase.
+3. The sprint still closes cleanly; no follow-up ticket is required.
+
+Root cause is a race between GitHub's check-suite settling and the auto-merger's merge call. Do not treat the 405 as a CI failure.
+
 ---
 
 ## 8. GitHub and CI/CD Notes
@@ -373,6 +395,11 @@ The canonical copy of `CLAUDE.md`, `PROJECT_CONTEXT.md`, `CLAUDE_HISTORY.md`, an
 | Endpoints using _user_from_bearer not testable via dependency_overrides | Manual Authorization header reads bypass FastAPI dependency injection. FPRM-104 tracks this. | Mint a real JWT in tests or use the public draft_token path. Do not use app.dependency_overrides[get_current_user] for these endpoints. |
 | JWT payload missing partner_org_id | Sprint 7 bug FPRM-119 — JWT was missing partner_org_id claim. Fixed in PR #48. | If portal pages fail to load partner data, check GET /auth/me returns partner_org_id in the response. |
 | SMTP env vars not set on Railway | Email notifications fall back to stdout logging (AD-13 dev mode). No crash. | Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM, CHANNEL_OPS_EMAIL, FRONTEND_URL on fracttal-prm-backend Railway service when ready for live email delivery. |
+| Partners created via POST /partners have no profile record | `profile_complete` can never flip → `activation_complete` stuck at False. Tracked in FPRM-172. | Until the fix lands, provision test partners via the application flow (POST /applications → submit → approve) — `provision_partner_from_application` is the only path that creates the PartnerProfile row. |
+| `commission_rate_snapshot` always null when `commission_type=standard` | No `standard` row exists in `commission_structures` — the lookup `(category, type, year_1)` finds no match and snapshot stays null. Tracked in FPRM-173. | Use one of the seeded vocab values: `autonomous_sell`, `indirect_sell`, `direct_sell`, `co_sell_shared`. Sprint 10 / FPRM-158 aligned the deal form to this list. |
+| Document upload fields are `document_name` + `file_path` | Sending `file_name` / `file_url` returns sequential 422s without naming the expected fields. Tracked in FPRM-174. | Use the field names from § 3 above — same shape for `POST /partners/{id}/documents` and `POST /applications/{id}/documents`. |
+| `partner_profiles` has no POST endpoint | The profile row is only created by `provisioning.provision_partner_from_application`. There is no standalone create route. | Always provision test partners via the application flow (see FPRM-172 row above). PATCH /partner-profiles/{id} only works on existing rows. |
+| Auto-merger occasionally returns 405 on merge | Race between GitHub check-suite settling and the auto-merger's merge call. Observed Sprint 10 PR #73 (FPRM-160). | Merge the PR manually via the GitHub UI once blocking checks are green. See § 7 for the full procedure. Sprint still closes cleanly. |
 
 ---
 
@@ -650,6 +677,6 @@ All steps green = Phase 3 fully validated. Safe to proceed with Phase 4.
 ---
 
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–7 closeout, Sprint 8 closeout, Sprint 9 closeout, Sprint 10 closeout*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–10 closeout*
 *Last updated: Sprint 10 closeout / Phase 3 complete — May 2026*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
