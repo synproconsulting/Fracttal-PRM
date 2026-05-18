@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from audit import log_audit_event
+from conflict_checker import check_deal_conflict
 from database import get_db
 from models import (
     CommissionStructure,
@@ -353,6 +354,19 @@ def submit_deal(
     db.commit()
     db.refresh(deal)
 
+    # FPRM-157: run conflict check after the status flip so the deal being
+    # submitted is not counted as a conflict against itself. The check is
+    # best-effort — a checker exception must not roll back the submit.
+    try:
+        result = check_deal_conflict(db, deal.id)
+        deal.conflict_status = result.conflict_status
+        deal.conflict_checked_at = datetime.utcnow()
+        deal.conflict_notes = result.notes
+        db.commit()
+        db.refresh(deal)
+    except Exception:  # noqa: BLE001
+        pass
+
     log_audit_event(
         db=db,
         actor=current_user,
@@ -364,6 +378,7 @@ def submit_deal(
             "status": "submitted",
             "commission_structure_id": str(deal.commission_structure_id) if deal.commission_structure_id else None,
             "commission_rate_snapshot": deal.commission_rate_snapshot,
+            "conflict_status": deal.conflict_status,
         },
         ip_address=_client_ip(request),
     )
@@ -575,6 +590,62 @@ def reject_deal(
         object_id=deal.id,
         before={"status": before_status},
         after={"status": "rejected", "review_notes": review_notes},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)
+
+
+# -------------------- Conflict override (Sprint 10 / FPRM-157) --------------------
+
+
+OVERRIDE_ROLES = {UserRole.channel_manager, UserRole.system_admin}
+
+
+@router.post("/internal/deals/{deal_id}/override-conflict")
+def override_conflict(
+    deal_id: uuid.UUID,
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark a conflict_detected deal as ``clear`` after a manual review.
+
+    Access: ``channel_manager`` + ``system_admin`` only — channel_ops_admin and
+    review-only roles cannot override. Body requires ``override_notes`` (a
+    free-text rationale appended to ``conflict_notes`` for the audit trail).
+    """
+    if UserRole(current_user.role) not in OVERRIDE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied: override role required",
+        )
+    override_notes = (payload.get("override_notes") or "").strip() if payload else ""
+    if not override_notes:
+        raise HTTPException(status_code=422, detail="override_notes is required")
+
+    deal = _get_deal_or_404(deal_id, db)
+    before_status = deal.conflict_status
+    before_notes = deal.conflict_notes
+    deal.conflict_status = "clear"
+    appended = (
+        f"{before_notes}\n\n[OVERRIDE by {current_user.email}]: {override_notes}"
+        if before_notes
+        else f"[OVERRIDE by {current_user.email}]: {override_notes}"
+    )
+    deal.conflict_notes = appended
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.conflict_overridden",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"conflict_status": before_status},
+        after={"conflict_status": "clear", "override_notes": override_notes},
         ip_address=_client_ip(request),
     )
     return _serialize(deal)
