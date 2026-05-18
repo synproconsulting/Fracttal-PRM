@@ -221,6 +221,64 @@ def test_create_partner_missing_required_fields(db_session):
     assert r.status_code == 422
 
 
+def test_create_partner_auto_creates_profile(db_session):
+    """FPRM-172: POST /partners must auto-create the 1:1 PartnerProfile row."""
+    user = make_user(UserRole.system_admin)
+    db_session.add(user)
+    db_session.commit()
+    override_dependencies(db_session, user)
+    try:
+        client = TestClient(app)
+        r = client.post(
+            "/partners",
+            json={
+                "legal_name": "Profile Auto Co",
+                "program_type": "distributor",
+                "partner_category": "reseller",
+            },
+        )
+        assert r.status_code == 201
+        partner_id = r.json()["id"]
+        # GET /partner-profiles/{partner_org_id} should now return 200, not 404.
+        r2 = client.get(f"/partner-profiles/{partner_id}")
+    finally:
+        clear_overrides()
+    assert r2.status_code == 200
+    body = r2.json()
+    assert str(body["partner_org_id"]) == str(partner_id)
+    assert body["profile_completeness_pct"] == 0
+
+
+def test_partner_profile_patchable_after_direct_create(db_session):
+    """FPRM-172: after POST /partners, PATCH /partner-profiles/{id} must succeed."""
+    partner_resp_user = make_user(UserRole.system_admin)
+    db_session.add(partner_resp_user)
+    db_session.commit()
+    override_dependencies(db_session, partner_resp_user)
+    try:
+        client = TestClient(app)
+        create = client.post(
+            "/partners",
+            json={
+                "legal_name": "Patch Direct Co",
+                "program_type": "distributor",
+                "partner_category": "reseller",
+            },
+        )
+        assert create.status_code == 201
+        partner_id = create.json()["id"]
+        patch = client.patch(
+            f"/partner-profiles/{partner_id}",
+            json={"year_established": 2010, "employee_count": 25},
+        )
+    finally:
+        clear_overrides()
+    assert patch.status_code == 200
+    body = patch.json()
+    assert body["year_established"] == 2010
+    assert body["employee_count"] == 25
+
+
 def test_update_partner_as_channel_ops_admin(db_session):
     partner = make_partner("Original Name")
     db_session.add(partner)
