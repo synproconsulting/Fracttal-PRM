@@ -1042,3 +1042,114 @@ Backend ends Sprint 9 at **261 tests passing** (Sprint 8 baseline 228 + 33 new a
 5. **Phase 3A happy-path validation** — RUNBOOK.md §12 must be run against production before Sprint 10 begins. Validates submit → start-review → request-info → resubmit → approve end-to-end.
 6. **Carry-forward:** in-memory token blacklist, password-reset email backend, SonarCloud configuration.
 
+---
+
+## Sprint 10 — Conflict Checking + Commission Visibility (Phase 3 closeout)
+
+**Started:** 2026-05-18
+**Closed:** 2026-05-18 (single-day intensive)
+**Fix Version ID:** `10665`
+**Native Sprint ID:** `638`
+**Phase 3 epic:** FPRM-121 — Deal Registration (Phase 3)
+
+### Sprint 10 stories — outcome
+
+| Key | Type | Story | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-156 | Bug | `documents_uploaded` flag never flips despite approved documents | Done | #69 | `activation.recalculate_activation` simplified — gate now flips True when the partner has at least one approved `PartnerDocument`. The earlier "fiscal_id AND id_legal_representative" rule was incompatible with FPRM-144's admin-configurable document_types. Existing `test_activation.py` / `test_documents_activation.py` updated; added `test_documents_uploaded_regression_single_approved`. Phase 3A production validation run end-to-end against test partner `b223c3b0-…6f076811e518` — see results table below. |
+| FPRM-157 | Story | Automatic conflict checking on deal submission | Done | #70 | New `backend/conflict_checker.py` standalone utility — no FastAPI session creation, returns a `ConflictResult` dataclass. Wired into `POST /deal-registrations/{id}/submit` after the status flip (best-effort, try/except wrapped). New `POST /internal/deals/{id}/override-conflict` — channel_manager + system_admin only (channel_ops_admin explicitly excluded). 14 new tests using StaticPool in-memory sqlite. |
+| FPRM-158 | Story | Commission rate visibility in partner portal | Done | #71 | New `GET /partners/{id}/commission-rates` endpoint with own-org tenant guard for partner_admin. New `CommissionRates.jsx` page at `/portal/commissions` inside `PartnerPortalLayout` (Commissions nav item enabled). `DealRegistrationForm.jsx`: commission_type dropdown vocabulary aligned with `commission_structures` enum (autonomous_sell/indirect_sell/direct_sell/co_sell_shared) — earlier reseller/referral values could not match any row. Helper text below the dropdown shows "Applicable rate (Year 1): X%" or "Rate not on file…" or silently omits on fetch failure. 6 new endpoint tests. |
+| FPRM-159 | Story | Conflict status display — frontend | Done | #72 | Replaces the `{/* TODO Sprint 10: conflict override */}` placeholder in `InternalDealDetail.jsx`. Conflict badges: `not_checked` (grey "Not Checked" + helper text), `clear` (green "Clear ✅"), `conflict_detected` (red "Conflict Detected ⚠️" + notes + Override button). `ConflictOverrideModal` requires `override_notes` (min. 10 chars), POSTs to override-conflict endpoint, surfaces a transient "Conflict overridden" toast. `DealDetail.jsx` verified to expose no conflict fields to partners. |
+| FPRM-160 | Story | Sprint 10 docs and Phase 3 closeout | Done | (this PR) | PROJECT_CONTEXT.md (Sections 1, 2, 3) updated; CLAUDE.md current-state + sprint IDs table; CLAUDE_HISTORY.md gains this entry + Phase 3 summary + Phase 4 readiness note; RUNBOOK.md gains §13 Phase 3 full happy-path validation. |
+
+All 11 subtasks (FPRM-161..FPRM-171) closed Done.
+
+### What landed on `main` during Sprint 10
+
+- `backend/conflict_checker.py` (new) — standalone utility with `ConflictResult` dataclass and `check_deal_conflict(db, deal_id)`.
+- `backend/activation.py` — `documents_uploaded` rule simplified to "≥1 approved document"; legacy `REQUIRED_DOCUMENT_TYPES` constant removed.
+- `backend/routers/deal_registrations_router.py` — submit endpoint runs conflict check after status flip; `POST /internal/deals/{id}/override-conflict` (channel_manager + system_admin only).
+- `backend/routers/partners_router.py` — `GET /{partner_id}/commission-rates` (partner_admin own-org or internal).
+- `backend/tests/test_conflict_checker.py` (new, 14 cases), `test_commission_rates.py` (new, 6 cases). `test_activation.py` and `test_documents_activation.py` updated for the simpler `documents_uploaded` rule.
+- `frontend/src/pages/CommissionRates.jsx` (new).
+- `frontend/src/pages/DealRegistrationForm.jsx` — commission_type vocabulary aligned + rate preview helper text.
+- `frontend/src/pages/InternalDealDetail.jsx` — conflict badge spec'd labels + Override Conflict button + `ConflictOverrideModal` + toast.
+- `frontend/src/layouts/PartnerPortalLayout.jsx` — Commissions nav item enabled.
+- `frontend/src/App.jsx` — `/portal/commissions` route inside the partner layout.
+- `PROJECT_CONTEXT.md` — Sections 1, 2, 3 updated.
+- `CLAUDE.md` — Current state line refreshed; Sprint 10 IDs added.
+- `CLAUDE_HISTORY.md` — this entry + Phase 3 complete marker + Phase 4 readiness note.
+- `RUNBOOK.md` — §13 Phase 3 full happy-path validation added.
+
+### Phase 3A validation results (production, after FPRM-156 deploy)
+
+Test partner: `b223c3b0-623e-405c-b056-6f076811e518`. Validation date: 2026-05-18.
+
+| Step | Status | Detail |
+|---|---|---|
+| admin login | OK | system_admin token obtained |
+| recalculate after deploy | OK | `documents_uploaded=True`, `activation_complete=True`, `activated_at=2026-05-18T13:30:42Z` |
+| partner_admin invite | OK | new email `s10val+…@phase3atest.com` |
+| accept invite | OK | partner_admin JWT minted |
+| create deal | OK | status=draft |
+| submit deal | OK | status=submitted, `commission_rate_snapshot=50.0` |
+| start-review | OK | status=under_review |
+| request-info | OK | status=info_required |
+| partner message | OK | message posted by partner_admin |
+| resubmit | OK | status=submitted |
+| start-review (2nd) | OK | status=under_review |
+| approve | OK | status=approved |
+
+End-to-end Phase 3A chain green. Conflict checker integration tested via unit + integration tests (deal submit records `conflict_status=clear` and `conflict_status=conflict_detected`).
+
+### API endpoint count
+
+Sprint 10 adds **2 new endpoints**:
+- `GET /partners/{id}/commission-rates`
+- `POST /internal/deals/{id}/override-conflict`
+
+Total surface area is now **65 endpoints**.
+
+### Sprint 10 test count
+
+Backend ends Sprint 10 at **283 tests passing** (Sprint 9 baseline 261 + 22 new across conflict_checker (14) and commission_rates (6) plus 2 updated activation tests).
+
+### Sprint 10 lessons
+
+1. **A rule made strict-by-list dies when the list becomes pluggable.** The `documents_uploaded` gate hardcoded `{fiscal_id, id_legal_representative}`. After FPRM-144 made document_types admin-configurable, a partner whose required set was, say, `{nda, fiscal_id, articles_of_incorporation}` could never activate — a fact only the Phase 3A production validation caught. Pattern: when migrating a constraint from "fixed list" to "admin-configurable list", search for downstream guards that reference the old fixed values *in the same PR* — not the next sprint.
+2. **Conflict checker as a standalone utility paid off.** `backend/conflict_checker.py` has no FastAPI dependency, no session creation, no audit-log call. It returned a dataclass; the router persisted three columns. That isolation made the 8 unit tests trivial and the integration tests minimal. Same shape as `activation.py` (AD-14) — keep recalculators / checkers in dedicated modules, never inline in routers.
+3. **TestClient + in-memory SQLite needs StaticPool.** First pass with bare `:memory:` saw `OperationalError` on TestClient requests because each HTTP request opened a fresh connection to a fresh database. `poolclass=StaticPool` keeps every connection on the same in-memory DB. Codified — any future cross-row-query test module should follow `test_conflict_checker.py` / `test_commission_rates.py`.
+4. **Form vocabularies that drift from backend vocabularies are silent bugs.** The deal form's commission_type dropdown shipped with `reseller`/`referral` while the seeded `commission_structures` rows used `autonomous_sell` etc. The form-side mismatch was harmless until FPRM-158 needed to *match* the user's pick against the rates table — at which point every selection returned "Rate not on file". Fix was a one-line vocabulary alignment. Lesson: when a database table is the source of truth for a dropdown, derive the dropdown from it (or at least pin the values to the same enum) rather than re-typing them client-side.
+5. **Best-effort wrapping is mandatory once a write does more than one thing.** The submit endpoint persists status, snapshots commission, AND now runs the conflict checker. Any one failing must not roll back the others. `try/except` around the checker call (and the existing pattern around `recalculate_activation`) keeps the primary mutation atomic and the side effects optional. AD-13 / AD-14 generalised to: every secondary write triggered from a router belongs inside a try/except.
+
+### Phase 3 — Complete
+
+| Sprint | Theme | Stories | Points | Key delivery |
+|---|---|---|---|---|
+| 8 | UI Polish + Deal Registration Foundation | 5 | 18 | DealRegistration model + API + form + queue; Fracttal One restyle |
+| 9 | Collaboration Thread + Admin Configurability | 7 | 22 | DealMessage model + thread API; DealDetail + InternalDealDetail; configurable doc types; training-complete endpoint |
+| 10 | Conflict Checking + Commission Visibility | 5 | 18 | conflict_checker.py; commission rate visibility; conflict override UI; Phase 3A validation complete |
+| **Total** | **Phase 3** | **17** | **58** | Deal registration end-to-end: submit → conflict check → review → approve |
+
+Phase 3 surface area:
+- DB tables added: `deal_registrations`, `deal_messages`, `document_types` (+ enum→VARCHAR conversion of `partner_documents.document_type`), `partner_activation_checklists` (Sprint 7 carried over, training-complete migration 018 in Sprint 9).
+- API endpoints added across Phase 3: 65 − 38 (Sprint 7 closeout count) = **27 new endpoints** spanning deal CRUD, internal review queue, collaboration thread, document-type config, training, commission-rates, conflict override.
+- Frontend pages added: `DealRegistrationForm`, `DealList`, `DealQueue`, `DealDetail`, `InternalDealDetail`, `CommissionRates`.
+
+### Phase 4 readiness note
+
+Phase 4 begins **Reporting & Analytics**. Pre-implementation notes:
+
+1. **All deal data is queryable via existing endpoints — no schema changes needed for Phase 4 start.** `deal_registrations` already carries every field a dashboard tile needs (status, partner_org_id, commission_rate_snapshot, conflict_status, submitted_at, reviewed_at). Aggregation will be query-side, not schema-side.
+2. **Phase 4 opening stories MUST include both home dashboards.** Modelled on the SynPro VSDC home portal design (summary tiles, KPIs, links to all key modules):
+   - **Internal admin home dashboard** — summary tiles (partners by status, deals by status, applications awaiting review, conflicts pending override), KPIs (avg approval time, deals approved this month, total commission $ pipeline), quick-links to partner pipeline / deal queue / applications / commission overview.
+   - **Partner admin home dashboard** — same design language, partner-scoped (own deals pipeline, own profile completeness, own activation checklist if not yet complete, own commission rates link, training / documents quick-links).
+3. **Carry-forward Sprint 10 → Sprint 11+:**
+   - `FPRM-89` — `actor_id == "None"` (cosmetic, parked Low).
+   - `FPRM-104` — `_user_from_bearer` testability tech-debt (parked Low).
+   - **SMTP env vars not yet set on Railway** — lifecycle emails fall back to stdout. No code change; ops follow-up.
+   - **JWT logout blacklist is in-memory only** (multi-instance unsafe).
+   - **Password-reset email backend** still logs to stdout.
+   - **SonarCloud** still needs a `sonar-project.properties` + linked project.
+4. **Spec generation:** `FPRM_Phase4_Jira_Tickets.md` is the planning artefact to be generated in a planning session before Sprint 11.
+
