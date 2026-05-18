@@ -19,6 +19,8 @@ import DealQueue from './pages/DealQueue.jsx'
 import InternalDealDetail from './pages/InternalDealDetail.jsx'
 import CommissionRates from './pages/CommissionRates.jsx'
 import InternalHome from './pages/InternalHome.jsx'
+import ForgotPassword from './pages/ForgotPassword.jsx'
+import ResetPassword from './pages/ResetPassword.jsx'
 
 function Landing() {
   return (
@@ -49,6 +51,8 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/register" element={<RegisterPartner />} />
       <Route path="/register/confirmation" element={<RegisterConfirmation />} />
       <Route path="/resume-application" element={<ApplicationResume />} />

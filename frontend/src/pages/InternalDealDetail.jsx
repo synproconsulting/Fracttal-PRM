@@ -109,6 +109,35 @@ function ActionModal({ mode, deal, onClose, onConfirm, saving }) {
   )
 }
 
+function CancelInfoRequestModal({ deal, onClose, onConfirm, saving, error }) {
+  return (
+    <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+      <div className="fp-modal">
+        <h3 className="fp-modal__title">Cancel info request?</h3>
+        <p className="fp-modal__subtitle">{deal.deal_name} — {deal.customer_name}</p>
+        {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
+        <p style={{ margin: '8px 0 0', fontSize: 'var(--fp-fs-sm)' }}>
+          Cancel the info request? The partner will no longer be prompted to provide
+          additional information. The deal returns to Under Review and a system note is
+          posted to the deal thread.
+        </p>
+        <div className="fp-modal__actions">
+          <button type="button" onClick={onClose} disabled={saving} className="fp-btn fp-btn--ghost">Cancel</button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={saving}
+            className="fp-btn fp-btn--primary"
+          >
+            {saving ? 'Cancelling…' : 'Cancel Info Request'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function ConflictOverrideModal({ deal, onClose, onConfirm, saving, error }) {
   const [notes, setNotes] = useState('')
   const tooShort = notes.trim().length < 10
@@ -164,6 +193,9 @@ export default function InternalDealDetail() {
   const [overrideOpen, setOverrideOpen] = useState(false)
   const [overrideSaving, setOverrideSaving] = useState(false)
   const [overrideError, setOverrideError] = useState(null)
+  const [cancelInfoOpen, setCancelInfoOpen] = useState(false)
+  const [cancelInfoSaving, setCancelInfoSaving] = useState(false)
+  const [cancelInfoError, setCancelInfoError] = useState(null)
   const [toast, setToast] = useState(null)
 
   async function fetchDeal() {
@@ -253,6 +285,26 @@ export default function InternalDealDetail() {
       setOverrideError(e.message)
     } finally {
       setOverrideSaving(false)
+    }
+  }
+
+  async function cancelInfoRequest() {
+    setCancelInfoSaving(true); setCancelInfoError(null)
+    try {
+      const r = await fetch(`${API}/internal/deals/${id}/cancel-info-request`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`)
+      setCancelInfoOpen(false)
+      setToast('Info request cancelled')
+      setReloadKey((k) => k + 1)
+      window.setTimeout(() => setToast(null), 4000)
+    } catch (e) {
+      setCancelInfoError(e.message)
+    } finally {
+      setCancelInfoSaving(false)
     }
   }
 
@@ -470,8 +522,18 @@ export default function InternalDealDetail() {
               </div>
             )}
             {deal.status === 'info_required' && (
-              <div style={{ color: 'var(--fp-text-secondary)', fontSize: 'var(--fp-fs-sm)' }}>
-                Awaiting partner response.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ color: 'var(--fp-text-secondary)', fontSize: 'var(--fp-fs-sm)' }}>
+                  Awaiting partner response.
+                </div>
+                <button
+                  type="button"
+                  className="fp-btn fp-btn--ghost"
+                  onClick={() => setCancelInfoOpen(true)}
+                  disabled={cancelInfoSaving}
+                >
+                  Cancel Info Request
+                </button>
               </div>
             )}
             {deal.status === 'approved' && (
@@ -512,6 +574,16 @@ export default function InternalDealDetail() {
           error={overrideError}
           onClose={() => { setOverrideOpen(false); setOverrideError(null) }}
           onConfirm={overrideConflict}
+        />
+      )}
+
+      {cancelInfoOpen && (
+        <CancelInfoRequestModal
+          deal={deal}
+          saving={cancelInfoSaving}
+          error={cancelInfoError}
+          onClose={() => { setCancelInfoOpen(false); setCancelInfoError(null) }}
+          onConfirm={cancelInfoRequest}
         />
       )}
 

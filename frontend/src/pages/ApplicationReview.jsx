@@ -60,6 +60,30 @@ function Section({ title, children }) {
   )
 }
 
+function ConfirmModal({ title, body, confirmLabel, onConfirm, onCancel, submitting, danger }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10,
+    }}>
+      <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 420, maxWidth: 600 }}>
+        <h3 style={{ marginTop: 0 }}>{title}</h3>
+        <p style={{ color: '#555', fontSize: 14 }}>{body}</p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          <button onClick={onCancel} disabled={submitting}>Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={submitting}
+            style={{ background: danger ? '#f44336' : '#1976d2', color: 'white', border: 'none', padding: '6px 16px', borderRadius: 4 }}
+          >
+            {submitting ? 'Submitting…' : (confirmLabel || 'Confirm')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ActionModal({ title, label, placeholder, onSubmit, onCancel, submitting }) {
   const [value, setValue] = useState('')
   return (
@@ -277,6 +301,19 @@ export default function ApplicationReview() {
           >
             Request Info
           </button>
+          {a.status === 'info_required' && (
+            <button
+              onClick={() => setModal('cancel-info-request')}
+              disabled={submitting}
+              style={{
+                width: '100%', marginTop: 8, padding: 10,
+                background: '#6c757d', color: 'white',
+                border: 'none', borderRadius: 4, fontSize: 14, cursor: 'pointer',
+              }}
+            >
+              Cancel Info Request
+            </button>
+          )}
         </div>
 
         <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 16, marginBottom: 16 }}>
@@ -322,6 +359,16 @@ export default function ApplicationReview() {
           placeholder="e.g. Please attach your tax certificate."
           onCancel={() => setModal(null)}
           onSubmit={(message) => callAction('request-info', { message })}
+          submitting={submitting}
+        />
+      )}
+      {modal === 'cancel-info-request' && (
+        <ConfirmModal
+          title="Cancel info request?"
+          body="Cancel the info request? The applicant will no longer be prompted to provide additional information. The application returns to Under Review."
+          confirmLabel="Cancel Info Request"
+          onCancel={() => setModal(null)}
+          onConfirm={() => callAction('cancel-info-request')}
           submitting={submitting}
         />
       )}

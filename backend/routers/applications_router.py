@@ -482,6 +482,60 @@ def request_info(
     }
 
 
+@router.post("/{application_id}/cancel-info-request")
+def cancel_info_request(
+    application_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("partner_application:read_all")),
+):
+    """Sprint 11 / FPRM-186 — reverse an outstanding info request.
+
+    Transitions an application from ``info_required`` back to ``in_review`` and
+    clears the ``info_request_message``. Allowed roles match the other review
+    endpoints (channel_manager / channel_ops_admin / system_admin via
+    ``_require_review_role``).
+    """
+    _require_review_role(current_user)
+    app_record = _get_application_or_404(application_id, db)
+
+    if app_record.status != ApplicationStatus.info_required:
+        raise HTTPException(
+            status_code=400,
+            detail="Application is not in info_required status",
+        )
+
+    # info_request_message is set as an in-memory attribute by request-info
+    # (the PartnerApplication model does not persist it). Read with getattr
+    # so applications that never had an info request still serialise.
+    before = {
+        "status": _status_value(app_record.status),
+        "info_request_message": getattr(app_record, "info_request_message", None),
+    }
+    app_record.status = ApplicationStatus.in_review
+    app_record.info_request_message = None
+    app_record.reviewer_id = current_user.id
+    app_record.reviewed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(app_record)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="partner_application.info_request_cancelled",
+        object_type="partner_application",
+        object_id=app_record.id,
+        before=before,
+        after={"status": _status_value(app_record.status), "info_request_message": None},
+        ip_address=_client_ip(request),
+    )
+    return {
+        "id": str(app_record.id),
+        "status": _status_value(app_record.status),
+        "info_request_message": None,
+    }
+
+
 @router.get("/{application_id}/timeline")
 def application_timeline(
     application_id: uuid.UUID,

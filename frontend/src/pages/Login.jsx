@@ -32,6 +32,8 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  // Carried via navigate(state) from /reset-password on successful reset.
+  const resetSuccess = location.state?.resetSuccess
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -71,6 +73,9 @@ export default function Login() {
         <p className="fp-auth-card__subtitle">
           Use the credentials you set when accepting your invitation.
         </p>
+        {resetSuccess && (
+          <div className="fp-alert fp-alert--success" style={{ marginBottom: 16 }}>{resetSuccess}</div>
+        )}
         <form onSubmit={onSubmit} noValidate>
           <div className="fp-field">
             <input
@@ -107,7 +112,12 @@ export default function Login() {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-        <p style={{ marginTop: 24, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)', textAlign: 'center' }}>
+        <p style={{ marginTop: 16, fontSize: 'var(--fp-fs-sm)', textAlign: 'center' }}>
+          <Link to="/forgot-password" style={{ color: 'var(--fp-primary)', textDecoration: 'none', fontWeight: 600 }}>
+            Forgot password?
+          </Link>
+        </p>
+        <p style={{ marginTop: 16, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)', textAlign: 'center' }}>
           Not yet a partner? <Link to="/register" style={{ color: 'var(--fp-primary)', textDecoration: 'none', fontWeight: 600 }}>Apply to become a Fracttal Distribution Partner</Link>
         </p>
       </div>
