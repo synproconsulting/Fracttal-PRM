@@ -16,6 +16,7 @@ import DealRegistrationForm from './pages/DealRegistrationForm.jsx'
 import DealDetail from './pages/DealDetail.jsx'
 import DealQueue from './pages/DealQueue.jsx'
 import InternalDealDetail from './pages/InternalDealDetail.jsx'
+import CommissionRates from './pages/CommissionRates.jsx'
 
 function Landing() {
   return (
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="deals/new" element={<DealRegistrationForm />} />
         <Route path="deals/:id" element={<DealDetail />} />
         <Route path="deals/:id/edit" element={<DealRegistrationForm />} />
+        <Route path="commissions" element={<CommissionRates />} />
       </Route>
 
       <Route
