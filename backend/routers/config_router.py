@@ -24,6 +24,7 @@ from models import (
     CommissionStructure,
     CommissionType,
     CommissionYear,
+    DocumentTypeConfig,
     PartnerCategoryConfig,
     User,
 )
@@ -141,3 +142,105 @@ def update_commission_structure(
         ip_address=_client_ip(request),
     )
     return _serialize_commission(cs)
+
+
+# -------------------- Document type config (Sprint 9 / FPRM-144) --------------------
+
+
+def _serialize_document_type(d: DocumentTypeConfig) -> dict:
+    return {col.name: getattr(d, col.name) for col in d.__table__.columns}
+
+
+@router.get("/document-types")
+def list_document_types(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Public endpoint — upload forms and validation both consume this.
+
+    By default returns only active types. Pass ``?include_inactive=true`` to
+    include archived types (e.g. for admin tooling that lists all).
+    """
+    q = db.query(DocumentTypeConfig)
+    if not include_inactive:
+        q = q.filter(DocumentTypeConfig.is_active.is_(True))
+    rows = q.order_by(DocumentTypeConfig.label.asc()).all()
+    return {"items": [_serialize_document_type(r) for r in rows]}
+
+
+@router.post("/document-types", status_code=201)
+def create_document_type(
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("system_config:update_all")),
+):
+    """Create a new document type vocabulary entry. system_admin / channel_ops_admin only."""
+    code = (payload.get("code") or "").strip()
+    label = (payload.get("label") or "").strip()
+    if not code:
+        raise HTTPException(status_code=422, detail="code is required")
+    if not label:
+        raise HTTPException(status_code=422, detail="label is required")
+
+    existing = db.query(DocumentTypeConfig).filter(DocumentTypeConfig.code == code).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="document_type code already exists")
+
+    row = DocumentTypeConfig(
+        id=uuid.uuid4(),
+        code=code,
+        label=label,
+        is_active=bool(payload.get("is_active", True)),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document_type.create",
+        object_type="document_type",
+        object_id=row.id,
+        after=jsonable_encoder(_serialize_document_type(row)),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_document_type(row)
+
+
+@router.patch("/document-types/{dt_id}")
+def update_document_type(
+    dt_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("system_config:update_all")),
+):
+    """Update label / is_active for a document type. ``code`` is immutable."""
+    row = db.query(DocumentTypeConfig).filter(DocumentTypeConfig.id == dt_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="document_type not found")
+
+    before = jsonable_encoder(_serialize_document_type(row))
+    if "label" in payload:
+        new_label = (payload["label"] or "").strip()
+        if not new_label:
+            raise HTTPException(status_code=422, detail="label cannot be empty")
+        row.label = new_label
+    if "is_active" in payload:
+        row.is_active = bool(payload["is_active"])
+    db.commit()
+    db.refresh(row)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document_type.update",
+        object_type="document_type",
+        object_id=row.id,
+        before=before,
+        after=jsonable_encoder(_serialize_document_type(row)),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_document_type(row)
