@@ -1,10 +1,11 @@
 import os
 import uuid as _uuid
 from datetime import datetime, timedelta
+from typing import Optional
 
 import jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -92,3 +93,39 @@ def get_current_user(
 
 def invalidate_token(token: str) -> None:
     token_blacklist.add(token)
+
+
+def get_optional_bearer_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Resolve the User from an optional ``Authorization: Bearer <jwt>`` header.
+
+    Unlike ``get_current_user``, this never raises — it returns ``None`` when
+    the header is missing, malformed, the token cannot be decoded, the
+    subject is unparseable, or the user is missing/inactive.
+
+    Used by dual-auth endpoints (draft_token query param OR Bearer JWT) so the
+    bearer path is overridable via ``app.dependency_overrides`` in tests
+    (FPRM-104).
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+    except HTTPException:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    try:
+        user_uuid = _uuid.UUID(str(user_id))
+    except (ValueError, TypeError):
+        return None
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user or not user.is_active:
+        return None
+    return user
