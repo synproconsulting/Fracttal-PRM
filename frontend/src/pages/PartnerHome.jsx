@@ -1,9 +1,71 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import ActivationChecklist from '../components/ActivationChecklist.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
+
+const STATUS_LABEL = {
+  draft: 'Draft',
+  submitted: 'Submitted',
+  under_review: 'Under Review',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  info_required: 'Info Required',
+  expired: 'Expired',
+}
+
+const STATUS_TONE = {
+  draft: 'neutral',
+  submitted: 'neutral',
+  under_review: 'neutral',
+  approved: 'success',
+  rejected: 'warning',
+  info_required: 'warning',
+  expired: 'warning',
+}
+
+function StatusBadge({ status }) {
+  const tone = STATUS_TONE[status] || 'neutral'
+  return (
+    <span className={`fp-badge fp-badge--${tone}`}>{STATUS_LABEL[status] || status}</span>
+  )
+}
+
+function KpiTile({ label, value, sub, accent, linkTo, linkLabel }) {
+  return (
+    <div
+      className="fp-card"
+      style={{
+        padding: 18,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        borderLeft: accent ? `4px solid ${accent}` : '4px solid var(--fp-primary, #1A6EBB)',
+      }}
+    >
+      <div style={{ fontSize: 'var(--fp-fs-sm, 13px)', color: 'var(--fp-text-secondary, #5A6478)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 32, fontWeight: 700, lineHeight: 1, color: 'var(--fp-text, #1B2236)' }}>
+        {value}
+      </div>
+      {sub && (
+        <div style={{ fontSize: 'var(--fp-fs-sm, 13px)', color: 'var(--fp-text-secondary, #5A6478)' }}>
+          {sub}
+        </div>
+      )}
+      {linkTo && (
+        <Link
+          to={linkTo}
+          style={{ marginTop: 4, fontSize: 'var(--fp-fs-sm, 13px)', color: 'var(--fp-primary, #1A6EBB)', fontWeight: 600, textDecoration: 'none' }}
+        >
+          {linkLabel || 'View →'}
+        </Link>
+      )}
+    </div>
+  )
+}
 
 function Tile({ label, description, icon, to, disabled, badge }) {
   const content = (
@@ -39,8 +101,10 @@ export default function PartnerHome() {
   const ctx = useOutletContext() || {}
   const { payload, orgName, token } = ctx
   const [me, setMe] = useState(null)
-  const [activation, setActivation] = useState(null)
-  const [activationError, setActivationError] = useState(null)
+  const [summary, setSummary] = useState(null)
+  const [summaryError, setSummaryError] = useState(null)
+  const [recentDeals, setRecentDeals] = useState([])
+  const [recentDealsError, setRecentDealsError] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -52,30 +116,49 @@ export default function PartnerHome() {
 
   useEffect(() => {
     if (!payload?.partner_org_id || !token) return
-    fetch(`${API}/partners/${payload.partner_org_id}/activation`, {
+    fetch(`${API}/partners/${payload.partner_org_id}/dashboard/summary`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (r) => {
         if (r.ok) return r.json()
-        if (r.status === 404) {
-          setActivationError('Activation checklist will appear here once your account is fully provisioned.')
-          return null
-        }
-        throw new Error(`HTTP ${r.status}`)
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${r.status}`)
       })
-      .then(setActivation)
-      .catch((e) => setActivationError(e.message))
+      .then(setSummary)
+      .catch((e) => setSummaryError(e.message))
+  }, [payload?.partner_org_id, token])
+
+  useEffect(() => {
+    if (!payload?.partner_org_id || !token) return
+    fetch(`${API}/deal-registrations?limit=5`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (r) => {
+        if (r.ok) return r.json()
+        if (r.status === 404) return { items: [] }
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${r.status}`)
+      })
+      .then((data) => {
+        const items = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : [])
+        setRecentDeals(items.slice(0, 5))
+      })
+      .catch((e) => setRecentDealsError(e.message))
   }, [payload?.partner_org_id, token])
 
   const fullName = me?.full_name || payload?.email?.split('@')[0] || 'Partner'
-  const isActive = activation && activation.activation_complete
 
-  const checklistItems = activation
-    ? ['profile_complete', 'documents_uploaded', 'terms_signed']
-    : []
-  const doneCount = activation ? checklistItems.filter((k) => activation[k]).length : 0
-  const totalCount = checklistItems.length || 3
-  const pct = activation ? Math.round((doneCount / totalCount) * 100) : 0
+  const totalDeals = useMemo(() => {
+    if (!summary?.deals) return 0
+    return Object.values(summary.deals).reduce((acc, v) => acc + (Number(v) || 0), 0)
+  }, [summary])
+
+  const isActive = summary ? summary.activation.complete : false
+  const itemsComplete = summary?.activation?.items_complete ?? 0
+  const itemsTotal = summary?.activation?.items_total ?? 4
+  const pct = itemsTotal > 0 ? Math.round((itemsComplete / itemsTotal) * 100) : 0
+  const docsPending = summary?.documents?.pending_review ?? 0
+  const dealsInfoRequired = summary?.deals?.info_required ?? 0
 
   return (
     <div>
@@ -94,30 +177,114 @@ export default function PartnerHome() {
         </div>
       </div>
 
-      {activation && !activation.activation_complete && (
-        <div style={{ marginBottom: 24 }}>
+      {summaryError && (
+        <div className="fp-alert fp-alert--warning" style={{ marginBottom: 16 }}>
+          Could not load dashboard summary: {summaryError}
+        </div>
+      )}
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: 16,
+          marginBottom: 24,
+        }}
+      >
+        <KpiTile
+          label="My Deals"
+          value={totalDeals}
+          sub="All registered opportunities"
+          linkTo="/portal/deals"
+        />
+        <KpiTile
+          label="Info Required"
+          value={dealsInfoRequired}
+          sub="Deals awaiting your response"
+          accent={dealsInfoRequired > 0 ? '#D14343' : undefined}
+          linkTo="/portal/deals?status=info_required"
+        />
+        <KpiTile
+          label="Documents Pending"
+          value={docsPending}
+          sub="Awaiting Fracttal review"
+          linkTo="/portal/documents"
+        />
+      </div>
+
+      {summary && !isActive && (
+        <div className="fp-card" style={{ padding: 18, marginBottom: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span style={{ fontSize: 'var(--fp-fs-sm)', fontWeight: 600, color: 'var(--fp-text)' }}>
+            <span style={{ fontSize: 'var(--fp-fs-sm)', fontWeight: 700, color: 'var(--fp-text)' }}>
               Activation progress
             </span>
             <span style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
-              {doneCount} / {totalCount}
+              {itemsComplete} of {itemsTotal} items complete ({pct}%)
             </span>
           </div>
           <div className="fp-progress">
             <div className="fp-progress__fill" style={{ width: `${pct}%` }} />
           </div>
+          <div style={{ marginTop: 12 }}>
+            <ActivationChecklist partnerId={payload.partner_org_id} token={token} />
+          </div>
+        </div>
+      )}
+      {summary && isActive && (
+        <div className="fp-alert fp-alert--success" style={{ marginBottom: 24 }}>
+          ✅ Your account is active — all activation steps complete.
         </div>
       )}
 
-      {activation && !activation.activation_complete && (
-        <div style={{ marginBottom: 32 }}>
-          <ActivationChecklist partnerId={payload.partner_org_id} token={token} />
+      <h2 className="fp-section-title">Recent deals</h2>
+      <div className="fp-card" style={{ padding: 0, marginBottom: 24 }}>
+        {recentDealsError && (
+          <div className="fp-alert fp-alert--warning" style={{ margin: 12 }}>
+            Could not load recent deals: {recentDealsError}
+          </div>
+        )}
+        {!recentDealsError && recentDeals.length === 0 && (
+          <div style={{ padding: 18, color: 'var(--fp-text-secondary)' }}>
+            No deals yet.{' '}
+            <Link to="/portal/deals/new" style={{ color: 'var(--fp-primary, #1A6EBB)', fontWeight: 600 }}>
+              Register a Deal →
+            </Link>
+          </div>
+        )}
+        {recentDeals.length > 0 && (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: 'var(--fp-bg, #F5F7FA)', textAlign: 'left' }}>
+                <th style={{ padding: '12px 14px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>Deal</th>
+                <th style={{ padding: '12px 14px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>Customer</th>
+                <th style={{ padding: '12px 14px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>Status</th>
+                <th style={{ padding: '12px 14px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>Submitted</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentDeals.map((d) => (
+                <tr key={d.id} style={{ borderTop: '1px solid var(--fp-border, #E0E4EA)' }}>
+                  <td style={{ padding: '12px 14px' }}>
+                    <Link to={`/portal/deals/${d.id}`} style={{ color: 'var(--fp-primary, #1A6EBB)', textDecoration: 'none', fontWeight: 600 }}>
+                      {d.deal_name || '(unnamed)'}
+                    </Link>
+                  </td>
+                  <td style={{ padding: '12px 14px', color: 'var(--fp-text-secondary)' }}>{d.customer_name || '—'}</td>
+                  <td style={{ padding: '12px 14px' }}><StatusBadge status={d.status} /></td>
+                  <td style={{ padding: '12px 14px', color: 'var(--fp-text-secondary)', fontSize: 'var(--fp-fs-sm)' }}>
+                    {d.submitted_at ? new Date(d.submitted_at).toLocaleDateString() : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div style={{ padding: 14, borderTop: '1px solid var(--fp-border, #E0E4EA)' }}>
+          <Link to="/portal/deals/new" className="fp-btn fp-btn--primary fp-btn--sm">
+            Register a Deal →
+          </Link>
         </div>
-      )}
-      {activationError && !activation && (
-        <div className="fp-alert fp-alert--warning">{activationError}</div>
-      )}
+      </div>
 
       <h2 className="fp-section-title">What you can do</h2>
       <div
