@@ -275,7 +275,7 @@ class CommissionStructure(Base):
         ForeignKey("partner_category_configs.code"),
         nullable=False,
     )
-    commission_type = Column(SAEnum(CommissionType, name="commission_type"), nullable=False)
+    commission_type = Column(String, nullable=False)
     year = Column(SAEnum(CommissionYear, name="commission_year"), nullable=False)
     commission_pct = Column(Numeric, nullable=False)
     subpartner_uplift_pct = Column(Numeric, default=10.0, nullable=False)
