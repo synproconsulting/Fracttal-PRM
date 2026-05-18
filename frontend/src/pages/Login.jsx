@@ -21,7 +21,7 @@ function decodeJwt(token) {
 
 export function destinationForRole(role) {
   if (PARTNER_ROLES.has(role)) return '/portal/home'
-  if (INTERNAL_ROLES.has(role)) return '/internal/applications'
+  if (INTERNAL_ROLES.has(role)) return '/internal/home'
   return '/'
 }
 
