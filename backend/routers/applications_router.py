@@ -21,11 +21,11 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
-from auth import decode_access_token
+from auth import get_optional_bearer_user
 from audit import log_audit_event
 from database import get_db
 from models import (
@@ -96,29 +96,6 @@ def _validate_draft_token(
     if app_record.draft_expires_at and app_record.draft_expires_at < datetime.utcnow():
         raise HTTPException(status_code=410, detail="Draft has expired")
     return app_record
-
-
-def _user_from_bearer(authorization: Optional[str], db: Session) -> Optional[User]:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        return None
-    token = authorization.split(" ", 1)[1].strip()
-    if not token:
-        return None
-    try:
-        payload = decode_access_token(token)
-    except HTTPException:
-        return None
-    user_id = payload.get("sub")
-    if not user_id:
-        return None
-    try:
-        user_uuid = uuid.UUID(str(user_id))
-    except (ValueError, TypeError):
-        return None
-    user = db.query(User).filter(User.id == user_uuid).first()
-    if not user or not user.is_active:
-        return None
-    return user
 
 
 def _require_review_role(current_user: User) -> None:
@@ -194,14 +171,13 @@ def list_applications(
 def get_application(
     application_id: uuid.UUID,
     draft_token: Optional[str] = Query(default=None),
-    authorization: Optional[str] = Header(default=None),
+    user: Optional[User] = Depends(get_optional_bearer_user),
     db: Session = Depends(get_db),
 ):
     """Public with ?draft_token=... OR internal with Bearer token (read_all)."""
     if draft_token:
         return _serialize(_validate_draft_token(application_id, draft_token, db))
 
-    user = _user_from_bearer(authorization, db)
     if not user:
         raise HTTPException(status_code=401, detail="draft_token or authentication required")
     if not has_permission(user.role, "partner_application:read_all"):
@@ -510,7 +486,7 @@ def request_info(
 def application_timeline(
     application_id: uuid.UUID,
     draft_token: Optional[str] = Query(default=None),
-    authorization: Optional[str] = Header(default=None),
+    user: Optional[User] = Depends(get_optional_bearer_user),
     db: Session = Depends(get_db),
 ):
     """Return the audit-log timeline for an application.
@@ -521,7 +497,6 @@ def application_timeline(
     if draft_token:
         _validate_draft_token(application_id, draft_token, db)
     else:
-        user = _user_from_bearer(authorization, db)
         if not user:
             raise HTTPException(status_code=401, detail="draft_token or authentication required")
         if not has_permission(user.role, "partner_application:read_all"):
@@ -561,14 +536,13 @@ def _serialize_message(m: PartnerApplicationMessage) -> dict:
 def list_messages(
     application_id: uuid.UUID,
     draft_token: Optional[str] = Query(default=None),
-    authorization: Optional[str] = Header(default=None),
+    user: Optional[User] = Depends(get_optional_bearer_user),
     db: Session = Depends(get_db),
 ):
     """Public via ``?draft_token=...`` OR internal via Bearer (partner_application:read_all)."""
     if draft_token:
         _validate_draft_token(application_id, draft_token, db)
     else:
-        user = _user_from_bearer(authorization, db)
         if not user:
             raise HTTPException(status_code=401, detail="draft_token or authentication required")
         if not has_permission(user.role, "partner_application:read_all"):
@@ -592,7 +566,7 @@ def post_message(
     application_id: uuid.UUID,
     payload: dict = Body(...),
     draft_token: Optional[str] = Query(default=None),
-    authorization: Optional[str] = Header(default=None),
+    user: Optional[User] = Depends(get_optional_bearer_user),
     db: Session = Depends(get_db),
 ):
     """Post a message to the application thread.
@@ -617,7 +591,6 @@ def post_message(
         if not sender_email:
             raise HTTPException(status_code=422, detail="sender_email is required")
     else:
-        user = _user_from_bearer(authorization, db)
         if not user:
             raise HTTPException(status_code=401, detail="draft_token or authentication required")
         if not has_permission(user.role, "partner_application:read_all"):
