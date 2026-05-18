@@ -13,6 +13,7 @@ import PartnerProfile from './pages/PartnerProfile.jsx'
 import PartnerDocuments from './pages/PartnerDocuments.jsx'
 import DealList from './pages/DealList.jsx'
 import DealRegistrationForm from './pages/DealRegistrationForm.jsx'
+import DealDetail from './pages/DealDetail.jsx'
 import DealQueue from './pages/DealQueue.jsx'
 
 function Landing() {
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="documents" element={<PartnerDocuments />} />
         <Route path="deals" element={<DealList />} />
         <Route path="deals/new" element={<DealRegistrationForm />} />
+        <Route path="deals/:id" element={<DealDetail />} />
         <Route path="deals/:id/edit" element={<DealRegistrationForm />} />
       </Route>
 
