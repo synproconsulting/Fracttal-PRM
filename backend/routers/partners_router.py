@@ -22,9 +22,14 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from audit import log_audit_event
 from database import get_db
+from sqlalchemy import func
+
 from models import (
     CommissionStructure,
+    DealRegistration,
+    DocumentStatus,
     PartnerActivationChecklist,
+    PartnerDocument,
     PartnerOrganization,
     PartnerProfile,
     User,
@@ -347,6 +352,78 @@ def get_commission_rates(
             "notes": r.notes,
         })
     return {"partner_category_code": code, "items": items}
+
+
+@router.get("/{partner_id}/dashboard/summary")
+def get_partner_dashboard_summary(
+    partner_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sprint 11 / FPRM-183 — partner home dashboard roll-up.
+
+    Restricted to ``partner_admin`` of the same org. Returns deals counts by
+    status, activation progress, and document review counts for the partner's
+    own organisation.
+    """
+    partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+
+    if UserRole(current_user.role) != UserRole.partner_admin:
+        raise HTTPException(status_code=403, detail="partner_admin role required")
+    if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_id):
+        raise HTTPException(status_code=403, detail="Access denied: not your organisation")
+
+    def _deal_count(status_value: str) -> int:
+        return (
+            db.query(func.count(DealRegistration.id))
+            .filter(DealRegistration.partner_org_id == partner_id)
+            .filter(DealRegistration.status == status_value)
+            .scalar()
+            or 0
+        )
+
+    deals = {
+        "draft": _deal_count("draft"),
+        "submitted": _deal_count("submitted"),
+        "under_review": _deal_count("under_review"),
+        "approved": _deal_count("approved"),
+        "info_required": _deal_count("info_required"),
+    }
+
+    checklist = (
+        db.query(PartnerActivationChecklist)
+        .filter(PartnerActivationChecklist.partner_org_id == partner_id)
+        .first()
+    )
+    activation_items = ("profile_complete", "documents_uploaded", "terms_signed", "baseline_training_complete")
+    if checklist:
+        items_complete = sum(1 for field in activation_items if getattr(checklist, field))
+        activation = {
+            "complete": bool(checklist.activation_complete),
+            "items_complete": items_complete,
+            "items_total": len(activation_items),
+        }
+    else:
+        activation = {"complete": False, "items_complete": 0, "items_total": len(activation_items)}
+
+    def _doc_count(status_value: DocumentStatus) -> int:
+        return (
+            db.query(func.count(PartnerDocument.id))
+            .filter(PartnerDocument.partner_org_id == partner_id)
+            .filter(PartnerDocument.status == status_value)
+            .scalar()
+            or 0
+        )
+
+    documents = {
+        "pending_review": _doc_count(DocumentStatus.pending_review),
+        "approved": _doc_count(DocumentStatus.approved),
+        "rejected": _doc_count(DocumentStatus.rejected),
+    }
+
+    return {"deals": deals, "activation": activation, "documents": documents}
 
 
 @router.post("/{partner_id}/activation/recalculate")
