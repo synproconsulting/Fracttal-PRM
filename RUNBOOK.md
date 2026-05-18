@@ -676,7 +676,85 @@ All steps green = Phase 3 fully validated. Safe to proceed with Phase 4.
 
 ---
 
+## 14. End-to-End Happy Path Validation — Phase 4 Sprint 11 (Internal Shell + Dashboards)
+
+After deploying Sprint 11 (PRs #78–#83 squashed into `main` and Railway deploys settled), run this happy-path validation against production. All steps green = Sprint 11 fully validated.
+
+Substitute `<ADMIN_TOKEN>` (any internal role with dashboard access) and `<PARTNER_TOKEN>` (a partner_admin of an org with at least one deal).
+
+### 1. Internal dashboard summary endpoint
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/dashboard/summary" -H "Authorization: Bearer <ADMIN_TOKEN>"
+```
+
+Expect `200` with this shape:
+```json
+{
+  "applications": {"pending_review": ..., "info_required": ..., "total_this_month": ...},
+  "deals":        {"submitted": ..., "under_review": ..., "approved_this_month": ..., "total_pipeline_value": ...},
+  "partners":     {"active": ..., "pending_activation": ..., "total": ...},
+  "conflicts":    {"open": ...}
+}
+```
+
+A `sales_rep` / `partner_admin` token must return `403`.
+
+### 2. Partner dashboard summary endpoint
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/partners/<PARTNER_ORG_ID>/dashboard/summary" -H "Authorization: Bearer <PARTNER_TOKEN>"
+```
+
+Expect `200`. Confirm `deals` totals match the partner's own deal pipeline (compare against `GET /deal-registrations?limit=100`), `activation.items_complete` matches the checked boxes in `GET /partners/{id}/activation`, and `documents` counts match `GET /partners/{id}/documents` grouped by `status`. A different partner_admin's token against this `partner_id` must return `403` with detail "not your organisation".
+
+### 3. Cancel info request — application
+
+Pick an application currently in `info_required` status (use `GET /internal/applications?status=info_required`). Then:
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/applications/<APP_ID>/cancel-info-request" -H "Authorization: Bearer <ADMIN_TOKEN>"
+```
+
+Expect `200` with `{"id":"…","status":"in_review","info_request_message":null}`. Confirm via `GET /applications/<APP_ID>` that the status flipped. Calling cancel again should return `400` "Application is not in info_required status". A `partner_admin` token must return `403`.
+
+### 4. Cancel info request — deal
+
+Pick a deal in `info_required` (use `GET /internal/deals?status=info_required`). Then:
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/<DEAL_ID>/cancel-info-request" -H "Authorization: Bearer <ADMIN_TOKEN>"
+```
+
+Expect `200` with status `under_review`. Then `GET /deal-registrations/<DEAL_ID>/messages` should include a new internal message with body "Info request cancelled by reviewer." A `partner_admin` token must return `403`. `sales_rep` must return `403`.
+
+### 5. Forgot-password flow (manual, browser + Railway logs)
+
+1. In the browser at `https://fracttal-prm-frontend-production.up.railway.app/login`, click **Forgot password?** — lands on `/forgot-password`.
+2. Submit an email of a known active user. UI shows the generic "If that email is registered…" success message. The actual reset link prints to Railway backend logs (SMTP env vars not yet set — see §10 + CLAUDE.md Known Issues).
+3. Copy the URL from logs and open it in the browser. It must contain `?token=…` and render `/reset-password` with both password fields.
+4. Submit a new password. Expect redirect to `/login` with the green toast "Password reset successfully. Please log in."
+5. Sign in with the new password — destination is `/internal/home` for internal roles (FPRM-179) or `/portal/home` for partner roles.
+
+### 6. Frontend smoke (browser)
+
+1. **Internal**: log in as a `system_admin` → lands on `/internal/home` (not `/internal/applications`). InternalLayout sidebar shows Home/Applications/Partners/Deals/Users/Program Config/Reports — Partners/Users/Program Config/Reports rendered as greyed "soon" placeholders. KPI tiles populate; "Open Conflicts" pulses red if > 0; clicking "Review Applications" navigates to the queue.
+2. **Internal**: as a `channel_manager`, confirm Users is hidden (system_admin-only) and the rest of the visible items are unchanged.
+3. **Partner**: log in as a `partner_admin` → `/portal/home` shows the new KPI tile row, activation widget (or green "Activated ✅" banner), and Recent Deals table. "Info Required" tile pulses red if > 0. Click a deal in the Recent Deals table → opens `/portal/deals/:id`.
+4. **Cancel Info Request**: open an `info_required` application via `/internal/applications/<id>`. The "Cancel Info Request" button is visible (only in this status). Click it → confirm modal → on confirm the button disappears and the badge flips to "In Review".
+5. **Cancel Info Request**: same for a deal at `/internal/deals/<id>` — modal copy matches "Cancel the info request?" and "Info request cancelled by reviewer." appears as a new system message in the thread.
+
+### Known operational notes (Sprint 11)
+
+- **`InternalLayout` is a hard cut-over.** All `/internal/*` routes now resolve through the layout. If a future route lands without being added to the nested `<Route path="/internal">` block in `App.jsx`, the page will 404 — there is no longer a "bare" internal route variant.
+- **Login destination for internal users is `/internal/home`.** A redirect to `/internal/applications` no longer happens out of `Login.jsx`. Any link or doc that explicitly references the post-login destination should now point at `/internal/home`.
+- **`PartnerApplication.info_request_message` is in-memory only.** The cancel-info-request endpoint reads it with `getattr(..., None)`. Tests that exercise this endpoint must set the attribute *after* row construction (the SQLAlchemy constructor rejects unknown kwargs). See `test_cancel_info_request.py::_make_application`.
+- **Aggregate-count test files require per-test table cleanup.** `test_dashboard.py` and `test_partner_dashboard.py` use a module-scoped engine but truncate all tables in the `db_session` fixture teardown — otherwise prior tests' rows inflate counts. Any future "count things in the DB and assert" test should follow that pattern.
+- **Dashboard endpoints are query-side aggregates.** `GET /internal/dashboard/summary` and `GET /partners/{id}/dashboard/summary` run multiple count queries per call. If the deals or applications tables grow large enough that the dashboard becomes slow, the right move is index review (status, partner_org_id, reviewed_at) before introducing a roll-up table.
+
+---
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–10 closeout*
-*Last updated: Sprint 10 closeout / Phase 3 complete — May 2026*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–11 closeout*
+*Last updated: Sprint 11 closeout / Phase 4 kick-off — May 2026*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
