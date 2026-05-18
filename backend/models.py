@@ -502,3 +502,30 @@ class DealRegistration(Base):
     __table_args__ = (
         Index("ix_deal_registrations_partner_status", "partner_org_id", "status"),
     )
+
+
+class DealMessage(Base):
+    """Sprint 9 / FPRM-139 — collaboration thread on a deal registration.
+
+    Mirrors the PartnerApplicationMessage pattern (Sprint 6 / AD-12 sibling).
+    ``sender_type`` is ``partner`` or ``internal``; ``sender_id`` references
+    the authenticated user and is always populated (no anonymous thread posts).
+    """
+
+    __tablename__ = "deal_messages"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("deal_registrations.id"),
+        nullable=False,
+    )
+    sender_type = Column(String, nullable=False)  # "partner" | "internal"
+    sender_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    sender_email = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_deal_messages_deal_created", "deal_id", "created_at"),
+    )
