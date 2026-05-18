@@ -565,7 +565,91 @@ Any partner that has not yet had `POST /partners/{id}/activation/training-comple
 
 ---
 
+## 13. End-to-End Happy Path Validation — Phase 3 (Conflict Checking + Commission Override)
+
+Run this after every Sprint 10+ deploy and **before starting Phase 4**. Exercises the full Sprint 8 + 9 + 10 deal lifecycle including the conflict checker and commission override paths.
+
+### Prerequisites
+
+- A fully-activated partner exists (`activation_complete = True`). Sprint 10 / FPRM-156 relaxed the `documents_uploaded` rule — one approved document is now sufficient. A partner created via Phase 2 validation (§11) and then `POST /partners/{id}/activation/training-complete` should pass.
+- A `partner_admin` JWT for that partner. The Phase 3A validator script in `.sprint10/bug_0_validate.py` invites a fresh user (`s10val+<random>@phase3atest.com`) and accepts the invite to mint one when no partner_admin exists for an org.
+- A `channel_manager` or `system_admin` JWT for the internal reviewer (`admin2@test.com` works for system_admin per §2).
+- For the conflict-detected path: a **second** activated partner org in a different account, so two different `partner_org_id` values can both register against the same `customer_domain`.
+
+### Clear path (no conflict)
+
+```cmd
+set ptoken=<partner_admin token>
+set itoken=<channel_manager / system_admin token>
+
+REM 1. Create + submit
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations" -H "Authorization: Bearer %ptoken%" -H "Content-Type: application/json" -d "{\"customer_name\":\"Clear Customer\",\"customer_domain\":\"clearpath.com\",\"deal_name\":\"Clear Path Deal\",\"commission_type\":\"autonomous_sell\"}"
+REM Capture the returned id as %deal_id%
+set deal_id=<id>
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations/%deal_id%/submit" -H "Authorization: Bearer %ptoken%"
+```
+
+Expect `200`, `status=submitted`, `conflict_status=clear` (no other deals against `clearpath.com`).
+
+```cmd
+REM 2. Start review + approve
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/start-review" -H "Authorization: Bearer %itoken%"
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/approve" -H "Authorization: Bearer %itoken%" -H "Content-Type: application/json" -d "{\"review_notes\":\"Phase 3 happy path — approved.\"}"
+```
+
+Expect `status=approved`. Confirm `conflict_status` stayed `clear` throughout.
+
+### Conflict-detected path
+
+1. Have **partner A** submit a deal against `hotdomain.com` (steps as above, but for the first partner_admin).
+2. As **partner B** (different org's partner_admin), submit a deal against the same `hotdomain.com`:
+
+```cmd
+set ptoken_b=<partner_admin token from a different org>
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations" -H "Authorization: Bearer %ptoken_b%" -H "Content-Type: application/json" -d "{\"customer_name\":\"Conflict Customer\",\"customer_domain\":\"hotdomain.com\",\"deal_name\":\"B's Attempt\",\"commission_type\":\"autonomous_sell\"}"
+set b_deal=<returned id>
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deal-registrations/%b_deal%/submit" -H "Authorization: Bearer %ptoken_b%"
+```
+
+Expect `conflict_status=conflict_detected`, `conflict_notes` mentioning the domain and conflict count.
+
+3. As an internal reviewer (`channel_manager` or `system_admin`), override the conflict:
+
+```cmd
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%b_deal%/override-conflict" -H "Authorization: Bearer %itoken%" -H "Content-Type: application/json" -d "{\"override_notes\":\"Customers confirmed this is a parent/subsidiary case — different buying centres.\"}"
+```
+
+Expect `200`, `conflict_status=clear`, `conflict_notes` ends with `[OVERRIDE by <reviewer email>]: <override_notes>`.
+
+4. As `partner_admin`, attempt to call the override endpoint — expect `403`.
+
+### Commission rate visibility
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/partners/<partner_id>/commission-rates" -H "Authorization: Bearer %ptoken%"
+```
+
+Expect `200` with `partner_category_code` matching the partner's category and `items` populated with the seeded commission_structures rows.
+
+### Frontend smoke (browser)
+
+1. Sign in as the partner. Sidebar shows the **Commissions** item (enabled, no "Coming soon"). Click it → `/portal/commissions` renders the rate table.
+2. Click **Register a Deal**, fill in a customer + select **Autonomous Sell** → helper text reads `Applicable rate (Year 1): 50%` (matches the seeded `autonomous_sell + year_1` row).
+3. Sign in as the internal reviewer. Open the conflict-detected deal at `/internal/deals/:id`. **Conflict Check** card shows red `Conflict Detected ⚠️` + the notes + **Override Conflict** button.
+4. Click **Override Conflict** — modal opens, requires min-10-char notes, on confirm the badge flips green `Clear ✅` and a transient `Conflict overridden` toast appears bottom-right.
+5. Open the same deal as the partner (`/portal/deals/:id`) — confirm no conflict status / notes / override controls are visible to partners.
+
+All steps green = Phase 3 fully validated. Safe to proceed with Phase 4.
+
+### Known operational notes (Sprint 10)
+
+- **Conflict checker is best-effort.** If `conflict_checker.check_deal_conflict` raises, the submit endpoint swallows it inside try/except so the status flip and commission snapshot still persist. The deal will simply carry `conflict_status='not_checked'`. Monitor backend logs after deploys touching `conflict_checker.py` or `deal_registrations_router.py`.
+- **`channel_ops_admin` cannot override.** Only `channel_manager` + `system_admin` are in `OVERRIDE_ROLES`. If ops complain about a 403, that is by design — point them at a `channel_manager` JWT.
+- **Form commission_type vocabulary** is fixed to `autonomous_sell / indirect_sell / direct_sell / co_sell_shared` after FPRM-158 — these are the only values that resolve a row in `commission_structures` for the rate preview helper.
+
+---
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–7 closeout, Sprint 8 closeout, Sprint 9 closeout*
-*Last updated: Sprint 9 closeout / Phase 3A complete — May 2026*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–7 closeout, Sprint 8 closeout, Sprint 9 closeout, Sprint 10 closeout*
+*Last updated: Sprint 10 closeout / Phase 3 complete — May 2026*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
