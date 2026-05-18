@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** Sprint 10 complete — Phase 3 (Deal Registration) complete — Phase 4 pending. Sprint 10 added the `conflict_checker.py` utility wired into `POST /deal-registrations/{id}/submit`, new `POST /internal/deals/{id}/override-conflict` endpoint (channel_manager + system_admin only, FPRM-157), `GET /partners/{id}/commission-rates` endpoint with `CommissionRates.jsx` partner-portal page at `/portal/commissions` (FPRM-158), and a conflict status badge + override modal inside `InternalDealDetail.jsx` (FPRM-159). The Sprint 10 bug-fix (FPRM-156) simplified the `documents_uploaded` activation gate from "fiscal_id + id_legal_representative both approved" to "≥1 approved document" — the original rule was incompatible with FPRM-144's admin-configurable document_types. Sprint 10 fix version 10665 + native sprint 638 closed. Phase 3 totals: 17 stories, 58 points, deal registration end-to-end. Sprint history in CLAUDE_HISTORY.md.
+**Current state:** Sprint 11 complete — Phase 4 (Admin Foundation & Reporting) in progress. Sprint 11 delivered: `InternalLayout.jsx` shell wrapping all `/internal/*` routes with role-aware sidebar nav (FPRM-176); `InternalHome.jsx` dashboard at `/internal/home` backed by new `GET /internal/dashboard/summary` endpoint in `backend/routers/dashboard_router.py` — system_admin/channel_ops_admin/channel_manager (FPRM-179); enhanced `PartnerHome.jsx` with KPI tiles, activation widget, recent-deals panel backed by new `GET /partners/{id}/dashboard/summary` — partner_admin own-org (FPRM-183); public `ForgotPassword.jsx` + `ResetPassword.jsx` pages wired to existing Sprint 2 auth endpoints plus new `POST /applications/{id}/cancel-info-request` + `POST /internal/deals/{id}/cancel-info-request` with Cancel Info Request buttons on `ApplicationReview.jsx` and `InternalDealDetail.jsx` (FPRM-186). Two carry-forward bugs landed: serializer fix in `admin_router.py` so anonymous audit-log rows return JSON null (FPRM-89), and `get_optional_bearer_user` FastAPI dependency in `auth.py` replacing the private `_user_from_bearer` helper in `applications_router.py` (FPRM-104). Sprint 11 fix version 10698 + native sprint 671 closed. Phase 4 epic FPRM-175. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 
@@ -198,8 +198,8 @@ Fracttal-PRM/
 | Jira board ID | `67` |
 | Execution order field | `customfield_10071` |
 | Story points field | `customfield_10016` |
-| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539`, Sprint 8: `572`, Sprint 9: `605`, Sprint 10: `638` |
-| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566`, Sprint 8: `10599`, Sprint 9: `10632`, Sprint 10: `10665` |
+| Sprint IDs (native) | Sprint 1: `501`, Sprint 2: `534`, Sprint 3: `535`, Sprint 4: `536`, Sprint 5: `537`, Sprint 6: `538`, Sprint 7: `539`, Sprint 8: `572`, Sprint 9: `605`, Sprint 10: `638`, Sprint 11: `671` |
+| Sprint fix version IDs | Sprint 1: `10528`, Sprint 2: `10561`, Sprint 3: `10562`, Sprint 4: `10563`, Sprint 5: `10564`, Sprint 6: `10565`, Sprint 7: `10566`, Sprint 8: `10599`, Sprint 9: `10632`, Sprint 10: `10665`, Sprint 11: `10698` |
 
 **Sprint query pattern:**
 ```python
@@ -330,9 +330,8 @@ Active items only — historical Sprint follow-ups live in `CLAUDE_HISTORY.md`.
 - **JWT logout blacklist is in-memory only.** Lost on backend restart; not safe for multi-instance deploys.
 - **Password reset has no email backend yet.** Reset URLs are logged to stdout via `print`. A real email integration (SES / SendGrid / etc) is queued for a later sprint. Sprint 6 lifecycle notifications use SMTP with stdout fallback (AD-13) — the password-reset path still needs to adopt the same pattern.
 - **SonarCloud scan fails on every CI run** (non-blocking — `continue-on-error: true`). Needs a `sonar-project.properties` file and a linked SonarCloud project to produce useful output.
-- **`FPRM-89` — `audit_log.actor_id` stores string `"None"` on anonymous events.** Cosmetic; rows are otherwise correct. Parked Low.
-- **`FPRM-104` — endpoints using `_user_from_bearer` cannot be tested via `app.dependency_overrides[get_current_user]`.** Affected: `GET /applications/{id}/timeline`, `GET+POST /applications/{id}/messages`. Tests work with real JWTs in the meantime. Parked Low.
-- **SMTP env vars not yet set on the `fracttal-prm-backend` Railway service.** Lifecycle email notifications (Sprint 6 / FPRM-93) fall back to stdout in production until `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `CHANNEL_OPS_EMAIL` are set. No code change required — manual ops follow-up.
+- **SMTP env vars not yet set on the `fracttal-prm-backend` Railway service.** Lifecycle email notifications (Sprint 6 / FPRM-93) fall back to stdout in production until `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `CHANNEL_OPS_EMAIL` are set. No code change required — manual ops follow-up. The Sprint 11 forgot-password UI (FPRM-186) consumes the same fallback path until SMTP is configured.
+- **`PartnerApplication.info_request_message` is not a real column.** The model has no `info_request_message` Column; the request-info endpoint sets it as an in-memory Python attribute and returns it in the response, never persisting it. The Sprint 11 cancel-info-request endpoint reads it via `getattr(..., None)` to avoid `AttributeError` on applications that never had a request. A proper migration to persist this field would unblock historical reporting of past info requests on applications — parked Low.
 
 ---
 

@@ -1153,3 +1153,85 @@ Phase 4 begins **Reporting & Analytics**. Pre-implementation notes:
    - **SonarCloud** still needs a `sonar-project.properties` + linked project.
 4. **Spec generation:** `FPRM_Phase4_Jira_Tickets.md` is the planning artefact to be generated in a planning session before Sprint 11.
 
+
+
+## Sprint 11 — Internal Shell, Dashboards & Quick Wins (Phase 4 kick-off)
+
+**Started:** 2026-05-18
+**Closed:** 2026-05-18 (single-day intensive)
+**Fix Version ID:** `10698`
+**Native Sprint ID:** `671`
+**Phase 4 epic:** FPRM-175 — Admin Foundation & Reporting
+
+### Sprint 11 ticket-key map
+
+The Phase 4 planning doc predicted FPRM-175..FPRM-189 for the new stories, but Jira auto-assigns sequentially and the epic took the first available key (FPRM-175). The actual map is therefore offset by one across stories and starts at FPRM-176 for the first story:
+
+| Planned | Actual | Type | Title |
+|---|---|---|---|
+| FPRM-E8 | FPRM-175 | Epic | Admin Foundation & Reporting |
+| FPRM-175 | FPRM-176 | Story | Internal admin navigation shell (InternalLayout) |
+| FPRM-176 | FPRM-179 | Story | Internal admin home dashboard (InternalHome) |
+| FPRM-177 | FPRM-183 | Story | Partner admin home dashboard (enhanced PartnerHome) |
+| FPRM-178 | FPRM-186 | Story | Forgot password UI + cancel info request |
+
+Subtasks: FPRM-177/178 (under 176), FPRM-180/181/182 (under 179), FPRM-184/185 (under 183), FPRM-187/188/189 (under 186).
+
+Carry-forward bugs reassigned to Sprint 11 (not recreated): FPRM-89, FPRM-104.
+
+### Sprint 11 stories — outcome
+
+| Key | Type | Story | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-89 | Bug | actor_id stores "None" instead of SQL null | Done | #78 | Root cause was the serializer at `backend/routers/admin_router.py:48` (`str(item.actor_id)` → `"None"` when actor_id is NULL), not `audit.py`. `audit.py` has always passed Python `None` correctly since FPRM-44/FPRM-75. Fix mirrors the existing `object_id` pattern on the next line. Added 2 tests: one for `log_audit_event` with `actor=None` (sanity), and one TestClient test asserting the API returns JSON null. |
+| FPRM-104 | Bug | _user_from_bearer testability debt | Done | #79 | Added `get_optional_bearer_user` FastAPI dependency in `auth.py` — reads the Authorization header, decodes the JWT, returns `Optional[User]`, never raises. Removed `_user_from_bearer` from `applications_router.py` and migrated all four dual-auth endpoints (`GET /applications/{id}`, `GET /applications/{id}/timeline`, `GET /applications/{id}/messages`, `POST /applications/{id}/messages`). New `test_bearer_dependency.py` proves `app.dependency_overrides[get_optional_bearer_user]` controls auth on every migrated path, including the draft_token fallback. |
+| FPRM-176 | Story | Internal admin navigation shell (InternalLayout) | Done | #80 | New `frontend/src/layouts/InternalLayout.jsx` with Fracttal-branded sidebar, role-aware nav (per-item `roles` filter), mobile hamburger, role badge in the header. `App.jsx` consolidated all 7 `/internal/*` routes under one `ProtectedRoute roles={INTERNAL_ROLES} → InternalLayout` nested route. Disabled items (Partners / Users / Program Config / Reports) render as greyed "soon" placeholders. `/internal/home` placeholder route added (real dashboard in FPRM-179). |
+| FPRM-179 | Story | Internal admin home dashboard (InternalHome) | Done | #81 | New router `backend/routers/dashboard_router.py` with `GET /internal/dashboard/summary` — system_admin/channel_ops_admin/channel_manager only. Returns applications / deals / partners / conflicts roll-up read from existing tables (no migrations). New `frontend/src/pages/InternalHome.jsx` — KPI tile grid (4 tiles), pipeline-this-month strip (3), partner health strip (3), quick-action buttons. Login `destinationForRole` repointed internal roles to `/internal/home`. Shape-contract test locks the response shape the frontend depends on. |
+| FPRM-183 | Story | Partner admin home dashboard (enhanced PartnerHome) | Done | #82 | New endpoint `GET /partners/{id}/dashboard/summary` added to `partners_router.py` — partner_admin own-org only. Returns deals counts by status, activation `items_complete / items_total` (4 hard-coded flags), and document counts (pending/approved/rejected). `PartnerHome.jsx` upgraded with KPI tiles, activation progress widget retaining `ActivationChecklist`, and a Recent Deals panel (last 5 from `/deal-registrations?limit=5`) with status badges + "Register a Deal" CTA. |
+| FPRM-186 | Story | Forgot password UI + cancel info request | Done | #83 | New public pages `ForgotPassword.jsx` (`/forgot-password`) and `ResetPassword.jsx` (`/reset-password`) wired to existing Sprint 2 endpoints `POST /auth/password-reset/request` and `POST /auth/password-reset/confirm`. Login.jsx gains "Forgot password?" link + reset-success toast. New endpoints `POST /applications/{id}/cancel-info-request` (info_required → in_review) and `POST /internal/deals/{deal_id}/cancel-info-request` (info_required → under_review, posts a system message to the thread). New buttons on `ApplicationReview.jsx` and `InternalDealDetail.jsx` (visible only when `status === 'info_required'`) with confirm-style modals. 13 new tests. |
+
+All 10 subtasks (FPRM-177, 178, 180, 181, 182, 184, 185, 187, 188, 189) closed Done.
+
+### What landed on `main` during Sprint 11
+
+- `backend/routers/admin_router.py` — null-safe `actor_id` serializer (FPRM-89).
+- `backend/auth.py` — new `get_optional_bearer_user` FastAPI dependency (FPRM-104).
+- `backend/routers/applications_router.py` — migrated 4 dual-auth endpoints to the new dependency, removed `_user_from_bearer` (FPRM-104); added `POST /applications/{id}/cancel-info-request` (FPRM-186).
+- `backend/routers/dashboard_router.py` (new) — `GET /internal/dashboard/summary` (FPRM-179).
+- `backend/routers/partners_router.py` — added `GET /partners/{id}/dashboard/summary` (FPRM-183).
+- `backend/routers/deal_registrations_router.py` — added `POST /internal/deals/{deal_id}/cancel-info-request` (FPRM-186).
+- `backend/main.py` — registered `dashboard_router`.
+- `backend/tests/` — new files `test_bearer_dependency.py` (8), `test_dashboard.py` (13), `test_partner_dashboard.py` (10), `test_cancel_info_request.py` (13); existing `test_audit.py` gains 2 new cases.
+- `frontend/src/layouts/InternalLayout.jsx` (new) and `frontend/src/App.jsx` re-wrapping (FPRM-176).
+- `frontend/src/pages/InternalHome.jsx` (new) (FPRM-179).
+- `frontend/src/pages/Login.jsx` — internal-role redirect repointed to `/internal/home`, "Forgot password?" link, reset-success toast (FPRM-179 + FPRM-186).
+- `frontend/src/pages/PartnerHome.jsx` — KPI tiles + activation widget + recent deals panel (FPRM-183).
+- `frontend/src/pages/ForgotPassword.jsx`, `ResetPassword.jsx` (new) (FPRM-186).
+- `frontend/src/pages/ApplicationReview.jsx`, `InternalDealDetail.jsx` — Cancel Info Request buttons + confirm modals (FPRM-186).
+- `CLAUDE.md` — Current state line + Sprint 11 IDs added; FPRM-89 and FPRM-104 removed from Known Issues; new `info_request_message` debt item added.
+- `CLAUDE_HISTORY.md` — this entry.
+- `RUNBOOK.md` — §14 Phase 4 Sprint 11 happy-path validation added.
+
+### API endpoint count
+
+Sprint 11 adds **4 new endpoints**:
+- `GET /internal/dashboard/summary`
+- `GET /partners/{id}/dashboard/summary`
+- `POST /applications/{id}/cancel-info-request`
+- `POST /internal/deals/{deal_id}/cancel-info-request`
+
+Total surface area is now **69 endpoints** (Sprint 10 baseline 65 + 4).
+
+### Sprint 11 test count
+
+Backend ends Sprint 11 at **332 tests passing** (Sprint 10 baseline 283 + 49 new across `test_audit.py` (+2), `test_bearer_dependency.py` (+8), `test_dashboard.py` (+13), `test_partner_dashboard.py` (+10), `test_cancel_info_request.py` (+13) + 3 historical tests added between Sprint 10 close and Sprint 11 start by FPRM-172/173/174).
+
+### Sprint 11 lessons
+
+1. **The Jira issue-key counter is shared across all issuetypes, including Epics.** The Phase 4 doc planned FPRM-175 = first story, but creating the epic first burnt that key — the InternalLayout story landed as FPRM-176. Predicted ticket-key tables in planning docs should be read as "ordering / themes," never as ground truth — always confirm the actual keys post-creation and record them. The actual map is captured in the ticket-key map table above.
+2. **A bug's "stated" location is not always its real location.** FPRM-89's acceptance criteria called out `audit.py` for the `actor_id == "None"` issue, but `audit.py` had been correct since Sprint 2 — the visible "None" was being introduced by the serializer in `admin_router.py:48`. The cheap signal here was reading the file the AC named *and the file that produces the visible symptom*. If you only read the AC's file you would have shipped a no-op fix and called it done.
+3. **Phantom attributes haunt SQLAlchemy models.** `PartnerApplication.info_request_message` is set as an in-memory attribute by the request-info endpoint but is not a Column, so SQLAlchemy does not error on `app.info_request_message = "..."`, does not persist it, AND raises `AttributeError` on read if the attribute was never assigned. The Sprint 11 cancel endpoint had to use `getattr(..., None)` to be safe. Pattern: when reading an attribute that may have been set by a sibling endpoint, never assume — always `getattr` or check `hasattr`. Discoverable only because the test fixture happened to construct rows without setting it; production rows from the request-info path would have the attribute on them.
+4. **Aggregate-count tests pollute each other under module-scoped engines.** Both `test_dashboard.py` and `test_partner_dashboard.py` run multi-row count queries, so module-scoped SQLite engines (used elsewhere in the suite) leaked rows between tests and inflated counts. Per-test cleanup (`for table in reversed(Base.metadata.sorted_tables): db.execute(table.delete())` in the `db_session` fixture teardown) is the right shape for any test module that asserts aggregate state — `test_bearer_dependency.py` doesn't need it because it tests per-row behaviour.
+5. **Two backend dashboard endpoints, two role guards.** `GET /internal/dashboard/summary` requires `system_admin` / `channel_ops_admin` / `channel_manager` (internal roll-up). `GET /partners/{id}/dashboard/summary` requires `partner_admin` of the same org — explicitly rejects system_admin too, because internal users have their own dashboard. Keeping these as separate endpoints with separate role checks (rather than one polymorphic endpoint that branches on caller role) made the 23 new tests trivial to express and read.
+6. **Nested route + single ProtectedRoute beats N copies.** Pre-FPRM-176 every `/internal/*` route was wrapped in its own `<ProtectedRoute roles=[...]>`. The new InternalLayout pattern (parent ProtectedRoute on `/internal`, Outlet inside the layout) cut ~50 lines from App.jsx, eliminated the risk of a route being added without its guard, and gave us a single place to redirect partner roles back to `/portal/home`. PartnerPortalLayout was already on this pattern from Sprint 7 — internal lagged.
+
