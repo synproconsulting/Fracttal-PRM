@@ -39,6 +39,7 @@ from database import get_db
 from models import (
     CommissionStructure,
     CommissionYear,
+    DealMessage,
     DealRegistration,
     PartnerActivationChecklist,
     PartnerOrganization,
@@ -534,6 +535,149 @@ def reject_deal(
         object_id=deal.id,
         before={"status": before_status},
         after={"status": "rejected", "review_notes": review_notes},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)
+
+
+# -------------------- Collaboration thread + request-info (Sprint 9 / FPRM-139) --------------------
+
+
+def _serialize_message(msg: DealMessage) -> dict:
+    return jsonable_encoder({
+        "id": msg.id,
+        "deal_id": msg.deal_id,
+        "sender_type": msg.sender_type,
+        "sender_id": msg.sender_id,
+        "sender_email": msg.sender_email,
+        "message": msg.message,
+        "created_at": msg.created_at,
+    })
+
+
+def _resolve_sender_type(user: User) -> str:
+    role = UserRole(user.role)
+    if role in PARTNER_ROLES:
+        return "partner"
+    if role in INTERNAL_ROLES:
+        return "internal"
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
+@router.get("/deal-registrations/{deal_id}/messages")
+def list_deal_messages(
+    deal_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the chronological collaboration thread for a deal.
+
+    Access: partner roles see own org only (403 on cross-org), internal roles
+    see any deal. Both partner and internal sides share the same thread view.
+    """
+    deal = _get_deal_or_404(deal_id, db)
+    _enforce_tenant_read(current_user, deal)
+    msgs = (
+        db.query(DealMessage)
+        .filter(DealMessage.deal_id == deal.id)
+        .order_by(DealMessage.created_at.asc())
+        .all()
+    )
+    return [_serialize_message(m) for m in msgs]
+
+
+@router.post("/deal-registrations/{deal_id}/messages", status_code=201)
+def post_deal_message(
+    deal_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Append a message to the deal's collaboration thread.
+
+    Access: partner roles 403 on other orgs' deals; internal roles always
+    allowed. ``sender_type`` is derived from the caller's role.
+    """
+    deal = _get_deal_or_404(deal_id, db)
+    _enforce_tenant_read(current_user, deal)
+    sender_type = _resolve_sender_type(current_user)
+
+    message_text = (payload.get("message") or "").strip() if payload else ""
+    if not message_text:
+        raise HTTPException(status_code=422, detail="message is required")
+
+    msg = DealMessage(
+        id=uuid.uuid4(),
+        deal_id=deal.id,
+        sender_type=sender_type,
+        sender_id=current_user.id,
+        sender_email=current_user.email,
+        message=message_text,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.message_posted",
+        object_type="deal_registration",
+        object_id=deal.id,
+        after={"sender_type": sender_type, "message_id": str(msg.id)},
+        ip_address=_client_ip(request),
+    )
+    return _serialize_message(msg)
+
+
+@router.post("/internal/deals/{deal_id}/request-info")
+def request_info(
+    deal_id: uuid.UUID,
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """under_review -> info_required. Posts the reviewer note to the thread."""
+    _require_review_role(current_user)
+    message_text = (payload.get("message") or "").strip() if payload else ""
+    if not message_text:
+        raise HTTPException(status_code=422, detail="message is required")
+
+    deal = _get_deal_or_404(deal_id, db)
+    if deal.status != "under_review":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot request info on deal in status '{deal.status}'",
+        )
+
+    before_status = deal.status
+    deal.status = "info_required"
+    deal.reviewer_id = current_user.id
+    deal.updated_at = datetime.utcnow()
+
+    msg = DealMessage(
+        id=uuid.uuid4(),
+        deal_id=deal.id,
+        sender_type="internal",
+        sender_id=current_user.id,
+        sender_email=current_user.email,
+        message=message_text,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(deal)
+    db.refresh(msg)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal_registration.info_required",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": before_status},
+        after={"status": "info_required", "message_id": str(msg.id)},
         ip_address=_client_ip(request),
     )
     return _serialize(deal)
