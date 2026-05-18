@@ -75,15 +75,21 @@ def recalculate_activation(db: Session, partner_org_id) -> PartnerActivationChec
     # terms_signed — contract_start_date is set on the partner org
     checklist.terms_signed = bool(org and org.contract_start_date)
 
-    # baseline_training_complete — Sprint 10 will replace this
-    checklist.baseline_training_complete = False
+    # baseline_training_complete — FPRM-145: preserve whatever the
+    # POST /partners/{id}/activation/training-{complete,reset} endpoints set.
+    # Recalc never flips it; it is admin/manager-driven.
+    if checklist.baseline_training_complete is None:
+        checklist.baseline_training_complete = False
 
-    # activation_complete — all required gates True (baseline_training excluded for now)
+    # activation_complete — all four required gates True (FPRM-145 added
+    # baseline_training_complete to the gate; previously it was hardcoded
+    # False and excluded, leaving partners able to activate without training).
     was_complete = checklist.activation_complete
     checklist.activation_complete = bool(
         checklist.profile_complete
         and checklist.documents_uploaded
         and checklist.terms_signed
+        and checklist.baseline_training_complete
     )
     if checklist.activation_complete and not was_complete:
         checklist.activated_at = datetime.utcnow()
