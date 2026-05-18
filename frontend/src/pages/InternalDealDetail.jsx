@@ -31,9 +31,9 @@ const CONFLICT_TONE = {
 }
 
 const CONFLICT_LABEL = {
-  not_checked: 'Not checked',
-  clear: 'Clear',
-  conflict_detected: 'Conflict detected',
+  not_checked: 'Not Checked',
+  clear: 'Clear ✅',
+  conflict_detected: 'Conflict Detected ⚠️',
 }
 
 function formatMoney(value) {
@@ -109,6 +109,44 @@ function ActionModal({ mode, deal, onClose, onConfirm, saving }) {
   )
 }
 
+function ConflictOverrideModal({ deal, onClose, onConfirm, saving, error }) {
+  const [notes, setNotes] = useState('')
+  const tooShort = notes.trim().length < 10
+  return (
+    <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+      <div className="fp-modal">
+        <h3 className="fp-modal__title">Override Conflict Decision</h3>
+        <p className="fp-modal__subtitle">{deal.deal_name} — {deal.customer_name}</p>
+        {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
+        <div className="fp-field fp-field--filled">
+          <textarea
+            id="override-notes"
+            rows={5}
+            placeholder=" "
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          <label htmlFor="override-notes">Override notes (min. 10 chars)</label>
+        </div>
+        <p style={{ margin: '4px 0 0', fontSize: 'var(--fp-fs-xs)', color: 'var(--fp-text-secondary)' }}>
+          Explain why this conflict should be overridden. Appended to the deal's audit trail.
+        </p>
+        <div className="fp-modal__actions">
+          <button type="button" onClick={onClose} disabled={saving} className="fp-btn fp-btn--ghost">Cancel</button>
+          <button
+            type="button"
+            onClick={() => onConfirm(notes.trim())}
+            disabled={saving || tooShort}
+            className="fp-btn fp-btn--solid-danger"
+          >
+            {saving ? 'Overriding…' : 'Override — Mark as Clear'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function InternalDealDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -123,6 +161,10 @@ export default function InternalDealDetail() {
   const [actionMode, setActionMode] = useState(null) // 'approve' | 'reject' | 'request-info'
   const [actionSaving, setActionSaving] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [overrideOpen, setOverrideOpen] = useState(false)
+  const [overrideSaving, setOverrideSaving] = useState(false)
+  const [overrideError, setOverrideError] = useState(null)
+  const [toast, setToast] = useState(null)
 
   async function fetchDeal() {
     const r = await fetch(`${API}/deal-registrations/${id}`, {
@@ -189,6 +231,28 @@ export default function InternalDealDetail() {
       setError(e.message)
     } finally {
       setActionSaving(false)
+    }
+  }
+
+  async function overrideConflict(notes) {
+    setOverrideSaving(true)
+    setOverrideError(null)
+    try {
+      const r = await fetch(`${API}/internal/deals/${id}/override-conflict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ override_notes: notes }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`)
+      setOverrideOpen(false)
+      setToast('Conflict overridden')
+      setReloadKey((k) => k + 1)
+      window.setTimeout(() => setToast(null), 4000)
+    } catch (e) {
+      setOverrideError(e.message)
+    } finally {
+      setOverrideSaving(false)
     }
   }
 
@@ -306,7 +370,7 @@ export default function InternalDealDetail() {
           </section>
 
           <section className="fp-card">
-            <h2 className="fp-section-title">Conflict status</h2>
+            <h2 className="fp-section-title">Conflict Check</h2>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
               <span className={`fp-badge ${CONFLICT_TONE[deal.conflict_status] || 'fp-badge--neutral'}`}>
                 {CONFLICT_LABEL[deal.conflict_status] || deal.conflict_status}
@@ -317,10 +381,33 @@ export default function InternalDealDetail() {
                 </span>
               )}
             </div>
-            {deal.conflict_notes && (
-              <div style={{ fontSize: 'var(--fp-fs-sm)' }}>{deal.conflict_notes}</div>
+            {deal.conflict_status === 'not_checked' && (
+              <div style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+                No customer domain provided — conflict check skipped.
+              </div>
             )}
-            {/* TODO Sprint 10: conflict override button */}
+            {deal.conflict_status === 'conflict_detected' && (
+              <>
+                {deal.conflict_notes && (
+                  <div style={{ fontSize: 'var(--fp-fs-sm)', marginBottom: 12, whiteSpace: 'pre-wrap' }}>
+                    {deal.conflict_notes}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="fp-btn fp-btn--solid-danger"
+                  onClick={() => setOverrideOpen(true)}
+                  disabled={overrideSaving}
+                >
+                  Override Conflict
+                </button>
+              </>
+            )}
+            {deal.conflict_status === 'clear' && deal.conflict_notes && (
+              <div style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)', whiteSpace: 'pre-wrap' }}>
+                {deal.conflict_notes}
+              </div>
+            )}
           </section>
         </div>
 
@@ -416,6 +503,36 @@ export default function InternalDealDetail() {
           onClose={() => setActionMode(null)}
           onConfirm={(text) => submitAction(actionMode, text)}
         />
+      )}
+
+      {overrideOpen && (
+        <ConflictOverrideModal
+          deal={deal}
+          saving={overrideSaving}
+          error={overrideError}
+          onClose={() => { setOverrideOpen(false); setOverrideError(null) }}
+          onConfirm={overrideConflict}
+        />
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            background: '#1b8743',
+            color: '#fff',
+            padding: '12px 18px',
+            borderRadius: 8,
+            boxShadow: '0 6px 24px rgba(0,0,0,0.15)',
+            fontSize: 'var(--fp-fs-sm)',
+            zIndex: 50,
+          }}
+        >
+          {toast}
+        </div>
       )}
     </div>
   )
