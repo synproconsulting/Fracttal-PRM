@@ -2,9 +2,13 @@
 
 A partner is "activated" once they have:
   - A reasonably complete profile (profile_completeness_pct >= 80)
-  - The two required compliance documents approved (fiscal_id + id_legal_representative)
+  - At least one approved compliance document (FPRM-156 simplified the rule —
+    the document_types vocabulary became admin-configurable in FPRM-144, so the
+    hardcoded ``fiscal_id`` + ``id_legal_representative`` requirement no longer
+    fit. Reviewers approve whichever documents the partner is required to
+    submit for their territory.)
   - A signed partnership agreement (proxied by partner_organizations.contract_start_date)
-  - Baseline training completed (Sprint 10 will lift this — hardcoded False for now)
+  - Baseline training completed (FPRM-145 — set via the activation/training-complete endpoint)
 
 ``recalculate_activation`` is the single source of truth for these computations. It
 runs after every profile update, document approval, and contract-date change, plus
@@ -23,9 +27,6 @@ from models import (
     PartnerOrganization,
     PartnerProfile,
 )
-
-
-REQUIRED_DOCUMENT_TYPES = {"fiscal_id", "id_legal_representative"}
 
 
 def recalculate_activation(db: Session, partner_org_id) -> PartnerActivationChecklist:
@@ -59,16 +60,20 @@ def recalculate_activation(db: Session, partner_org_id) -> PartnerActivationChec
     pct = (profile.profile_completeness_pct or 0) if profile else 0
     checklist.profile_complete = pct >= 80
 
-    # documents_uploaded — required document types all in status=approved
+    # documents_uploaded — at least one approved document (FPRM-156).
+    # The earlier "both fiscal_id and id_legal_representative must be approved"
+    # rule broke once FPRM-144 made document_types admin-configurable: partners
+    # outside the original two required types could never flip the flag.
     if org is not None:
-        approved_types = {
-            d.document_type.value if hasattr(d.document_type, "value") else str(d.document_type)
-            for d in db.query(PartnerDocument).filter(
+        approved_count = (
+            db.query(PartnerDocument)
+            .filter(
                 PartnerDocument.partner_org_id == partner_org_id,
                 PartnerDocument.status == DocumentStatus.approved,
-            ).all()
-        }
-        checklist.documents_uploaded = REQUIRED_DOCUMENT_TYPES.issubset(approved_types)
+            )
+            .count()
+        )
+        checklist.documents_uploaded = approved_count >= 1
     else:
         checklist.documents_uploaded = False
 
