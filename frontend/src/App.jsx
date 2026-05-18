@@ -15,6 +15,7 @@ import DealList from './pages/DealList.jsx'
 import DealRegistrationForm from './pages/DealRegistrationForm.jsx'
 import DealDetail from './pages/DealDetail.jsx'
 import DealQueue from './pages/DealQueue.jsx'
+import InternalDealDetail from './pages/InternalDealDetail.jsx'
 
 function Landing() {
   return (
@@ -95,6 +96,14 @@ export default function App() {
         element={
           <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
             <DealQueue />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/internal/deals/:id"
+        element={
+          <ProtectedRoute roles={["channel_manager", "channel_ops_admin", "system_admin"]}>
+            <InternalDealDetail />
           </ProtectedRoute>
         }
       />
