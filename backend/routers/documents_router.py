@@ -23,6 +23,7 @@ from audit import log_audit_event
 from database import get_db
 from models import (
     DocumentType,
+    DocumentTypeConfig,
     PartnerDocument,
     PartnerOrganization,
     User,
@@ -81,10 +82,28 @@ def upload_document(
         if required not in payload or not payload[required]:
             raise HTTPException(status_code=422, detail=f"{required} is required")
 
-    try:
-        doc_type = DocumentType(payload["document_type"])
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid document_type")
+    # FPRM-144: validate against the document_types config table rather than
+    # the legacy Python enum. Falls back to the enum if no rows are present
+    # (e.g. migration 017 not yet applied) so deploys remain robust.
+    requested_code = str(payload["document_type"])
+    config_count = db.query(DocumentTypeConfig).count()
+    if config_count > 0:
+        match = (
+            db.query(DocumentTypeConfig)
+            .filter(
+                DocumentTypeConfig.code == requested_code,
+                DocumentTypeConfig.is_active.is_(True),
+            )
+            .first()
+        )
+        if not match:
+            raise HTTPException(status_code=422, detail="Invalid document_type")
+        doc_type_value = match.code
+    else:
+        try:
+            doc_type_value = DocumentType(requested_code).value
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid document_type")
 
     expiry_str = payload.get("expiry_date")
     expiry_value: date | None = None
@@ -96,7 +115,7 @@ def upload_document(
         except ValueError:
             raise HTTPException(status_code=422, detail="expiry_date must be ISO date (YYYY-MM-DD)")
 
-    if doc_type == DocumentType.proof_of_fiscal_domicile and expiry_value is not None:
+    if doc_type_value == "proof_of_fiscal_domicile" and expiry_value is not None:
         threshold = date.today() - timedelta(days=PROOF_OF_DOMICILE_MAX_AGE_DAYS)
         if expiry_value < threshold:
             raise HTTPException(
@@ -107,7 +126,7 @@ def upload_document(
     doc = PartnerDocument(
         id=uuid.uuid4(),
         partner_org_id=partner_id,
-        document_type=doc_type,
+        document_type=doc_type_value,
         document_name=payload["document_name"],
         file_path=payload["file_path"],
         file_size_bytes=payload.get("file_size_bytes"),

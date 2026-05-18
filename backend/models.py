@@ -158,6 +158,25 @@ class DocumentStatus(str, enum.Enum):
     expired = "expired"
 
 
+class DocumentTypeConfig(Base):
+    """Sprint 9 / FPRM-144 — admin-configurable document type vocabulary.
+
+    Seeded with the original 10 enum values from migration 005. Upload validation
+    in ``documents_router.upload_document`` queries this table by ``code`` rather
+    than the legacy ``DocumentType`` enum, so a system_admin can introduce new
+    document categories at runtime via POST /config/document-types.
+    """
+
+    __tablename__ = "document_types"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    label = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class PartnerDocument(Base):
     __tablename__ = "partner_documents"
 
@@ -167,7 +186,9 @@ class PartnerDocument(Base):
         ForeignKey("partner_organizations.id"),
         nullable=False,
     )
-    document_type = Column(SAEnum(DocumentType, name="document_type"), nullable=False)
+    # FPRM-144: stored as plain VARCHAR (migration 017 converted the PG enum).
+    # Values validated against the document_types config table at upload time.
+    document_type = Column(String, nullable=False)
     document_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
     file_size_bytes = Column(Integer, nullable=True)
