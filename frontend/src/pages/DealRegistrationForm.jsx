@@ -18,8 +18,10 @@ const COUNTRY_OPTIONS = [
 
 const COMMISSION_OPTIONS = [
   { value: '', label: 'Select…' },
-  { value: 'reseller', label: 'Reseller' },
-  { value: 'referral', label: 'Referral' },
+  { value: 'autonomous_sell', label: 'Autonomous Sell' },
+  { value: 'indirect_sell', label: 'Indirect Sell' },
+  { value: 'direct_sell', label: 'Direct Sell' },
+  { value: 'co_sell_shared', label: 'Co-Sell (Shared)' },
 ]
 
 const TEXT_FIELDS_CUSTOMER = [
@@ -107,6 +109,8 @@ export default function DealRegistrationForm() {
   const navigate = useNavigate()
   const ctx = useOutletContext() || {}
   const token = ctx.token || localStorage.getItem('token')
+  const payload = ctx.payload || null
+  const partnerOrgId = payload?.partner_org_id
 
   const [deal, setDeal] = useState(() => ({ ...EMPTY_DRAFT, id: null, status: 'draft' }))
   const [loading, setLoading] = useState(!!id)
@@ -114,6 +118,32 @@ export default function DealRegistrationForm() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [activationBanner, setActivationBanner] = useState(false)
+  const [commissionRates, setCommissionRates] = useState(null)
+
+  // FPRM-158: fetch the partner's commission rates so we can preview the
+  // applicable percentage once the user picks a commission_type. Fetch
+  // failures are silent — we never block the form because of this.
+  useEffect(() => {
+    if (!partnerOrgId || !token) return
+    fetch(`${API}/partners/${partnerOrgId}/commission-rates`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setCommissionRates(d) })
+      .catch(() => {})
+  }, [partnerOrgId, token])
+
+  const rateHint = useMemo(() => {
+    if (!deal.commission_type) return ''
+    if (!commissionRates?.items) return ''
+    const y1 = commissionRates.items.find(
+      (it) => it.commission_type === deal.commission_type && it.year === 'year_1',
+    )
+    if (y1 && y1.percentage != null) {
+      return `Applicable rate (Year 1): ${y1.percentage}%`
+    }
+    return 'Rate not on file for this commission type'
+  }, [deal.commission_type, commissionRates])
 
   useEffect(() => {
     if (!id || !token) return
@@ -305,13 +335,26 @@ export default function DealRegistrationForm() {
               onChange={(v) => setField(f.key, v)}
             />
           ))}
-          <FloatingSelect
-            id="deal-commission_type"
-            label="Commission type"
-            value={deal.commission_type}
-            onChange={(v) => setField('commission_type', v)}
-            options={COMMISSION_OPTIONS.slice(1)}
-          />
+          <div>
+            <FloatingSelect
+              id="deal-commission_type"
+              label="Commission type"
+              value={deal.commission_type}
+              onChange={(v) => setField('commission_type', v)}
+              options={COMMISSION_OPTIONS.slice(1)}
+            />
+            {rateHint && (
+              <p
+                style={{
+                  margin: '6px 4px 0',
+                  fontSize: 'var(--fp-fs-sm)',
+                  color: 'var(--fp-text-secondary)',
+                }}
+              >
+                {rateHint}
+              </p>
+            )}
+          </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <FloatingTextarea
               id="deal-deal_notes"
