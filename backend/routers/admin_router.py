@@ -45,7 +45,7 @@ def get_audit_log(
             {
                 "id": str(item.id),
                 "timestamp": item.timestamp.isoformat(),
-                "actor_id": str(item.actor_id),
+                "actor_id": str(item.actor_id) if item.actor_id is not None else None,
                 "actor_role": item.actor_role,
                 "action": item.action,
                 "object_type": item.object_type,
