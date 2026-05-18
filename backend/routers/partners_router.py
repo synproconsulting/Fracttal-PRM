@@ -8,7 +8,7 @@ Permissions:
     GET    /partners/{id}/activation                  - partner_admin (own org) or any internal role
     POST   /partners/{id}/activation/recalculate      - channel_manager / channel_ops_admin / system_admin
 
-Sprint 7 / FPRM-107 — activation endpoints. PATCH /partners/{id} now also
+Sprint 7 / FPRM-107 - activation endpoints. PATCH /partners/{id} now also
 calls recalculate_activation in case contract_start_date was touched (the
 terms_signed flag depends on it).
 """
@@ -26,6 +26,7 @@ from models import (
     CommissionStructure,
     PartnerActivationChecklist,
     PartnerOrganization,
+    PartnerProfile,
     User,
 )
 from permissions import require_permission
@@ -97,6 +98,14 @@ def create_partner(
     except TypeError as e:
         raise HTTPException(status_code=422, detail=f"Invalid payload: {e}")
     db.add(partner)
+    db.flush()
+
+    # FPRM-172: every partner must have a 1:1 PartnerProfile row so it can be
+    # GET/PATCHed via /partner-profiles and can reach activation_complete=True.
+    # Mirrors provisioning.provision_partner_from_application, which was the
+    # only other code path that created this row.
+    db.add(PartnerProfile(id=uuid.uuid4(), partner_org_id=partner.id))
+
     db.commit()
     db.refresh(partner)
     log_audit_event(
@@ -279,7 +288,7 @@ def post_training_reset(
     """Reverse a previously-set baseline training completion (FPRM-145).
 
     Resets the flag to False and recalculates the checklist. ``activated_at``
-    is intentionally not cleared — the partner *was* activated at that moment,
+    is intentionally not cleared - the partner *was* activated at that moment,
     later regression is a separate state we want preserved for audit.
     """
     return _set_training(partner_id, request, db, current_user,
@@ -295,7 +304,7 @@ def get_commission_rates(
     """Return commission_structures rows for a partner's category (FPRM-158).
 
     Access:
-        - ``partner_admin`` (own org only — 403 on other orgs)
+        - ``partner_admin`` (own org only - 403 on other orgs)
         - ``channel_manager`` / ``system_admin`` / any other internal role
 
     The rates are static per category; partner_admin should see exactly what
