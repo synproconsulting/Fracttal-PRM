@@ -68,6 +68,37 @@ def _serialize(deal: DealRegistration) -> dict:
     return jsonable_encoder({c.name: getattr(deal, c.name) for c in deal.__table__.columns})
 
 
+def _serialize_with_org(deal: DealRegistration, db: Session) -> dict:
+    """Like _serialize, but adds ``partner_legal_name`` (FPRM-143).
+
+    Used by the internal-facing endpoints so reviewers see the legal name of
+    the partner org rather than its raw UUID.
+    """
+    base = _serialize(deal)
+    legal_name = None
+    if deal.partner_org_id is not None:
+        org = (
+            db.query(PartnerOrganization)
+            .filter(PartnerOrganization.id == deal.partner_org_id)
+            .first()
+        )
+        legal_name = org.legal_name if org else None
+    base["partner_legal_name"] = legal_name
+    return base
+
+
+def _bulk_org_names(db: Session, org_ids):
+    """Return a dict {org_id: legal_name} for the given ids (one query)."""
+    if not org_ids:
+        return {}
+    rows = (
+        db.query(PartnerOrganization.id, PartnerOrganization.legal_name)
+        .filter(PartnerOrganization.id.in_(list(org_ids)))
+        .all()
+    )
+    return {str(rid): name for rid, name in rows}
+
+
 def _require_partner_admin(user: User) -> None:
     if UserRole(user.role) != UserRole.partner_admin:
         raise HTTPException(
@@ -246,7 +277,9 @@ def get_deal(
 ):
     deal = _get_deal_or_404(deal_id, db)
     _enforce_tenant_read(current_user, deal)
-    return _serialize(deal)
+    # Include partner_legal_name for the internal detail page (FPRM-143).
+    # Partner users see their own org so the field is still useful & not leaky.
+    return _serialize_with_org(deal, db)
 
 
 @router.patch("/deal-registrations/{deal_id}")
@@ -411,11 +444,18 @@ def list_internal_deals(
         .limit(limit)
         .all()
     )
+    # FPRM-143: include partner_legal_name on each row (bulk lookup, single query).
+    name_map = _bulk_org_names(db, {d.partner_org_id for d in items if d.partner_org_id})
+    rows = []
+    for d in items:
+        body = _serialize(d)
+        body["partner_legal_name"] = name_map.get(str(d.partner_org_id)) if d.partner_org_id else None
+        rows.append(body)
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "items": [_serialize(d) for d in items],
+        "items": rows,
     }
 
 
