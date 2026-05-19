@@ -104,7 +104,7 @@ const NAV_ITEMS = [
     label: 'Partners',
     to: '/internal/partners',
     icon: IconPartners,
-    enabled: false,
+    enabled: true,
     roles: ['system_admin', 'channel_ops_admin', 'channel_manager'],
   },
   {
