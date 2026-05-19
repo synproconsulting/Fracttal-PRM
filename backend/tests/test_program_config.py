@@ -20,7 +20,13 @@ from main import app
 from auth import get_current_user
 from database import Base, get_db
 import models  # noqa: F401
-from models import ApprovalWorkflowStep, User
+from models import (
+    ActivationChecklistConfig,
+    ApprovalWorkflowStep,
+    PartnerTierConfig,
+    PartnerTierEligibilityRule,
+    User,
+)
 from roles import UserRole
 
 
@@ -205,3 +211,187 @@ def test_patch_unknown_step_returns_404(client, db_session):
         json={"step_name": "X"},
     )
     assert r.status_code == 404, r.text
+
+
+# ---- Tier + activation criteria tests (FPRM-213) -------------------------
+
+
+@pytest.fixture()
+def seeded_tiers(db_session):
+    """Mirror migration 022 default tier seed."""
+    rows = [
+        PartnerTierConfig(id=uuid.uuid4(), tier_name="Registered", tier_rank=1,
+                          description="Entry-level partner tier", is_active=True),
+        PartnerTierConfig(id=uuid.uuid4(), tier_name="Silver", tier_rank=2,
+                          description="Established partner", is_active=True),
+        PartnerTierConfig(id=uuid.uuid4(), tier_name="Gold", tier_rank=3,
+                          description="Top-tier partner", is_active=True),
+    ]
+    db_session.add_all(rows)
+    db_session.commit()
+    return rows
+
+
+@pytest.fixture()
+def seeded_activation_criteria(db_session):
+    """Mirror migration 022 default activation criteria seed (6 rows)."""
+    rows = [
+        ActivationChecklistConfig(id=uuid.uuid4(), criterion_key="profile_complete",
+                                  is_required=True, is_active=True),
+        ActivationChecklistConfig(id=uuid.uuid4(), criterion_key="documents_uploaded",
+                                  is_required=True, is_active=True),
+        ActivationChecklistConfig(id=uuid.uuid4(), criterion_key="baseline_training_complete",
+                                  is_required=True, is_active=True),
+        ActivationChecklistConfig(id=uuid.uuid4(), criterion_key="terms_signed",
+                                  is_required=True, is_active=True),
+        ActivationChecklistConfig(id=uuid.uuid4(), criterion_key="contract_signed",
+                                  is_required=False, is_active=True),
+        ActivationChecklistConfig(id=uuid.uuid4(), criterion_key="training_advanced_complete",
+                                  is_required=False, is_active=True),
+    ]
+    db_session.add_all(rows)
+    db_session.commit()
+    return rows
+
+
+def test_list_tiers_includes_seed_data(client, db_session, seeded_tiers):
+    _as(_make_user(db_session, UserRole.channel_manager))
+    r = client.get("/internal/config/tiers")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert len(items) == 3
+    assert [t["tier_name"] for t in items] == ["Registered", "Silver", "Gold"]
+
+
+def test_create_tier(client, db_session):
+    _as(_make_user(db_session, UserRole.system_admin))
+    r = client.post("/internal/config/tiers", json={
+        "tier_name": "Platinum",
+        "tier_rank": 4,
+        "description": "Elite tier",
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["tier_name"] == "Platinum"
+
+
+def test_create_duplicate_tier_name_returns_409(client, db_session, seeded_tiers):
+    _as(_make_user(db_session, UserRole.system_admin))
+    r = client.post("/internal/config/tiers", json={
+        "tier_name": "Gold",
+        "tier_rank": 5,
+    })
+    assert r.status_code == 409, r.text
+
+
+def test_patch_tier(client, db_session, seeded_tiers):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    target = seeded_tiers[0]
+    r = client.patch(f"/internal/config/tiers/{target.id}", json={
+        "description": "Updated description",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["description"] == "Updated description"
+
+
+def test_add_eligibility_rule_to_tier(client, db_session, seeded_tiers):
+    _as(_make_user(db_session, UserRole.system_admin))
+    tier = seeded_tiers[2]  # Gold
+    r = client.post(
+        f"/internal/config/tiers/{tier.id}/eligibility-rules",
+        json={"rule_type": "min_deals_approved", "rule_value": "5",
+              "description": "5 deals required"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["rule_type"] == "min_deals_approved"
+    assert body["rule_value"] == "5"
+
+    # Confirm the tier list now reflects the rule
+    r2 = client.get("/internal/config/tiers")
+    gold = next(t for t in r2.json()["items"] if t["tier_name"] == "Gold")
+    assert len(gold["eligibility_rules"]) == 1
+
+
+def test_eligibility_rule_invalid_type_returns_400(client, db_session, seeded_tiers):
+    _as(_make_user(db_session, UserRole.system_admin))
+    tier = seeded_tiers[1]
+    r = client.post(
+        f"/internal/config/tiers/{tier.id}/eligibility-rules",
+        json={"rule_type": "bogus", "rule_value": "1"},
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_delete_eligibility_rule_system_admin_only(client, db_session, seeded_tiers):
+    # System admin creates a rule then deletes it
+    admin = _make_user(db_session, UserRole.system_admin)
+    _as(admin)
+    tier = seeded_tiers[1]
+    create = client.post(
+        f"/internal/config/tiers/{tier.id}/eligibility-rules",
+        json={"rule_type": "min_revenue", "rule_value": "100000"},
+    )
+    assert create.status_code == 201
+    rule_id = create.json()["id"]
+
+    # channel_ops_admin should be 403
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    forbidden = client.delete(f"/internal/config/tiers/{tier.id}/eligibility-rules/{rule_id}")
+    assert forbidden.status_code == 403, forbidden.text
+
+    # system_admin can delete
+    _as(admin)
+    delete = client.delete(f"/internal/config/tiers/{tier.id}/eligibility-rules/{rule_id}")
+    assert delete.status_code == 200, delete.text
+
+
+def test_list_activation_criteria_includes_seed_data(client, db_session, seeded_activation_criteria):
+    _as(_make_user(db_session, UserRole.channel_manager))
+    r = client.get("/internal/config/activation-criteria")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert len(items) == 6
+    keys = {c["criterion_key"] for c in items}
+    assert {"profile_complete", "documents_uploaded", "baseline_training_complete",
+            "terms_signed", "contract_signed", "training_advanced_complete"} == keys
+
+
+def test_create_activation_criterion(client, db_session):
+    _as(_make_user(db_session, UserRole.system_admin))
+    r = client.post("/internal/config/activation-criteria", json={
+        "criterion_key": "compliance_review_done",
+        "is_required": False,
+        "description": "Compliance team has reviewed",
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["criterion_key"] == "compliance_review_done"
+    assert r.json()["is_required"] is False
+
+
+def test_patch_activation_criterion(client, db_session, seeded_activation_criteria):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    target = seeded_activation_criteria[4]  # contract_signed (optional)
+    r = client.patch(f"/internal/config/activation-criteria/{target.id}",
+                     json={"is_required": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["is_required"] is True
+
+
+def test_soft_delete_activation_criterion(client, db_session, seeded_activation_criteria):
+    _as(_make_user(db_session, UserRole.system_admin))
+    target = seeded_activation_criteria[5]  # training_advanced_complete
+    r = client.delete(f"/internal/config/activation-criteria/{target.id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["is_active"] is False
+
+    # Filter is_active=true should no longer include this row
+    r2 = client.get("/internal/config/activation-criteria?is_active=true")
+    assert all(c["id"] != str(target.id) for c in r2.json()["items"])
+
+
+def test_tier_endpoints_forbidden_for_partner_role(client, db_session, seeded_tiers):
+    _as(_make_user(db_session, UserRole.partner_admin))
+    r = client.get("/internal/config/tiers")
+    assert r.status_code == 403, r.text
+    r2 = client.post("/internal/config/tiers", json={"tier_name": "X", "tier_rank": 9})
+    assert r2.status_code == 403, r2.text
