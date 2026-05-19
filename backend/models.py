@@ -551,3 +551,25 @@ class DealMessage(Base):
     __table_args__ = (
         Index("ix_deal_messages_deal_created", "deal_id", "created_at"),
     )
+
+
+class ApprovalWorkflowStep(Base):
+    """Sprint 13 / FPRM-209 — configurable approval steps for partner application
+    and deal registration review.
+
+    Phase 4 introduces *configuration* only; enforcement (routing through
+    sequential approvers) is deferred to Phase 5. The seeded rows in migration
+    021 mirror the current hardcoded behaviour (one Channel Ops Review step
+    for partner applications, one Channel Manager Review step for deal
+    registrations).
+    """
+
+    __tablename__ = "approval_workflow_steps"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_type = Column(String, nullable=False)  # "partner_application" | "deal_registration"
+    step_order = Column(Integer, nullable=False)
+    step_name = Column(String, nullable=False)
+    required_role = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
