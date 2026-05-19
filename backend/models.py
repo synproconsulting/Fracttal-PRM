@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     Uuid,
 )
+from sqlalchemy.orm import relationship
 from database import Base
 
 
@@ -573,3 +574,79 @@ class ApprovalWorkflowStep(Base):
     required_role = Column(String, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PartnerTierConfig(Base):
+    """Sprint 13 / FPRM-213 — configurable partner-tier records.
+
+    Named ``PartnerTierConfig`` to avoid a class-name clash with the existing
+    ``PartnerTier`` enum (registered / silver / gold) that ``partner_organizations.tier``
+    still references. The table itself is named ``partner_tiers`` because it is
+    the configurable replacement for that enum; Phase 5 will migrate the
+    foreign-key relationship and the enum will be retired.
+
+    Seeded with three rows in migration 022: Registered (1), Silver (2), Gold (3).
+    """
+
+    __tablename__ = "partner_tiers"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tier_name = Column(String, unique=True, nullable=False)
+    tier_rank = Column(Integer, nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    eligibility_rules = relationship(
+        "PartnerTierEligibilityRule",
+        back_populates="tier",
+        cascade="all, delete-orphan",
+    )
+
+
+class PartnerTierEligibilityRule(Base):
+    """Sprint 13 / FPRM-213 — eligibility criteria attached to a partner tier.
+
+    A tier can hold zero or more rules. Each rule is a (rule_type, rule_value)
+    tuple — the value is stored as a string so the same column can hold
+    integers, percentages, or certification codes; the rule_type discriminator
+    tells callers how to interpret it.
+
+    Valid ``rule_type`` values: ``min_deals_approved``, ``min_revenue``,
+    ``required_certification``, ``min_win_rate``.
+    """
+
+    __tablename__ = "partner_tier_eligibility_rules"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tier_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_tiers.id"),
+        nullable=False,
+    )
+    rule_type = Column(String, nullable=False)
+    rule_value = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+
+    tier = relationship("PartnerTierConfig", back_populates="eligibility_rules")
+
+
+class ActivationChecklistConfig(Base):
+    """Sprint 13 / FPRM-213 — admin-configurable activation criteria.
+
+    Rows can scope a criterion to a specific partner category code, a specific
+    tier name, both, or neither (NULL on both columns = applies to every
+    partner). Migration 022 seeds the six criteria that ``activation.py``
+    currently enforces in hard-coded form. Dynamic enforcement that reads
+    these rows is deferred to Phase 5.
+    """
+
+    __tablename__ = "activation_checklist_config"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_category_code = Column(String, nullable=True)
+    tier_name = Column(String, nullable=True)
+    criterion_key = Column(String, nullable=False)
+    is_required = Column(Boolean, default=True, nullable=False)
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
