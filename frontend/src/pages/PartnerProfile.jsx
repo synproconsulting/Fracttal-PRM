@@ -5,6 +5,35 @@ const API = (typeof import.meta !== 'undefined' && import.meta.env && import.met
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
 const INTERNAL_ROLES = new Set(['channel_manager', 'channel_ops_admin', 'system_admin'])
+const STATUS_ADMIN_ROLES = new Set(['system_admin', 'channel_ops_admin'])
+
+const STATUS_TONE = {
+  applicant:  { bg: '#FEF3C7', fg: '#92400E' },
+  active:     { bg: '#DCFCE7', fg: '#166534' },
+  suspended:  { bg: '#FEE2E2', fg: '#991B1B' },
+  inactive:   { bg: '#E5E7EB', fg: '#475569' },
+  terminated: { bg: '#1B2236', fg: '#fff' },
+}
+const STATUS_LABEL = {
+  applicant: 'Applicant',
+  active: 'Active',
+  suspended: 'Suspended',
+  inactive: 'Inactive',
+  terminated: 'Terminated',
+}
+
+function StatusBadge({ value }) {
+  const tone = STATUS_TONE[value] || { bg: '#E5E7EB', fg: '#475569' }
+  return (
+    <span style={{
+      background: tone.bg, color: tone.fg,
+      padding: '2px 10px', borderRadius: 12,
+      fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+    }}>
+      {STATUS_LABEL[value] || value || '—'}
+    </span>
+  )
+}
 
 function decodeJwt(token) {
   try {
@@ -215,6 +244,39 @@ export default function PartnerProfile() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const canManageStatus = internalMode && STATUS_ADMIN_ROLES.has(payload?.role)
+  const [statusModal, setStatusModal] = useState(null) // { nextStatus }
+  const [statusSaving, setStatusSaving] = useState(false)
+  const [statusError, setStatusError] = useState(null)
+  const [toast, setToast] = useState(null)
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  async function applyStatusChange() {
+    if (!statusModal || !partnerOrgId) return
+    setStatusSaving(true); setStatusError(null)
+    try {
+      const r = await fetch(`${API}/internal/partners/${partnerOrgId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: statusModal.nextStatus }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`)
+      setOrg(body)
+      setStatusModal(null)
+      setToast('Partner organisation status updated')
+    } catch (err) {
+      setStatusError(err.message)
+    } finally {
+      setStatusSaving(false)
+    }
+  }
+
   useEffect(() => {
     if (!partnerOrgId || !token) return
     setLoading(true)
@@ -270,6 +332,12 @@ export default function PartnerProfile() {
       <div className="fp-page-header">
         <div>
           <h1 className="fp-page-title">{org?.legal_name || 'Partner profile'}</h1>
+          {org?.status && (
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>Status:</span>
+              <StatusBadge value={org.status} />
+            </div>
+          )}
           {profile && (
             <div style={{ marginTop: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
@@ -289,11 +357,30 @@ export default function PartnerProfile() {
             </div>
           )}
         </div>
-        {canEdit && !editing && (
-          <button type="button" onClick={() => setEditing(true)} className="fp-btn fp-btn--primary">
-            Edit profile
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          {canManageStatus && org && (
+            <button
+              type="button"
+              onClick={() => {
+                const next = org.status === 'active' ? 'suspended' : 'active'
+                setStatusError(null)
+                setStatusModal({ nextStatus: next })
+              }}
+              className="fp-btn fp-btn--ghost"
+              disabled={!(org.status === 'active' || org.status === 'suspended')}
+              title={!(org.status === 'active' || org.status === 'suspended')
+                ? 'Status changes only available from active or suspended'
+                : ''}
+            >
+              {org.status === 'active' ? 'Suspend organisation' : org.status === 'suspended' ? 'Reactivate organisation' : 'Change status'}
+            </button>
+          )}
+          {canEdit && !editing && (
+            <button type="button" onClick={() => setEditing(true)} className="fp-btn fp-btn--primary">
+              Edit profile
+            </button>
+          )}
+        </div>
       </div>
 
       {loading && <div className="fp-card" style={{ color: 'var(--fp-text-secondary)' }}>Loading…</div>}
@@ -321,6 +408,65 @@ export default function PartnerProfile() {
             </p>
           )}
         </>
+      )}
+
+      {statusModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div style={{
+            background: '#fff', borderRadius: 10, padding: 24,
+            maxWidth: 460, width: 'calc(100% - 32px)',
+            boxShadow: '0 10px 30px rgba(15,23,42,0.2)',
+          }}>
+            <h2 style={{ margin: '0 0 8px', fontSize: 18 }}>
+              {statusModal.nextStatus === 'suspended' ? 'Suspend partner organisation' : 'Reactivate partner organisation'}
+            </h2>
+            <p style={{ margin: '0 0 16px', color: '#475569', fontSize: 14 }}>
+              {statusModal.nextStatus === 'suspended'
+                ? <>Suspend <strong>{org?.legal_name}</strong>? This will mark the organisation as suspended.</>
+                : <>Reactivate <strong>{org?.legal_name}</strong>? This will return the organisation to active status.</>}
+            </p>
+            {statusError && (
+              <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{statusError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="fp-btn fp-btn--ghost"
+                onClick={() => { setStatusModal(null); setStatusError(null) }}
+                disabled={statusSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="fp-btn fp-btn--primary"
+                onClick={applyStatusChange}
+                disabled={statusSaving}
+              >
+                {statusSaving ? 'Saving…' : statusModal.nextStatus === 'suspended' ? 'Suspend' : 'Reactivate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 1100,
+          background: '#166534', color: '#fff',
+          padding: '10px 16px', borderRadius: 8,
+          boxShadow: '0 8px 20px rgba(15,23,42,0.2)',
+          fontSize: 14, fontWeight: 600,
+        }}>
+          {toast}
+        </div>
       )}
     </>
   )
