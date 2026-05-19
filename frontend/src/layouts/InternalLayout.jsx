@@ -120,7 +120,7 @@ const NAV_ITEMS = [
     label: 'Users',
     to: '/internal/users',
     icon: IconUsers,
-    enabled: false,
+    enabled: true,
     roles: ['system_admin'],
   },
   {

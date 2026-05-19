@@ -19,6 +19,7 @@ import DealQueue from './pages/DealQueue.jsx'
 import InternalDealDetail from './pages/InternalDealDetail.jsx'
 import CommissionRates from './pages/CommissionRates.jsx'
 import InternalHome from './pages/InternalHome.jsx'
+import InternalUsers from './pages/InternalUsers.jsx'
 import ForgotPassword from './pages/ForgotPassword.jsx'
 import ResetPassword from './pages/ResetPassword.jsx'
 
@@ -91,6 +92,14 @@ export default function App() {
         <Route path="partners/:id/documents" element={<PartnerDocuments />} />
         <Route path="deals" element={<DealQueue />} />
         <Route path="deals/:id" element={<InternalDealDetail />} />
+        <Route
+          path="users"
+          element={
+            <ProtectedRoute roles={["system_admin"]}>
+              <InternalUsers />
+            </ProtectedRoute>
+          }
+        />
       </Route>
     </Routes>
   )
