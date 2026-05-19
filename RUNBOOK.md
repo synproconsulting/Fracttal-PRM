@@ -754,7 +754,94 @@ Expect `200` with status `under_review`. Then `GET /deal-registrations/<DEAL_ID>
 
 ---
 
+## 15. End-to-End Happy Path Validation — Phase 4 (Admin Foundation & Reporting)
+
+Run this after Sprint 14 closes. It exercises every Phase 4 deliverable: internal user management, partners list, status management, program config, reporting, and partner pipeline view.
+
+Use Command Prompt (`cmd`) for curl with `%token%`.
+
+### Step 1 — Internal user management (Sprint 12)
+
+Get a `system_admin` JWT per § 2. Then:
+
+```cmd
+set token=<system_admin token>
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/users" -H "Authorization: Bearer %token%"
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/users/invite" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"email\":\"new-cm@example.com\",\"full_name\":\"New CM\",\"role\":\"channel_manager\"}"
+```
+
+Expect `200` from GET (paginated `{total, items, …}`) and `201` from invite (new user record + a stdout/email line with the reset URL).
+
+### Step 2 — Partner org status management (Sprint 13 / FPRM-208)
+
+```cmd
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/internal/partners/<partner_id>/status" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"status\":\"suspended\"}"
+```
+
+Expect `200` with the new status. `applicant` returns `400`.
+
+### Step 3 — Program configuration (Sprint 13)
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/config/approval-steps" -H "Authorization: Bearer %token%"
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/config/tiers" -H "Authorization: Bearer %token%"
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/config/activation-criteria" -H "Authorization: Bearer %token%"
+```
+
+Each returns a populated list (2 approval-step seeds, 3 tier seeds, 6 activation-criterion seeds).
+
+### Step 4 — Internal reporting (Sprint 14 / FPRM-221)
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/reports/pipeline" -H "Authorization: Bearer %token%"
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/reports/cycle-times" -H "Authorization: Bearer %token%"
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/reports/conflicts" -H "Authorization: Bearer %token%"
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/reports/partner-activity" -H "Authorization: Bearer %token%"
+```
+
+Each returns its documented shape (see PROJECT_CONTEXT.md §1). On an empty database, `/pipeline` returns `{by_partner: [], by_category: [], by_tier: [], totals: {…all zeros…}}`.
+
+CSV export (note the redirect-free output):
+
+```cmd
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/reports/pipeline/export" -H "Authorization: Bearer %token%" -o pipeline_export.csv
+```
+
+Expect `pipeline_export.csv` to contain the header `Partner Name,Category,Tier,Deal Name,Customer Name,Deal Value,Status,Submitted Date,Approved Date,Commission Rate` on the first line.
+
+### Step 5 — Partner pipeline (Sprint 14 / FPRM-229)
+
+Get a `partner_admin` JWT for an active partner org per § 2. Then:
+
+```cmd
+set ptoken=<partner_admin token>
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/partners/<partner_org_id>/pipeline" -H "Authorization: Bearer %ptoken%"
+```
+
+Expect `200` with 6 keys (`draft`, `submitted`, `under_review`, `info_required`, `approved`, `rejected`). Hitting another org's id returns `403`. Calling the same endpoint with a `system_admin` token returns `403` — internal users use `/internal/reports/pipeline` instead.
+
+### Step 6 — UI checklist
+
+Open `https://fracttal-prm-frontend-production.up.railway.app`:
+
+1. **Internal**: log in as `system_admin` → land on `/internal/home`. Sidebar shows Home/Applications/Partners/Partner Users/Deals/Users/Program Config/**Reports** — **Reports is live (no `soon` chip)**.
+2. **Internal**: click **Program Config** — three tabs render (Approval Workflow / Partner Tiers / Activation Checklist), each populated with the seed data.
+3. **Internal**: click **Reports** → `/internal/reports`. Three sections render (Pipeline Overview / Cycle Times / Conflict Report). Change the date preset → tiles + chart + table refetch. Click **Export CSV ↓** → browser downloads `pipeline_export.csv` (not a 401).
+4. **Partner**: log in as a `partner_admin` → `/portal/home`. The new **My pipeline** widget shows 4 compact tiles + `View Pipeline →`. Click it → land on `/portal/deals?view=pipeline`. Kanban view shows 6 columns, each with a count badge + total value. Click the **List ☰** toggle → existing deal table renders.
+5. **Partner**: change the status filter → both views re-fetch and update.
+
+### Known operational notes (Sprint 14)
+
+- **Report endpoints aggregate at query time (AD-17).** All counts are computed inline from the live `deal_registrations` table. Acceptable through Phase 5.
+- **CSV export uses fetch + Blob (AD-16).** `window.location.href` cannot send the Authorization header — would 401. Tests that simulate CSV download must mirror this pattern.
+- **`/partners/{id}/pipeline` is partner_admin only by design.** System admins seeking the same data go to `/internal/reports/pipeline` (which has broader aggregation).
+- **recharts is now a frontend dependency.** Future chart additions should reuse recharts components and the existing `PALETTE` palette in `InternalReports.jsx`. No other charting library is allowed.
+
+---
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–11 closeout*
-*Last updated: Sprint 11 closeout / Phase 4 kick-off — May 2026*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–14 closeout*
+*Last updated: Sprint 14 closeout / Phase 4 complete — May 2026*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

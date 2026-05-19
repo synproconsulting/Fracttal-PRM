@@ -1410,3 +1410,95 @@ Backend ends Sprint 13 at **403 tests passing** (Sprint 12 baseline 372 + 31 new
 4. **Multi-step approval enforcement** (routing through `approval_workflow_steps` in `applications_router` / `deal_registrations_router`) — Phase 5.
 5. **Retire the `PartnerTier` enum** in favour of the `PartnerTierConfig` table — Phase 5.
 
+## Sprint 14 — Reporting & Analytics (Phase 4 closeout)
+
+**Started:** 2026-05-19
+**Closed:** 2026-05-19 (single-day intensive)
+**Fix Version ID:** `10733`
+**Native Sprint ID:** `706`
+**Phase 4 epic:** FPRM-175 — Admin Foundation & Reporting
+
+### Sprint 14 ticket-key map
+
+Stories were created in execution order with no bugs to consume keys first, so the actual map matches the planning prompt offsets:
+
+| Planned | Actual | Type     | Title |
+|---------|--------|----------|-------|
+| —       | FPRM-221 | Story    | Internal reporting backend (5 pts) |
+| —       | FPRM-225 | Story    | Internal reporting dashboard UI (6 pts) |
+| —       | FPRM-229 | Story    | Partner pipeline view (5 pts) |
+| —       | FPRM-233 | Story    | Sprint 14 docs and Phase 4 closeout (4 pts) |
+
+Subtasks: FPRM-222/223/224 (under 221), FPRM-226/227/228 (under 225), FPRM-230/231/232 (under 229), FPRM-234/235/236/237 (under 233).
+
+### Sprint 14 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-221 | Internal reporting backend | Done | #99 | New `backend/routers/reports_router.py` exposing five endpoints under `/internal/reports`: `/pipeline`, `/cycle-times`, `/conflicts`, `/partner-activity`, `/pipeline/export`. All aggregations are computed at query time from existing tables — no new migrations (head remains 022). Role gating: `system_admin` / `channel_ops_admin` / `channel_manager` / `sales_ops` for reads; CSV export additionally allows `finance_approver`. 18 new tests in `test_reports.py` covering empty DB, pipeline counts, date/category filters, cycle-time averaging and slowest-5 ordering, conflict rate math, CSV header + content-type, and role guards. |
+| FPRM-225 | Internal reporting dashboard UI | Done | #100 | New `frontend/src/pages/InternalReports.jsx` at `/internal/reports` consuming the new endpoints. Three sections: **Pipeline Overview** (5 summary tiles, stacked bar chart of top-10 partners, donut by category, sortable Top Partners table), **Cycle Times** (avg-days badge, monthly line chart pivoted from `by_category_and_month`, slowest-5 table), **Conflict Report** (rate badge with threshold colouring red>10%/amber>5%/green, unresolved table). Filter bar with preset date ranges (Last 30 / 90 / This Year / All Time), category dropdown, tier dropdown — re-fetches pipeline + conflicts on every change. CSV export uses fetch + Blob URL + anchor click (not `window.location.href`, since Authorization header is required). recharts added to `frontend/package.json` (^2.12.7). Shimmer loading skeletons, inline error banners with Retry, empty states, mobile-responsive layout. `Reports` nav item in `InternalLayout` flipped from `Coming soon` to live; `App.jsx` wires the new route with role-aware ProtectedRoute. |
+| FPRM-229 | Partner pipeline view | Done | #101 | Appended `GET /partners/{id}/pipeline` to `backend/routers/partners_router.py` — partner_admin only, tenant-scoped to own org, returns deals grouped into the six pipeline-status keys (`draft`, `submitted`, `under_review`, `info_required`, `approved`, `rejected`). Supports optional `status` / `from_date` / `to_date` filters. 7 new tests in `test_pipeline.py` cover happy path, cross-org block, system_admin block (partner_admin only), grouping, filters, 404. `DealList.jsx` rewritten with a List/Pipeline view toggle synced to `?view=` query param, filter bar with status + date inputs, pipeline summary strip (Total Deals / Total Value / Approved Value / Info Required), and a read-only Kanban view with 6 columns each with a coloured left border and a per-column total. `PartnerHome.jsx` gains a "My pipeline" widget (4 tiles + `View Pipeline →` link to `/portal/deals?view=pipeline`). |
+| FPRM-233 | Sprint 14 docs + Phase 4 closeout | Done | #102 | Updated all four canonical docs: `CLAUDE.md` (current state Sprint 14 / Phase 4 complete, Sprint 14 sprint IDs, tech-debt refresh adding the four Phase-5 carry items), `CLAUDE_HISTORY.md` (this entry + Phase 4 complete marker + Phase 5 readiness notes), `PROJECT_CONTEXT.md` (Sprint 14 API endpoints in Section 1, AD-16 and AD-17 added in Section 6), `RUNBOOK.md` (§12 Phase 4 happy-path validation appended). |
+
+All 13 Sub-tasks (FPRM-222/223/224, 226/227/228, 230/231/232, 234/235/236/237) closed Done.
+
+### What landed on `main` during Sprint 14
+
+- `backend/routers/reports_router.py` (new) — five report endpoints (FPRM-221).
+- `backend/routers/partners_router.py` — appended `GET /partners/{id}/pipeline` (FPRM-229).
+- `backend/main.py` — registers `reports_router`.
+- `backend/tests/test_reports.py` (new, 18); `backend/tests/test_pipeline.py` (new, 7).
+- `frontend/package.json` — added `recharts: ^2.12.7`.
+- `frontend/src/pages/InternalReports.jsx` (new) (FPRM-225).
+- `frontend/src/pages/DealList.jsx` — List/Pipeline view toggle, filter bar, summary strip, kanban view (FPRM-229).
+- `frontend/src/pages/PartnerHome.jsx` — pipeline summary widget + View Pipeline link (FPRM-229).
+- `frontend/src/layouts/InternalLayout.jsx` — `Reports` nav `enabled: false` → `true` (FPRM-225).
+- `frontend/src/App.jsx` — `/internal/reports` route added with role-aware ProtectedRoute (FPRM-225).
+- `CLAUDE.md`, `CLAUDE_HISTORY.md`, `PROJECT_CONTEXT.md`, `RUNBOOK.md` — Phase 4 closeout updates.
+
+### API endpoint count
+
+Sprint 14 adds **6 new endpoints**:
+- `GET /internal/reports/pipeline`
+- `GET /internal/reports/cycle-times`
+- `GET /internal/reports/conflicts`
+- `GET /internal/reports/partner-activity`
+- `GET /internal/reports/pipeline/export`
+- `GET /partners/{id}/pipeline`
+
+Total surface area is now **101 endpoints** (Sprint 13 baseline 95 + 6).
+
+### Sprint 14 test count
+
+Backend ends Sprint 14 at **428 tests passing** (Sprint 13 baseline 403 + 25 new across `test_reports.py` (+18) and `test_pipeline.py` (+7)).
+
+### Sprint 14 lessons
+
+1. **The `conflict_detected` field is a string status value, not a boolean column.** The Sprint 14 prompt referenced `conflict_detected` as a column on `DealRegistration`. The actual schema (since Sprint 10 / FPRM-157) has `conflict_status` storing one of `"clear"` / `"conflict_detected"` / `"not_checked"`. Reading the model up front prevented a backend-test-only failure — the existing `dashboard_router.py` (Sprint 11 / FPRM-179) already had the correct filter pattern that the new reports_router could mirror.
+2. **`recharts` was prescribed but missing from `package.json`.** The prompt told me to "confirm recharts is present — do NOT add any other charting library." The package was not yet installed. Adding the prescribed library was clearly intended; the rule was about not introducing a *different* library (e.g. Chart.js, ECharts). Reading prompts strictly enough to catch this kind of nuance saves a back-and-forth.
+3. **CSV export requires fetch + Blob, not `window.location.href`.** Native browser navigation cannot send an `Authorization: Bearer` header, so a direct anchor link to `/internal/reports/pipeline/export` would 401. The fetch+Blob+createObjectURL+anchor.click pattern is the right answer — promoted to AD-16 in PROJECT_CONTEXT.md so future authenticated-download endpoints don't reinvent it.
+4. **All four PRs merged on first CI green in <60s each.** No flakes, no race, no manual-merge fallback. The auto-merger reliability has been consistent for the last two sprints — Sprint 12's 405-race lesson appears to have been a transient issue.
+
+### Phase 4 — complete
+
+| Sprint | Theme | Stories | Points | Key delivery |
+|---|---|---|---|---|
+| 11 | Admin Shell & Dashboards | 4 stories + 2 bug fixes | 20 | InternalLayout, InternalHome, enhanced PartnerHome, forgot password, FPRM-89/104 fixed |
+| 12 | User Management | 4 stories + 4 bug fixes | 20 | Internal user CRUD, partner user management, internal partners list, enum/dashboard bugs |
+| 13 | Program Configuration | 3 stories + 1 bug fix | 22 | ApprovalWorkflowStep, PartnerTier, ActivationChecklistConfig, ProgramConfig.jsx 3-tab UI |
+| 14 | Reporting & Analytics | 4 stories | 20 | reports_router, InternalReports.jsx, partner pipeline Kanban, Phase 4 docs |
+| **Total** | **Phase 4** | **15 stories, 7 bugs** | **82** | Admin foundation, user management, program configuration, reporting — complete |
+
+### Phase 5 readiness notes
+
+1. **Quoting module (FR-QUOTE).** Top priority. Johan has detailed design inputs from the partnership programme; use those as the primary source.
+2. **HubSpot integration (FR-HS).** High priority. Johan has detailed design inputs; use those as the primary source.
+3. **Dynamic activation enforcement.** Wire `backend/activation.py` `recalculate_activation` to read criteria from `activation_checklist_config` rather than the four hard-coded flags. The data model is already in place from Sprint 13.
+4. **Multi-step approval enforcement.** Thread `approval_workflow_steps` through `applications_router.approve_application` and `deal_registrations_router.approve_deal` so configured workflow steps are required instead of the existing single-reviewer flow.
+5. **Retire the `PartnerTier` enum.** Convert `partner_organizations.tier` from the enum to a foreign key into `partner_tiers`. Migration drops the enum once all callers are flipped.
+6. **SMTP env vars on Railway.** Set `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `EMAIL_FROM` / `CHANNEL_OPS_EMAIL` on the `fracttal-prm-backend` service — no code change required, just dashboard ops.
+7. **Persist `info_request_message` as a real column.** Currently an in-memory attribute; a migration would unblock historical reporting of past info requests on applications.
+8. **JWT logout blacklist → Redis (or DB).** The in-memory blacklist is lost on backend restart and is not safe for multi-instance deploys. Move to a shared store before scaling out.
+9. **Password reset email backend.** Reset URLs are still logged to stdout via `print`. Adopt the AD-13 SMTP+stdout-fallback pattern used by lifecycle notifications.
+10. **Multi-role users.** `User.role` is a single string. If a Phase 5 requirement needs e.g. `sales_rep + partner_admin` on the same user, redesign as a join table.
+
