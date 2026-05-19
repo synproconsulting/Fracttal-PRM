@@ -136,7 +136,7 @@ const NAV_ITEMS = [
     label: 'Program Config',
     to: '/internal/config',
     icon: IconGear,
-    enabled: false,
+    enabled: true,
     roles: ['system_admin', 'channel_ops_admin'],
   },
   {
