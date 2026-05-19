@@ -1235,3 +1235,98 @@ Backend ends Sprint 11 at **332 tests passing** (Sprint 10 baseline 283 + 49 new
 5. **Two backend dashboard endpoints, two role guards.** `GET /internal/dashboard/summary` requires `system_admin` / `channel_ops_admin` / `channel_manager` (internal roll-up). `GET /partners/{id}/dashboard/summary` requires `partner_admin` of the same org — explicitly rejects system_admin too, because internal users have their own dashboard. Keeping these as separate endpoints with separate role checks (rather than one polymorphic endpoint that branches on caller role) made the 23 new tests trivial to express and read.
 6. **Nested route + single ProtectedRoute beats N copies.** Pre-FPRM-176 every `/internal/*` route was wrapped in its own `<ProtectedRoute roles=[...]>`. The new InternalLayout pattern (parent ProtectedRoute on `/internal`, Outlet inside the layout) cut ~50 lines from App.jsx, eliminated the risk of a route being added without its guard, and gave us a single place to redirect partner roles back to `/portal/home`. PartnerPortalLayout was already on this pattern from Sprint 7 — internal lagged.
 
+## Sprint 12 — Internal User Management + Partners List (Phase 4 continues)
+
+**Started:** 2026-05-18
+**Closed:** 2026-05-18 (single-day intensive)
+**Fix Version ID:** `10731`
+**Native Sprint ID:** `704`
+**Phase 4 epic:** FPRM-175 — Admin Foundation & Reporting
+
+### Sprint 12 ticket-key map
+
+The planning prompt predicted FPRM-189..FPRM-192 for the four stories, but **bugs were created before stories** in Phase A so the bugs consumed those keys and the stories landed five higher. The actual map:
+
+| Planned | Actual | Type     | Title |
+|---------|--------|----------|-------|
+| BUG-A   | FPRM-190 | Bug      | GET /partners/{id}/dashboard/summary returns 403 for system_admin |
+| BUG-B   | FPRM-191 | Bug      | GET /applications?status=under_review returns 500 — enum mismatch |
+| BUG-C   | FPRM-192 | Bug      | Application status enum inconsistency — in_review vs under_review |
+| BUG-D   | FPRM-193 | Bug      | conflict_detected string leaking into InternalHome UI display |
+| FPRM-189 | FPRM-194 | Story    | Internal user management backend |
+| FPRM-190 | FPRM-198 | Story    | Internal user management UI + role permission matrix |
+| FPRM-191 | FPRM-202 | Story    | Partner user management — internal admin view |
+| FPRM-192 | FPRM-205 | Story    | Internal partners list page |
+
+Subtasks landed at FPRM-195..197 (under 194), FPRM-199..201 (under 198), FPRM-203..204 (under 202), FPRM-206..207 (under 205).
+
+### Sprint 12 stories — outcome
+
+| Key | Type  | Story | Status | PR | Notes |
+|-----|-------|-------|--------|----|-------|
+| FPRM-190 | Bug   | dashboard/summary 403 for system_admin | Done | #86 | `partners_router.get_partner_dashboard_summary` now accepts `system_admin` / `channel_ops_admin` / `channel_manager` for any org; `partner_admin` still scoped to own org. The Sprint 11 test that asserted internal-role → 403 was replaced with three `*_can_view_any_org` tests. |
+| FPRM-191 + FPRM-192 | Bug | ApplicationStatus enum alignment | Done | #87 | Renamed `ApplicationStatus.in_review` → `under_review` to match the deal-side vocabulary. Postgres migration 019 uses `ALTER TYPE ... RENAME VALUE` (atomic, no data-rewrite). All `ApplicationStatus.in_review` references updated across routers + tests; frontend `ApplicationQueue` / `ApplicationReview` filter strings updated. Bonus: the `?status=` filter on `GET /applications` now validates against the enum and returns 422 on unknown values instead of letting them bubble to 500. |
+| FPRM-193 | Bug   | conflict_detected UI leak | Done | #88 | Replaced the hardcoded `'Unresolved conflict_detected'` sub-label in InternalHome.jsx with `'Unresolved conflicts'`. InternalDealDetail.jsx already had a proper CONFLICT_LABEL map — only this one tile slipped. |
+| FPRM-194 | Story | Internal user management backend | Done | #89 | New `backend/routers/internal_users_router.py` with `/internal/users` GET (paginated + role/is_active filters), GET `/{id}`, POST `/invite` (random unguessable password + 7-day `PasswordResetToken` + welcome email via `notifications.send_email`), PATCH `/{id}/role` (blocks self-modification + demoting the last active system_admin), POST `/disable`, POST `/reactivate`. Audit events for every state change. `User` gains `last_login_at` (migration 020) populated by the `auth_router.login` happy path. 18 unit tests. |
+| FPRM-198 | Story | Internal user management UI + role permission matrix | Done | #90 | `frontend/src/pages/InternalUsers.jsx` at `/internal/users` (system_admin only). Filter bar + user table with role-coloured badges (purple system_admin, blue channel_ops_admin, teal channel_manager, green sales_rep, orange sales_ops, yellow finance_approver), per-row Change Role / Disable / Reactivate, modal-driven invite. Static **Role permission matrix** rendered below the table. `Users` nav item in InternalLayout flipped from `Coming soon` to live. |
+| FPRM-202 | Story | Partner user management — internal admin view | Done | #91 | New `backend/routers/internal_partner_users_router.py` (kept distinct from the pre-existing per-tenant `partner_users_router.py` to keep tenant-scoped and cross-tenant surfaces clearly separated). Endpoints under `/internal/partner-users` for `system_admin` + `channel_ops_admin`. New page `PartnerUserManagement.jsx` at `/internal/partner-users`; new **Partner Users** nav item added between Partners and Deals. 11 unit tests. |
+| FPRM-205 | Story | Internal partners list page | Done | #92 | New `backend/routers/internal_partners_router.py` exposing `GET /internal/partners` (search/status/tier/category filters + page/page_size pagination + activation join). New page `InternalPartnerList.jsx` at `/internal/partners` with debounced search, filter row, status badges, activation indicator. **Partners** nav item in InternalLayout flipped from `Coming soon` to live. 7 unit tests. |
+
+All 10 Sub-tasks (FPRM-195..197, 199..201, 203..204, 206..207) closed Done.
+
+### What landed on `main` during Sprint 12
+
+- `backend/models.py` — `User.last_login_at` (DateTime, nullable); `ApplicationStatus.in_review` renamed to `under_review`.
+- `backend/alembic/versions/019_rename_application_in_review_to_under_review.py` — Postgres-only `ALTER TYPE ... RENAME VALUE`.
+- `backend/alembic/versions/020_add_last_login_at_to_users.py` — adds the column.
+- `backend/routers/auth_router.py` — stamps `user.last_login_at` on the login happy path.
+- `backend/routers/applications_router.py` — every `ApplicationStatus.in_review` reference flipped to `under_review`; `cancel-info-request` now transitions to `under_review`; `?status=` filter validates against the enum (422 on unknown) instead of letting Postgres throw a 500.
+- `backend/routers/dashboard_router.py` — pending_review count picks up the renamed value.
+- `backend/routers/partners_router.py` — `get_partner_dashboard_summary` role guard widened (FPRM-190).
+- `backend/routers/internal_users_router.py` (new) — internal user CRUD + invite + role/disable/reactivate.
+- `backend/routers/internal_partner_users_router.py` (new) — cross-org partner-user admin.
+- `backend/routers/internal_partners_router.py` (new) — `GET /internal/partners` with filters + pagination.
+- `backend/main.py` — registers the three new routers.
+- `backend/tests/test_internal_users.py` (new, 18); `test_internal_partner_users.py` (new, 11); `test_internal_partners.py` (new, 7); plus the new `test_internal_list_status_under_review_returns_200` and `test_internal_list_invalid_status_returns_422` in `test_applications.py`; assertions updated in `test_cancel_info_request.py` and `test_dashboard.py` for the renamed enum; `test_partner_dashboard.py` flipped the internal-role test to assert `200` instead of `403`.
+- `frontend/src/pages/InternalUsers.jsx` (new) (FPRM-198).
+- `frontend/src/pages/PartnerUserManagement.jsx` (new) (FPRM-202).
+- `frontend/src/pages/InternalPartnerList.jsx` (new) (FPRM-205).
+- `frontend/src/pages/InternalHome.jsx` — `'Unresolved conflict_detected'` → `'Unresolved conflicts'` (FPRM-193).
+- `frontend/src/pages/ApplicationQueue.jsx`, `ApplicationReview.jsx` — `in_review` → `under_review` in colour map, label map, status filter dropdown.
+- `frontend/src/layouts/InternalLayout.jsx` — Users + Partners nav items enabled; new Partner Users item; breadcrumb map updated.
+- `frontend/src/App.jsx` — three new nested routes (`/internal/users`, `/internal/partner-users`, `/internal/partners`) each with its role-specific ProtectedRoute.
+- `CLAUDE.md` — Current state line + Sprint 12 IDs + 372-tests count.
+- `CLAUDE_HISTORY.md` — this entry.
+
+### API endpoint count
+
+Sprint 12 adds **12 new endpoints**:
+
+- `GET /internal/users`
+- `GET /internal/users/{user_id}`
+- `POST /internal/users/invite`
+- `PATCH /internal/users/{user_id}/role`
+- `POST /internal/users/{user_id}/disable`
+- `POST /internal/users/{user_id}/reactivate`
+- `GET /internal/partner-users`
+- `PATCH /internal/partner-users/{user_id}/role`
+- `POST /internal/partner-users/{user_id}/disable`
+- `POST /internal/partner-users/{user_id}/reactivate`
+- `POST /internal/partner-users/invite`
+- `GET /internal/partners`
+
+Total surface area is now **81 endpoints** (Sprint 11 baseline 69 + 12).
+
+### Sprint 12 test count
+
+Backend ends Sprint 12 at **372 tests passing** (Sprint 11 baseline 332 + 40 new across `test_internal_users.py` (+18), `test_internal_partner_users.py` (+11), `test_internal_partners.py` (+7), `test_applications.py` (+2), and the three `*_can_view_any_org` tests added to `test_partner_dashboard.py` replacing the single `*_403_for_internal_role` test = net +2).
+
+### Sprint 12 lessons
+
+1. **Create stories before bugs when you care about predictable ticket keys.** The Phase A script in this sprint created the four bug tickets first (FPRM-190..193), so the four stories landed at FPRM-194/198/202/205 instead of the planned FPRM-189..192. The sprint still closed cleanly because the PRs reference `<STORY_X_KEY>` not hardcoded numbers, but anyone scanning the sprint prompt looking for FPRM-189 in the merged history will be confused. Pattern: if the prompt mentions specific ticket numbers, do stories first.
+2. **The Sprint 11 partner-dashboard role guard was over-restrictive — and the existing test enforced the over-restriction.** Fixing FPRM-190 required not just widening the role check but also deleting `test_summary_403_for_internal_role` and adding the inverse `*_can_view_any_org` tests. Sprint 11 lesson #5 specifically called out that "system_admin → 403" was intentional; Sprint 12 reversed that decision. The takeaway isn't that Sprint 11 was wrong, it's that role-guard decisions are product decisions that age — record the *rationale* in the test name (`test_summary_403_for_internal_role_use_internal_dashboard_instead` would have been a better Sprint 11 name) so the next reviewer knows whether to defend the constraint or relax it.
+3. **Atlassian's `/rest/api/3/search` was removed.** The closeout script hit `410 Gone`. The new shape is `POST /rest/api/3/search/jql` with the JQL in the request body. Any future sprint helper that uses the search API needs the new endpoint; the helper module in `.sprint12/helpers.py` does not export this call yet — the verify_and_close script implements it inline. Worth promoting to `jira_search_jql(jql, fields=[...])` in `helpers.py` next time we touch it.
+4. **`Edit` can silently fail when a file has been read by a different tool earlier in the conversation.** During this sprint a `models.py` edit for the enum rename reported success but the file remained unchanged; the second invocation worked. After every backend edit during a fix-multiple-files PR, grep for the post-state to confirm the change actually landed — don't trust the success message alone when you're stacking many edits.
+5. **The auto-merger 405 race fires on real PRs and burns 10+ minutes of background polling.** RUNBOOK §7 documents the symptom; PR #91 hit it during this sprint after the blocking checks went green but the `Auto Merge PR` step returned `failure`. The workaround (`PUT /pulls/{n}/merge` via API with `merge_method=squash`) merged in ~200ms. The `push_fprm205.py` script now wraps the wait-loop in a try/except so a timeout falls back to the manual merge automatically. Backporting this guard to a shared helper would save the next sprint the same diagnostic round-trip.
+6. **`internal_partner_users_router.py` next to `partner_users_router.py` is intentional, not duplication.** The existing per-tenant `/partners/{partner_id}/users/*` surface is for partner_admins managing their own org; the new cross-tenant `/internal/partner-users/*` surface is for internal admins seeing all orgs at once. Two routers with similar names but distinct prefixes, role guards, and audit verbs (`partner_user.*` vs `internal_user.*`) keeps the surface searchable — when a future bug report says "I disabled a partner user as system_admin," you grep `internal/partner-users` and find the exact router in one hit.
+
