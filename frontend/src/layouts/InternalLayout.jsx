@@ -144,8 +144,8 @@ const NAV_ITEMS = [
     label: 'Reports',
     to: '/internal/reports',
     icon: IconBarChart,
-    enabled: false,
-    roles: ['system_admin', 'channel_ops_admin', 'channel_manager', 'sales_rep', 'sales_ops', 'finance_approver'],
+    enabled: true,
+    roles: ['system_admin', 'channel_ops_admin', 'channel_manager', 'sales_ops', 'finance_approver'],
   },
 ]
 
