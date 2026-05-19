@@ -20,6 +20,7 @@ import InternalDealDetail from './pages/InternalDealDetail.jsx'
 import CommissionRates from './pages/CommissionRates.jsx'
 import InternalHome from './pages/InternalHome.jsx'
 import InternalUsers from './pages/InternalUsers.jsx'
+import PartnerUserManagement from './pages/PartnerUserManagement.jsx'
 import ForgotPassword from './pages/ForgotPassword.jsx'
 import ResetPassword from './pages/ResetPassword.jsx'
 
@@ -97,6 +98,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={["system_admin"]}>
               <InternalUsers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="partner-users"
+          element={
+            <ProtectedRoute roles={["system_admin", "channel_ops_admin"]}>
+              <PartnerUserManagement />
             </ProtectedRoute>
           }
         />
