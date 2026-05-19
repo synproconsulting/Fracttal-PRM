@@ -1330,3 +1330,83 @@ Backend ends Sprint 12 at **372 tests passing** (Sprint 11 baseline 332 + 40 new
 5. **The auto-merger 405 race fires on real PRs and burns 10+ minutes of background polling.** RUNBOOK §7 documents the symptom; PR #91 hit it during this sprint after the blocking checks went green but the `Auto Merge PR` step returned `failure`. The workaround (`PUT /pulls/{n}/merge` via API with `merge_method=squash`) merged in ~200ms. The `push_fprm205.py` script now wraps the wait-loop in a try/except so a timeout falls back to the manual merge automatically. Backporting this guard to a shared helper would save the next sprint the same diagnostic round-trip.
 6. **`internal_partner_users_router.py` next to `partner_users_router.py` is intentional, not duplication.** The existing per-tenant `/partners/{partner_id}/users/*` surface is for partner_admins managing their own org; the new cross-tenant `/internal/partner-users/*` surface is for internal admins seeing all orgs at once. Two routers with similar names but distinct prefixes, role guards, and audit verbs (`partner_user.*` vs `internal_user.*`) keeps the surface searchable — when a future bug report says "I disabled a partner user as system_admin," you grep `internal/partner-users` and find the exact router in one hit.
 
+## Sprint 13 — Program Configuration UI (Phase 4 continues)
+
+**Started:** 2026-05-19
+**Closed:** 2026-05-19 (single-day intensive)
+**Fix Version ID:** `10732`
+**Native Sprint ID:** `705`
+**Phase 4 epic:** FPRM-175 — Admin Foundation & Reporting
+
+### Sprint 13 bugs fixed
+
+| Key | Bug | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-208 | No ability to disable or suspend a partner organisation | Done | #94 | New `PATCH /internal/partners/{id}/status` (system_admin + channel_ops_admin) accepting `active`/`suspended`/`terminated`/`inactive` with explicit 400 on the `applicant` value (only the partner-application approval flow may set that). Audit event `partner_org.status_changed` records the old→new transition in notes. Frontend: Suspend / Reactivate row action on `InternalPartnerList.jsx`, matching status badge + button on the internal `PartnerProfile.jsx` view, plus a confirmation modal and bottom-right success toast. 9 new tests in `test_partner_status.py`. |
+
+### Sprint 13 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-209 | Approval workflow configuration backend | Done | #95 | New `ApprovalWorkflowStep` model + migration 021 with 2 seed rows (Channel Ops Review for `partner_application`, Channel Manager Review for `deal_registration`). New `program_config_router.py` exposing GET / POST / PATCH / DELETE on `/internal/config/approval-steps`. GET = any internal role, POST/PATCH = channel_ops_admin + system_admin, DELETE = system_admin only (soft-delete). 10 new tests. Multi-step enforcement deferred to Phase 5. |
+| FPRM-213 | Activation checklist + partner tier configuration backend | Done | #96 | Three new models: `PartnerTierConfig` (table `partner_tiers` — named with `Config` suffix to avoid clashing with the still-in-use `PartnerTier` enum; the enum is retained until Phase 5 wires up dynamic tier assignment), `PartnerTierEligibilityRule`, `ActivationChecklistConfig`. Migration 022 seeds 3 tiers (Registered/Silver/Gold) and 6 default activation criteria mirroring the four mandatory flags in `activation.py` plus two optional placeholders (`contract_signed`, `training_advanced_complete`). Extends `program_config_router.py` with tier CRUD (with duplicate-name 409), eligibility-rule add/delete (system_admin-only delete), and activation-criteria CRUD with soft-delete. 12 additional tests (22 total in the file). |
+| FPRM-217 | Program configuration UI | Done | #97 | New `frontend/src/pages/ProgramConfig.jsx` — three tabs (Approval Workflow / Partner Tiers / Activation Checklist) wired to the `/internal/config/*` endpoints. Approval Workflow: two panels (one per workflow_type) with up/down reorder (swap step_order values), inline rename on blur, role select, active toggle, delete, and add-step form. Partner Tiers: tier cards sorted by rank with active/inactive badges, edit modal, per-tier eligibility-rule list with add-rule modal (4 rule types: min_deals_approved / min_revenue / required_certification / min_win_rate). Activation Checklist: filterable table with inline Required/Active toggles, soft-delete, add-criterion modal with optional category/tier scoping. `Program Config` nav item in `InternalLayout` flipped from `Coming soon` to live (system_admin + channel_ops_admin only). |
+
+All 9 Sub-tasks (FPRM-210/211/212 under 209, FPRM-214/215/216 under 213, FPRM-218/219/220 under 217) closed Done.
+
+### What landed on `main` during Sprint 13
+
+- `backend/models.py` — `from sqlalchemy.orm import relationship` (new dependency), `ApprovalWorkflowStep`, `PartnerTierConfig` (with `eligibility_rules` relationship), `PartnerTierEligibilityRule`, `ActivationChecklistConfig`.
+- `backend/alembic/versions/021_create_approval_workflow_steps.py` — table + index + 2 seed rows.
+- `backend/alembic/versions/022_create_tier_and_checklist_config.py` — three tables (with FK + cascade on eligibility rules) + 3 tier seeds + 6 activation-criteria seeds.
+- `backend/routers/program_config_router.py` (new) — full CRUD for approval steps, tiers, eligibility rules, activation criteria; three role guards (`require_internal`, `require_config_writer`, `require_system_admin`).
+- `backend/routers/internal_partners_router.py` — adds `PATCH /internal/partners/{id}/status` plus the `STATUS_ADMIN_ROLES` guard and a `_serialize_org` helper; module docstring updated for FPRM-208.
+- `backend/main.py` — registers `program_config_router`.
+- `backend/tests/test_partner_status.py` (new, 9) — partner status PATCH endpoint coverage.
+- `backend/tests/test_program_config.py` (new, 22) — approval step (10) + tier/eligibility/activation criteria (12) coverage.
+- `frontend/src/pages/ProgramConfig.jsx` (new) — three-tab program config page.
+- `frontend/src/pages/InternalPartnerList.jsx` — Suspend / Reactivate row actions + confirmation modal + success toast.
+- `frontend/src/pages/PartnerProfile.jsx` — status badge in header + Change Status button (internal admin view only) + matching modal + toast.
+- `frontend/src/layouts/InternalLayout.jsx` — `Program Config` nav item `enabled: false` → `enabled: true`.
+- `frontend/src/App.jsx` — new `/internal/config` route with `system_admin` + `channel_ops_admin` `ProtectedRoute` guard.
+- `CLAUDE.md` — Current state line updated; Sprint 13 IDs added.
+- `CLAUDE_HISTORY.md` — this entry.
+
+### API endpoint count
+
+Sprint 13 adds **14 new endpoints**:
+
+- `PATCH /internal/partners/{id}/status` (FPRM-208)
+- `GET / POST / PATCH / DELETE /internal/config/approval-steps[/{id}]` (4 endpoints, FPRM-209)
+- `GET / POST / PATCH /internal/config/tiers[/{id}]` (3 endpoints, FPRM-213)
+- `POST / DELETE /internal/config/tiers/{tier_id}/eligibility-rules[/{rule_id}]` (2 endpoints, FPRM-213)
+- `GET / POST / PATCH / DELETE /internal/config/activation-criteria[/{id}]` (4 endpoints, FPRM-213)
+
+Total surface area is now **95 endpoints** (Sprint 12 baseline 81 + 14).
+
+### Sprint 13 test count
+
+Backend ends Sprint 13 at **403 tests passing** (Sprint 12 baseline 372 + 31 new across `test_partner_status.py` (+9) and `test_program_config.py` (+22)).
+
+### Notable notes
+
+- **`activation.py` is unchanged.** `recalculate_activation` still enforces the four hard-coded flags (`profile_complete`, `documents_uploaded`, `terms_signed`, `baseline_training_complete`). Dynamic enforcement that reads from `activation_checklist_config` is deferred to Phase 5.
+- **Multi-step approval enforcement is deferred to Phase 5.** Steps are configurable via API and UI; the existing single-reviewer flow in `applications_router` and `deal_registrations_router` is unchanged.
+- **`PartnerTier` enum vs `PartnerTierConfig` model.** The new model intentionally takes a different class name (`PartnerTierConfig`) so it can coexist with the existing `PartnerTier` enum that `partner_organizations.tier` still references. The table name is `partner_tiers` because Phase 5 will migrate the foreign-key relationship and retire the enum. Two callers in `internal_partners_router.py` still validate filters against the enum — those keep working unchanged.
+
+### Sprint 13 lessons
+
+1. **Class-name clashes with pre-existing enums are easy to miss.** The Sprint 13 prompt named the new model `PartnerTier`, which would have shadowed the existing enum of the same name. `Grep PartnerTier` before adding a new model called PartnerTier is cheap; resolving the clash mid-PR is not. Pattern: skim `models.py` plus `grep -r ClassName backend/` for every new top-level class.
+2. **Tests don't run Alembic migrations — fixtures must mirror seed data.** Migration 021/022 use `op.execute("INSERT INTO ... VALUES (gen_random_uuid(), ...)")`. The CI test suite creates schema via `Base.metadata.create_all` and never runs migrations, so the seed inserts never appear. Tests that rely on "the seed rows exist" must reconstruct them in a fixture (here: `seeded_workflow_steps`, `seeded_tiers`, `seeded_activation_criteria`). Skipping this gives green tests locally and an empty table in CI.
+3. **Bash tool persists cwd across calls.** A `cd backend && pytest` in one Bash invocation left subsequent invocations rooted in `backend/` until a new explicit `cd "/c/Johan/..."` reset it. Two consecutive `cd backend && ...` calls fail the second one because `backend/backend/` doesn't exist. Pattern: prefer absolute paths in every Bash invocation and treat the persistent cwd as a footgun.
+4. **AD-2 (no-git-CLI) implies the GitHub Trees API for multi-file commits.** Git CLI commits require a `user.email`/`user.name` config, which the hard rules forbid touching. The Trees API path (create blobs → create tree → create commit → update ref) is the canonical commit pipeline. Promoting the inline Python helpers used this sprint to `.sprint13/gh_helper.py` made all four PRs trivial — keeping a similar helper around (somewhere persistent, since `.sprintXX/` gets wiped by pre-flight `git clean`) would save the next sprint the re-write.
+5. **The auto-merger merged all four PRs in ~32 seconds each.** PR #94, #95, #96, #97 all merged on the first CI run with no flakes. The Sprint 12 lesson #5 about the 405 race didn't recur — either the underlying race was fixed during the FPRM-205 merge or this sprint just got lucky.
+
+### Known follow-ups for Sprint 14
+
+1. **Sprint 14 is the final Phase 4 sprint — Reporting & Analytics.** Planned stories: internal reporting backend (5 pts), internal reporting dashboard UI (6 pts), partner pipeline view (5 pts), Phase 4 closeout docs (4 pts).
+2. SMTP env vars still not set on the `fracttal-prm-backend` Railway service — lifecycle / invite emails still fall back to stdout in production. Manual ops follow-up.
+3. **Dynamic activation enforcement** (consuming `activation_checklist_config` in `activation.py`) — Phase 5.
+4. **Multi-step approval enforcement** (routing through `approval_workflow_steps` in `applications_router` / `deal_registrations_router`) — Phase 5.
+5. **Retire the `PartnerTier` enum** in favour of the `PartnerTierConfig` table — Phase 5.
+
