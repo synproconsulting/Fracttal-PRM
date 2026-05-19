@@ -4,6 +4,17 @@ import { Link, useOutletContext } from 'react-router-dom'
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
+function decodeJwt(token) {
+  try {
+    const parts = token.split('.')
+    if (parts.length < 2) return null
+    const padded = parts[1] + '==='.slice((parts[1].length + 3) % 4)
+    return JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')))
+  } catch (_) { return null }
+}
+
+const STATUS_ADMIN_ROLES = new Set(['system_admin', 'channel_ops_admin'])
+
 const STATUS_OPTIONS = [
   { value: '', label: 'All' },
   { value: 'applicant', label: 'Applicant' },
@@ -72,6 +83,8 @@ function useDebounced(value, delay) {
 export default function InternalPartnerList() {
   const ctx = useOutletContext() || {}
   const { token } = ctx
+  const payload = useMemo(() => (token ? decodeJwt(token) : null), [token])
+  const canManageStatus = STATUS_ADMIN_ROLES.has(payload?.role)
 
   const [searchInput, setSearchInput] = useState('')
   const debouncedSearch = useDebounced(searchInput, 300)
@@ -85,6 +98,39 @@ export default function InternalPartnerList() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  const [statusModal, setStatusModal] = useState(null) // { partner, nextStatus }
+  const [statusSaving, setStatusSaving] = useState(false)
+  const [statusError, setStatusError] = useState(null)
+  const [toast, setToast] = useState(null)
+
+  const dismissToast = useCallback(() => setToast(null), [])
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(dismissToast, 3000)
+    return () => clearTimeout(t)
+  }, [toast, dismissToast])
+
+  async function applyStatusChange() {
+    if (!statusModal) return
+    setStatusSaving(true); setStatusError(null)
+    try {
+      const r = await fetch(`${API}/internal/partners/${statusModal.partner.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: statusModal.nextStatus }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`)
+      setStatusModal(null)
+      setToast('Partner organisation status updated')
+      load()
+    } catch (err) {
+      setStatusError(err.message)
+    } finally {
+      setStatusSaving(false)
+    }
+  }
 
   // Reset to page 1 whenever a filter changes.
   const filterKey = `${debouncedSearch}|${status}|${category}|${tier}`
@@ -189,12 +235,15 @@ export default function InternalPartnerList() {
                   <th style={{ textAlign: 'left', padding: '10px 12px' }}>Activation</th>
                   <th style={{ textAlign: 'left', padding: '10px 12px' }}>Created</th>
                   <th style={{ textAlign: 'right', padding: '10px 12px' }}>Docs</th>
+                  {canManageStatus && (
+                    <th style={{ textAlign: 'right', padding: '10px 12px' }}>Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
+                    <td colSpan={canManageStatus ? 8 : 7} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
                       No partner organisations found.
                     </td>
                   </tr>
@@ -222,6 +271,39 @@ export default function InternalPartnerList() {
                         Docs →
                       </Link>
                     </td>
+                    {canManageStatus && (
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {p.status === 'active' && (
+                          <button
+                            type="button"
+                            onClick={() => { setStatusError(null); setStatusModal({ partner: p, nextStatus: 'suspended' }) }}
+                            style={{
+                              background: 'transparent', border: '1px solid #991B1B',
+                              color: '#991B1B', padding: '4px 10px', borderRadius: 6,
+                              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            }}
+                          >
+                            Suspend
+                          </button>
+                        )}
+                        {p.status === 'suspended' && (
+                          <button
+                            type="button"
+                            onClick={() => { setStatusError(null); setStatusModal({ partner: p, nextStatus: 'active' }) }}
+                            style={{
+                              background: 'transparent', border: '1px solid #166534',
+                              color: '#166534', padding: '4px 10px', borderRadius: 6,
+                              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            }}
+                          >
+                            Reactivate
+                          </button>
+                        )}
+                        {p.status !== 'active' && p.status !== 'suspended' && (
+                          <span style={{ color: '#94A3B8', fontSize: 12 }}>—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -252,6 +334,65 @@ export default function InternalPartnerList() {
             </div>
           )}
         </>
+      )}
+
+      {statusModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div style={{
+            background: '#fff', borderRadius: 10, padding: 24,
+            maxWidth: 460, width: 'calc(100% - 32px)',
+            boxShadow: '0 10px 30px rgba(15,23,42,0.2)',
+          }}>
+            <h2 style={{ margin: '0 0 8px', fontSize: 18 }}>
+              {statusModal.nextStatus === 'suspended' ? 'Suspend partner organisation' : 'Reactivate partner organisation'}
+            </h2>
+            <p style={{ margin: '0 0 16px', color: '#475569', fontSize: 14 }}>
+              {statusModal.nextStatus === 'suspended'
+                ? <>Suspend <strong>{statusModal.partner.legal_name}</strong>? This will mark the organisation as suspended.</>
+                : <>Reactivate <strong>{statusModal.partner.legal_name}</strong>? This will return the organisation to active status.</>}
+            </p>
+            {statusError && (
+              <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{statusError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="fp-btn fp-btn--ghost"
+                onClick={() => { setStatusModal(null); setStatusError(null) }}
+                disabled={statusSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="fp-btn fp-btn--primary"
+                onClick={applyStatusChange}
+                disabled={statusSaving}
+              >
+                {statusSaving ? 'Saving…' : statusModal.nextStatus === 'suspended' ? 'Suspend' : 'Reactivate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 1100,
+          background: '#166534', color: '#fff',
+          padding: '10px 16px', borderRadius: 8,
+          boxShadow: '0 8px 20px rgba(15,23,42,0.2)',
+          fontSize: 14, fontWeight: 600,
+        }}>
+          {toast}
+        </div>
       )}
     </div>
   )

@@ -1,18 +1,21 @@
-"""Sprint 12 / FPRM-205 — internal-admin cross-org partner list.
+"""Sprint 12 / FPRM-205 + Sprint 13 / FPRM-208 — internal-admin partner endpoints.
 
-Searchable, filterable list of all partner organisations. Backs the
-`/internal/partners` page introduced in Sprint 12 (the nav item was added
-in Sprint 11's InternalLayout and stayed disabled until this story).
+Searchable, filterable list of all partner organisations plus admin-only
+lifecycle controls.
 
-Route:
-    GET /internal/partners  — channel_manager / channel_ops_admin / system_admin
+Routes:
+    GET   /internal/partners              — channel_manager / channel_ops_admin / system_admin
+    PATCH /internal/partners/{id}/status  — channel_ops_admin / system_admin only (FPRM-208)
 """
 import uuid
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
+from audit import log_audit_event
 from auth import get_current_user
 from database import get_db
 from models import (
@@ -132,3 +135,98 @@ def list_partners_for_internal(
         "page": page,
         "page_size": page_size,
     }
+
+
+# ---- FPRM-208 — partner organisation status management --------------------
+
+
+STATUS_ADMIN_ROLES = {
+    UserRole.system_admin,
+    UserRole.channel_ops_admin,
+}
+
+# Statuses internal admins are allowed to set via this endpoint. ``applicant``
+# is intentionally excluded — it is only ever set by the partner-application
+# approval flow that mints the org.
+ALLOWED_STATUS_VALUES = {"active", "suspended", "terminated", "inactive"}
+
+
+def require_status_admin_role(current_user: User = Depends(get_current_user)) -> User:
+    try:
+        role = UserRole(current_user.role)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Unknown role")
+    if role not in STATUS_ADMIN_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="channel_ops_admin or system_admin required to change partner status",
+        )
+    return current_user
+
+
+def _serialize_org(partner: PartnerOrganization) -> dict:
+    return {c.name: getattr(partner, c.name) for c in partner.__table__.columns}
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    return request.client.host if request.client else None
+
+
+@router.patch("/{partner_id}/status")
+def update_partner_status(
+    partner_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_status_admin_role),
+):
+    """Set a partner organisation's lifecycle status (FPRM-208).
+
+    Allowed transitions: ``active`` ⇄ ``suspended`` ⇄ ``terminated`` (and
+    ``inactive``). ``applicant`` is rejected — that state is only set by the
+    partner-application approval flow.
+    """
+    new_status = payload.get("status") if isinstance(payload, dict) else None
+    if new_status is None:
+        raise HTTPException(status_code=400, detail="status is required")
+    if not isinstance(new_status, str):
+        raise HTTPException(status_code=400, detail="status must be a string")
+    if new_status == "applicant":
+        raise HTTPException(
+            status_code=400,
+            detail="status 'applicant' cannot be set via this endpoint",
+        )
+    if new_status not in ALLOWED_STATUS_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {sorted(ALLOWED_STATUS_VALUES)}",
+        )
+
+    partner = (
+        db.query(PartnerOrganization)
+        .filter(PartnerOrganization.id == partner_id)
+        .first()
+    )
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+
+    before = jsonable_encoder(_serialize_org(partner))
+    old_status = _enum_value(partner.status)
+    partner.status = new_status
+    partner.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(partner)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="partner_org.status_changed",
+        object_type="partner_organization",
+        object_id=partner.id,
+        before=before,
+        after=jsonable_encoder(_serialize_org(partner)),
+        ip_address=_client_ip(request),
+        notes=f"{old_status} -> {new_status}",
+    )
+
+    return _serialize_org(partner)
