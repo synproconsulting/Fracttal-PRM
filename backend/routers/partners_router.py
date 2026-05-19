@@ -360,20 +360,32 @@ def get_partner_dashboard_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Sprint 11 / FPRM-183 — partner home dashboard roll-up.
+    """Partner home dashboard roll-up.
 
-    Restricted to ``partner_admin`` of the same org. Returns deals counts by
-    status, activation progress, and document review counts for the partner's
-    own organisation.
+    Accessible to ``partner_admin`` of the same org (own-org view) and to
+    internal admins (``system_admin``, ``channel_ops_admin``,
+    ``channel_manager``) for any partner. Returns deals counts by status,
+    activation progress, and document review counts for the requested
+    partner organisation.
     """
     partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
 
-    if UserRole(current_user.role) != UserRole.partner_admin:
-        raise HTTPException(status_code=403, detail="partner_admin role required")
-    if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_id):
-        raise HTTPException(status_code=403, detail="Access denied: not your organisation")
+    role = UserRole(current_user.role)
+    internal_view_roles = {
+        UserRole.system_admin,
+        UserRole.channel_ops_admin,
+        UserRole.channel_manager,
+    }
+    if role == UserRole.partner_admin:
+        if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_id):
+            raise HTTPException(status_code=403, detail="Access denied: not your organisation")
+    elif role not in internal_view_roles:
+        raise HTTPException(
+            status_code=403,
+            detail="partner_admin or internal admin role required",
+        )
 
     def _deal_count(status_value: str) -> int:
         return (
