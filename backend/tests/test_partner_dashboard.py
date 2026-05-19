@@ -256,12 +256,34 @@ def test_summary_403_for_non_partner_admin_role(client, db_session):
     assert "partner_admin" in response.json()["detail"]
 
 
-def test_summary_403_for_internal_role(client, db_session):
-    """Even system_admin should not use this endpoint — it's scoped to partner_admin
-    of the org for the partner home dashboard. Internal admins use /internal/dashboard/summary."""
+def test_summary_200_for_system_admin_any_org(client, db_session):
+    """FPRM-190: system_admin can view any partner's dashboard summary."""
     org = _make_org(db_session)
+    _make_deal(db_session, org.id, "submitted")
     admin = _make_user(db_session, UserRole.system_admin.value)
     app.dependency_overrides[get_current_user] = lambda: admin
 
     response = client.get(f"/partners/{org.id}/dashboard/summary")
-    assert response.status_code == 403
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deals"]["submitted"] == 1
+
+
+def test_summary_200_for_channel_manager_any_org(client, db_session):
+    """FPRM-190: channel_manager can view any partner's dashboard summary."""
+    org = _make_org(db_session)
+    user = _make_user(db_session, UserRole.channel_manager.value)
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    response = client.get(f"/partners/{org.id}/dashboard/summary")
+    assert response.status_code == 200
+
+
+def test_summary_200_for_channel_ops_admin_any_org(client, db_session):
+    """FPRM-190: channel_ops_admin can view any partner's dashboard summary."""
+    org = _make_org(db_session)
+    user = _make_user(db_session, UserRole.channel_ops_admin.value)
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    response = client.get(f"/partners/{org.id}/dashboard/summary")
+    assert response.status_code == 200
