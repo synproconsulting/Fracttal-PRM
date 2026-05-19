@@ -108,6 +108,14 @@ const NAV_ITEMS = [
     roles: ['system_admin', 'channel_ops_admin', 'channel_manager'],
   },
   {
+    key: 'partner-users',
+    label: 'Partner Users',
+    to: '/internal/partner-users',
+    icon: IconUsers,
+    enabled: true,
+    roles: ['system_admin', 'channel_ops_admin'],
+  },
+  {
     key: 'deals',
     label: 'Deals',
     to: '/internal/deals',
@@ -147,6 +155,7 @@ const BREADCRUMB_MAP = {
   '/internal/partners': 'Partners',
   '/internal/deals': 'Deals',
   '/internal/users': 'Users',
+  '/internal/partner-users': 'Partner Users',
   '/internal/config': 'Program Config',
   '/internal/reports': 'Reports',
 }
