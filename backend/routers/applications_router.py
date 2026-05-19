@@ -151,6 +151,16 @@ def list_applications(
     if status:
         statuses = [s.strip() for s in status.split(",") if s.strip()]
         if statuses:
+            valid = {s.value for s in ApplicationStatus}
+            invalid = [s for s in statuses if s not in valid]
+            if invalid:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Invalid status value(s): {invalid}. "
+                        f"Allowed: {sorted(valid)}"
+                    ),
+                )
             query = query.filter(PartnerApplication.status.in_(statuses))
     total = query.count()
     items = (
@@ -308,7 +318,7 @@ def approve_application(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("partner_application:read_all")),
 ):
-    """Internal: approve an application. Allowed from status=submitted or in_review.
+    """Internal: approve an application. Allowed from status=submitted or under_review.
 
     Triggers ``provision_partner_from_application`` to create the partner org / profile
     / invite (wired up in FPRM-92). Logs ``partner_application.approved`` audit event.
@@ -316,7 +326,7 @@ def approve_application(
     _require_review_role(current_user)
     app_record = _get_application_or_404(application_id, db)
 
-    if app_record.status not in (ApplicationStatus.submitted, ApplicationStatus.in_review):
+    if app_record.status not in (ApplicationStatus.submitted, ApplicationStatus.under_review):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot approve application in status '{_status_value(app_record.status)}'",
@@ -376,7 +386,7 @@ def reject_application(
 ):
     """Internal: reject an application with a required reason.
 
-    Allowed from status=submitted, in_review, or info_required.
+    Allowed from status=submitted, under_review, or info_required.
     Stores ``rejection_reason`` on the application and logs the audit event.
     """
     _require_review_role(current_user)
@@ -386,7 +396,7 @@ def reject_application(
         raise HTTPException(status_code=422, detail="rejection_reason is required")
 
     app_record = _get_application_or_404(application_id, db)
-    allowed = (ApplicationStatus.submitted, ApplicationStatus.in_review, ApplicationStatus.info_required)
+    allowed = (ApplicationStatus.submitted, ApplicationStatus.under_review, ApplicationStatus.info_required)
     if app_record.status not in allowed:
         raise HTTPException(
             status_code=400,
@@ -434,7 +444,7 @@ def request_info(
 ):
     """Internal: request additional info from the applicant.
 
-    Allowed from status=submitted or in_review. Stores ``info_request_message`` and
+    Allowed from status=submitted or under_review. Stores ``info_request_message`` and
     sets status=info_required so the applicant can resume the draft via the existing
     draft_token (FPRM-91 implements the resume UI).
     """
@@ -445,7 +455,7 @@ def request_info(
         raise HTTPException(status_code=422, detail="message is required")
 
     app_record = _get_application_or_404(application_id, db)
-    if app_record.status not in (ApplicationStatus.submitted, ApplicationStatus.in_review):
+    if app_record.status not in (ApplicationStatus.submitted, ApplicationStatus.under_review):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot request info on application in status '{_status_value(app_record.status)}'",
@@ -491,7 +501,7 @@ def cancel_info_request(
 ):
     """Sprint 11 / FPRM-186 — reverse an outstanding info request.
 
-    Transitions an application from ``info_required`` back to ``in_review`` and
+    Transitions an application from ``info_required`` back to ``under_review`` and
     clears the ``info_request_message``. Allowed roles match the other review
     endpoints (channel_manager / channel_ops_admin / system_admin via
     ``_require_review_role``).
@@ -512,7 +522,7 @@ def cancel_info_request(
         "status": _status_value(app_record.status),
         "info_request_message": getattr(app_record, "info_request_message", None),
     }
-    app_record.status = ApplicationStatus.in_review
+    app_record.status = ApplicationStatus.under_review
     app_record.info_request_message = None
     app_record.reviewer_id = current_user.id
     app_record.reviewed_at = datetime.utcnow()

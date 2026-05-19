@@ -165,17 +165,17 @@ def test_summary_counts_applications_correctly(client, db_session):
     admin = _make_user(db_session, UserRole.system_admin.value)
     app.dependency_overrides[get_current_user] = lambda: admin
 
-    # 2 submitted, 1 in_review, 1 info_required, 1 approved
+    # 2 submitted, 1 under_review, 1 info_required, 1 approved
     _make_application(db_session, ApplicationStatus.submitted)
     _make_application(db_session, ApplicationStatus.submitted)
-    _make_application(db_session, ApplicationStatus.in_review)
+    _make_application(db_session, ApplicationStatus.under_review)
     _make_application(db_session, ApplicationStatus.info_required)
     _make_application(db_session, ApplicationStatus.approved)
 
     response = client.get("/internal/dashboard/summary")
     assert response.status_code == 200
     apps = response.json()["applications"]
-    assert apps["pending_review"] == 3   # 2 submitted + 1 in_review
+    assert apps["pending_review"] == 3   # 2 submitted + 1 under_review
     assert apps["info_required"] == 1
     assert apps["total_this_month"] == 5  # all created today
 

@@ -341,6 +341,37 @@ def test_internal_list_status_filter(db_session):
     assert all(i["status"] == "draft" for i in draft_items)
 
 
+def test_internal_list_status_under_review_returns_200(db_session):
+    """FPRM-191: ?status=under_review previously 500 because the enum
+    used 'in_review'. After the rename it's a valid value."""
+    user = make_user(UserRole.channel_manager)
+    db_session.add(user)
+    db_session.commit()
+    override_internal_user(db_session, user)
+    try:
+        client = TestClient(app)
+        r = client.get("/applications?status=under_review")
+    finally:
+        clear_overrides()
+    assert r.status_code == 200
+    assert "items" in r.json()
+
+
+def test_internal_list_invalid_status_returns_422(db_session):
+    """FPRM-191: unknown status values return 422, not 500."""
+    user = make_user(UserRole.channel_manager)
+    db_session.add(user)
+    db_session.commit()
+    override_internal_user(db_session, user)
+    try:
+        client = TestClient(app)
+        r = client.get("/applications?status=garbage")
+    finally:
+        clear_overrides()
+    assert r.status_code == 422
+    assert "garbage" in r.json()["detail"]
+
+
 # ---------------- GET /applications/{id} ----------------
 
 def test_get_application_with_draft_token(db_session):

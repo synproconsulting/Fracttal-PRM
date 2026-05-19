@@ -307,7 +307,7 @@ class CommissionStructure(Base):
 class ApplicationStatus(str, enum.Enum):
     draft = "draft"
     submitted = "submitted"
-    in_review = "in_review"
+    under_review = "under_review"
     info_required = "info_required"
     approved = "approved"
     rejected = "rejected"
