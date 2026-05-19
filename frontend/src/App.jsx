@@ -22,6 +22,7 @@ import InternalHome from './pages/InternalHome.jsx'
 import InternalUsers from './pages/InternalUsers.jsx'
 import PartnerUserManagement from './pages/PartnerUserManagement.jsx'
 import InternalPartnerList from './pages/InternalPartnerList.jsx'
+import ProgramConfig from './pages/ProgramConfig.jsx'
 import ForgotPassword from './pages/ForgotPassword.jsx'
 import ResetPassword from './pages/ResetPassword.jsx'
 
@@ -115,6 +116,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={["system_admin", "channel_ops_admin"]}>
               <PartnerUserManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="config"
+          element={
+            <ProtectedRoute roles={["system_admin", "channel_ops_admin"]}>
+              <ProgramConfig />
             </ProtectedRoute>
           }
         />
