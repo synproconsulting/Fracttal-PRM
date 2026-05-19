@@ -173,6 +173,33 @@
 | POST | `/partners/{id}/activation/training-reset` | channel_manager / channel_ops_admin / system_admin | Sprint 9 / FPRM-145. Reverse the training flag to False. `activated_at` is intentionally preserved across resets. Audit `partner_activation.training_reset`. |
 | GET | `/partners/{id}/commission-rates` | partner_admin (own) / any internal role | Sprint 10 / FPRM-158. Returns the rows from `commission_structures` matching the partner's `partner_category_code`. Partner-side users 403 on cross-org access. Response: `{partner_category_code, items: [{commission_type, year, percentage, subpartner_uplift_pct, applies_to_upsell, notes}]}`. |
 | POST | `/internal/deals/{id}/override-conflict` | channel_manager / system_admin only | Sprint 10 / FPRM-157. Override a `conflict_detected` deal back to `conflict_status=clear`. Body requires `override_notes` (free-text rationale appended to `conflict_notes` with the reviewer's email tag). Channel_ops_admin explicitly excluded. Audit `deal_registration.conflict_overridden`. |
+| GET | `/internal/dashboard/summary` | system_admin / channel_ops_admin / channel_manager | Sprint 11 / FPRM-179. Internal home roll-up: applications, deals, partners, conflicts counts. All counts computed at query time from existing tables. |
+| GET | `/partners/{id}/dashboard/summary` | system_admin / channel_ops_admin / channel_manager / partner_admin (own) | Sprint 11 / FPRM-183 (widened in Sprint 12 / FPRM-190). Partner home roll-up: deals counts by status, activation `items_complete/items_total`, document counts. |
+| POST | `/applications/{id}/cancel-info-request` | channel_manager+ | Sprint 11 / FPRM-186. `info_required → under_review`. Audit `partner_application.cancel_info_request`. |
+| POST | `/internal/deals/{deal_id}/cancel-info-request` | review roles | Sprint 11 / FPRM-186. `info_required → under_review`, posts a system message to the deal thread. Audit `deal_registration.cancel_info_request`. |
+| GET | `/internal/users` | system_admin | Sprint 12 / FPRM-194. Paginated internal-user list. Filters: `role`, `is_active`, `skip`, `limit`. |
+| GET | `/internal/users/{user_id}` | system_admin | Sprint 12 / FPRM-194. Get one internal user. |
+| POST | `/internal/users/invite` | system_admin | Sprint 12 / FPRM-194. Create a new internal user with a random unguessable password; mints a 7-day `PasswordResetToken` and sends a welcome email via `notifications.send_email`. Audit `internal_user.invited`. |
+| PATCH | `/internal/users/{user_id}/role` | system_admin | Sprint 12 / FPRM-194. Change role; blocks self-modification and demoting the last active system_admin. Audit `internal_user.role_changed`. |
+| POST | `/internal/users/{user_id}/disable` | system_admin | Sprint 12 / FPRM-194. Sets `is_active=False`. Audit `internal_user.disabled`. |
+| POST | `/internal/users/{user_id}/reactivate` | system_admin | Sprint 12 / FPRM-194. Sets `is_active=True`. Audit `internal_user.reactivated`. |
+| GET | `/internal/partner-users` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Cross-org partner-user list (distinct from per-tenant `/partners/{id}/users`). |
+| POST | `/internal/partner-users/invite` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Invite a partner user under any org. |
+| PATCH | `/internal/partner-users/{user_id}/role` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Change `partner_user` ↔ `partner_admin`. |
+| POST | `/internal/partner-users/{user_id}/disable` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Disable any partner user. |
+| POST | `/internal/partner-users/{user_id}/reactivate` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Reactivate any partner user. |
+| GET | `/internal/partners` | system_admin / channel_ops_admin / channel_manager | Sprint 12 / FPRM-205. Cross-org partner list with search/status/tier/category filters, page/page_size pagination, activation status join. |
+| PATCH | `/internal/partners/{id}/status` | system_admin / channel_ops_admin | Sprint 13 / FPRM-208. Set `active` / `suspended` / `terminated` / `inactive` (400 on `applicant` — only the approval flow may set that). Audit `partner_org.status_changed`. |
+| GET / POST / PATCH / DELETE | `/internal/config/approval-steps[/{id}]` | system_admin / channel_ops_admin (writes), any internal (reads), system_admin only (delete) | Sprint 13 / FPRM-209. CRUD for `approval_workflow_steps`. Delete is soft. |
+| GET / POST / PATCH | `/internal/config/tiers[/{id}]` | system_admin / channel_ops_admin (writes), any internal (reads) | Sprint 13 / FPRM-213. CRUD for `partner_tiers` (409 on duplicate name). |
+| POST / DELETE | `/internal/config/tiers/{tier_id}/eligibility-rules[/{rule_id}]` | system_admin / channel_ops_admin (add), system_admin only (delete) | Sprint 13 / FPRM-213. Add/remove rules of types `min_deals_approved` / `min_revenue` / `required_certification` / `min_win_rate`. |
+| GET / POST / PATCH / DELETE | `/internal/config/activation-criteria[/{id}]` | system_admin / channel_ops_admin (writes), any internal (reads) | Sprint 13 / FPRM-213. CRUD for `activation_checklist_config`. Delete is soft. |
+| GET | `/internal/reports/pipeline` | system_admin / channel_ops_admin / channel_manager / sales_ops | Sprint 14 / FPRM-221. Pipeline roll-up: by-partner, by-category, by-tier, totals. Optional `from_date` / `to_date` / `partner_category` / `tier` filters. All counts aggregated at query time. |
+| GET | `/internal/reports/cycle-times` | system_admin / channel_ops_admin / channel_manager / sales_ops | Sprint 14 / FPRM-221. All-time cycle-time metrics: overall average days, by-category-and-month series, slowest-5 deals. |
+| GET | `/internal/reports/conflicts` | system_admin / channel_ops_admin / channel_manager / sales_ops | Sprint 14 / FPRM-221. Conflict rate + count + unresolved (non-approved/rejected) deals. Same filter shape as `/pipeline`. |
+| GET | `/internal/reports/partner-activity` | system_admin / channel_ops_admin / channel_manager / sales_ops | Sprint 14 / FPRM-221. Per-partner last-deal-submitted, deals-in-90-days, activation status, document count. Active partners only. |
+| GET | `/internal/reports/pipeline/export` | system_admin / channel_ops_admin / channel_manager / sales_ops / finance_approver | Sprint 14 / FPRM-221. CSV export of the pipeline dataset. `Content-Type: text/csv` + `Content-Disposition: attachment; filename=pipeline_export.csv`. |
+| GET | `/partners/{id}/pipeline` | partner_admin (own org only) | Sprint 14 / FPRM-229. Deals grouped by status into 6 keys (`draft`/`submitted`/`under_review`/`info_required`/`approved`/`rejected`). Optional `status`/`from_date`/`to_date` filters. 403 to internal roles by design — internal users use `/internal/reports/pipeline`. |
 
 
 
@@ -241,6 +268,11 @@
 | `deal_registrations` | `013_create_deal_registrations` | Sprint 8 / FPRM-125. Deal opportunities registered by partner_admins. Columns: `id` (UUID PK), `partner_org_id` (UUID FK to `partner_organizations.id`, not null), `status` (string, default `draft`; lifecycle: draft/submitted/under_review/info_required/approved/rejected/expired), customer info — `customer_name` (not null), `customer_domain`, `customer_contact_name`, `customer_contact_email`, `customer_contact_phone`, `customer_industry`, `customer_country`, `customer_region`; deal info — `deal_name` (not null), `estimated_deal_value` (Float), `estimated_close_date` (Date), `deal_notes` (Text), `commission_type` (string); commission snapshot (immutable after submit) — `commission_structure_id` (UUID FK to `commission_structures.id`, nullable), `commission_rate_snapshot` (Float); conflict check (Sprint 10) — `conflict_checked_at` (DateTime), `conflict_status` (string, default `not_checked`), `conflict_notes` (Text); lifecycle/review — `submitted_at`, `reviewer_id` (UUID FK to `users.id`), `reviewed_at`, `review_notes` (Text), `created_at`, `updated_at`. Index on `(partner_org_id, status)`. |
 | `deal_messages` | `016_create_deal_messages` | Sprint 9 / FPRM-139. Collaboration thread on a deal registration. Columns: `id` (UUID PK), `deal_id` (UUID FK to `deal_registrations.id`, not null), `sender_type` (string — `partner` or `internal`), `sender_id` (UUID FK to `users.id`, nullable), `sender_email` (string, not null), `message` (Text, not null), `created_at` (DateTime, not null). Index on `(deal_id, created_at)`. |
 | `document_types` | `017_create_document_types_config` | Sprint 9 / FPRM-144. Admin-configurable document type vocabulary, replacing the hardcoded `DocumentType` enum. Columns: `id` (UUID PK), `code` (unique indexed string), `label`, `is_active` (bool, default true), `created_at`, `updated_at`. Seeded with the 10 original enum values. The migration also converts `partner_documents.document_type` from a PG enum to VARCHAR so admin-added types can be inserted at runtime (same pattern as FPRM-138 migration 015). |
+| `users.last_login_at` | `020_add_last_login_at_to_users` | Sprint 12 / FPRM-194. Adds a `last_login_at` DateTime column (nullable) to `users`; stamped by the `auth_router.login` happy path. Surfaced by the internal user management UI. |
+| `approval_workflow_steps` | `021_create_approval_workflow_steps` | Sprint 13 / FPRM-209. Admin-configurable approval steps. Columns: `id` (UUID PK), `workflow_type` (`partner_application` / `deal_registration`), `step_order` (integer), `step_name` (string), `assignee_role` (role string), `is_active` (bool), `created_at`, `updated_at`. Seeded with 2 default rows (`Channel Ops Review` for partner_application, `Channel Manager Review` for deal_registration). Multi-step enforcement is deferred to Phase 5. |
+| `partner_tiers` | `022_create_tier_and_checklist_config` | Sprint 13 / FPRM-213. Admin-configurable tier definitions (model class `PartnerTierConfig` to avoid clashing with the existing `PartnerTier` enum). Columns: `id` (UUID PK), `name` (unique), `rank` (integer — controls order), `commission_uplift_pct` (numeric), `description` (text), `is_active` (bool), `created_at`, `updated_at`. Seeded with 3 rows (Registered/Silver/Gold). `partner_organizations.tier` still references the legacy enum — Phase 5 will migrate the FK and retire the enum. |
+| `partner_tier_eligibility_rules` | `022_create_tier_and_checklist_config` | Sprint 13 / FPRM-213. Rules attached to a tier (FK cascade on delete). Columns: `id` (UUID PK), `tier_id` (FK), `rule_type` (one of `min_deals_approved` / `min_revenue` / `required_certification` / `min_win_rate`), `threshold_value` (numeric), `notes` (text). |
+| `activation_checklist_config` | `022_create_tier_and_checklist_config` | Sprint 13 / FPRM-213. Admin-configurable activation criteria. Columns: `id` (UUID PK), `criterion_code` (unique), `display_name`, `description`, `is_required` (bool default true), `is_active` (bool default true), `scoped_category` (string nullable), `scoped_tier` (string nullable), `created_at`, `updated_at`. Seeded with 6 rows mirroring the 4 hard-coded flags in `activation.py` plus 2 placeholders (`contract_signed`, `training_advanced_complete`). Dynamic enforcement deferred to Phase 5. |
 
 
 
@@ -845,6 +877,30 @@ Partner-side routes (`/portal/*`) sit nested under `PartnerPortalLayout` which a
 **Consequence:** Every new partner-facing page goes under the `/portal` route with `<Route path="X" element={<MyPage />} />` inside the layout; the page uses `useOutletContext()` to access `{payload, orgName, token}`. Every internal page wraps in its own `<ProtectedRoute>` until a parallel `InternalLayout` is built.
 
 **Do not:** Decode the JWT manually inside individual pages. Do not store the token under any key other than `'token'`. Do not bypass `ProtectedRoute` by exporting protected pages from public routes — even one bypass breaks the model.
+
+---
+
+### AD-16 · Authenticated CSV downloads use fetch + Blob, never `window.location.href`
+
+**Decision:** Endpoints that return a CSV (or any other authenticated download) respond with `fastapi.Response(content=..., media_type="text/csv")` and a `Content-Disposition: attachment; filename=...` header. The frontend triggers the download via `fetch` with the `Authorization: Bearer` header, reads `response.blob()`, builds an object URL via `URL.createObjectURL(blob)`, sets `download` on a temporary `<a>` element, calls `.click()`, then revokes the URL.
+
+**Why:** `window.location.href = "..."` or a plain anchor tag cannot send custom HTTP headers. Authenticated endpoints reject the request with 401 because they never see the JWT. The fetch+Blob pattern preserves the `Authorization` header while still triggering the browser's native Save-As dialog.
+
+**Consequence:** Every CSV-export endpoint added in the future should follow this pattern on both sides. Don't reinvent it with `window.open` or query-string tokens.
+
+**Do not:** Pass JWTs as query parameters to work around the header limitation. Tokens in URLs leak via referrer, browser history, and access logs.
+
+---
+
+### AD-17 · Report aggregations are computed at query time, not pre-aggregated
+
+**Decision:** The `/internal/reports/*` endpoints (Sprint 14) compute every metric inline from the live `deal_registrations` / `partner_organizations` / `partner_activation_checklists` / `partner_application_documents` rows. No pre-aggregated reporting tables exist.
+
+**Why:** At current data volumes (single-digit thousands of deals), Postgres handles the aggregations in milliseconds. A rollup table would be premature optimisation with operational cost: stale data when the rollup falls behind, an extra migration to maintain, an extra background job to operate.
+
+**Consequence:** Acceptable through Phase 5. If deal volumes exceed ~50k or report queries start showing up in slow-query logs, introduce a nightly rollup table and switch the endpoints to read from it.
+
+**Do not:** Add caching or memoisation to the report endpoints today — it would mask the real performance signal we'd want to see before introducing a rollup.
 
 ---
 
