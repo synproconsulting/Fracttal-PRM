@@ -146,7 +146,7 @@ export default function InternalHome() {
         <KpiTile
           label="Open Conflicts"
           value={conflicts.open ?? 0}
-          sub="Unresolved conflict_detected"
+          sub="Unresolved conflicts"
           accent={(conflicts.open ?? 0) > 0 ? '#D14343' : undefined}
           linkTo="/internal/deals?conflict=open"
         />
