@@ -23,6 +23,7 @@ from routers.internal_users_router import router as internal_users_router
 from routers.internal_partner_users_router import router as internal_partner_users_router
 from routers.internal_partners_router import router as internal_partners_router
 from routers.program_config_router import router as program_config_router
+from routers.reports_router import router as reports_router
 
 load_dotenv()
 
@@ -59,6 +60,7 @@ app.include_router(internal_users_router)
 app.include_router(internal_partner_users_router)
 app.include_router(internal_partners_router)
 app.include_router(program_config_router)
+app.include_router(reports_router)
 
 
 @app.get("/")
