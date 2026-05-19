@@ -7,7 +7,7 @@ const API = (typeof import.meta !== 'undefined' && import.meta.env && import.met
 const STATUS_COLORS = {
   draft: '#9e9e9e',
   submitted: '#2196f3',
-  in_review: '#ffc107',
+  under_review: '#ffc107',
   info_required: '#ff9800',
   approved: '#4caf50',
   rejected: '#f44336',
@@ -16,7 +16,7 @@ const STATUS_COLORS = {
 const STATUS_LABELS = {
   draft: 'Draft',
   submitted: 'Submitted',
-  in_review: 'In Review',
+  under_review: 'Under Review',
   info_required: 'Info Required',
   approved: 'Approved',
   rejected: 'Rejected',
@@ -94,7 +94,7 @@ export default function ApplicationQueue() {
         >
           <option value="">All statuses</option>
           <option value="submitted">Submitted</option>
-          <option value="in_review">In Review</option>
+          <option value="under_review">Under Review</option>
           <option value="info_required">Info Required</option>
           <option value="approved">Approved</option>
           <option value="rejected">Rejected</option>

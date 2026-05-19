@@ -70,7 +70,7 @@ def get_internal_dashboard_summary(
     # --- Applications ---
     apps_pending_review = (
         db.query(func.count(PartnerApplication.id))
-        .filter(PartnerApplication.status.in_([ApplicationStatus.submitted, ApplicationStatus.in_review]))
+        .filter(PartnerApplication.status.in_([ApplicationStatus.submitted, ApplicationStatus.under_review]))
         .scalar()
         or 0
     )

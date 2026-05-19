@@ -141,14 +141,14 @@ def test_cancel_info_request_app_success(client, db_session):
     response = client.post(f"/applications/{app_row.id}/cancel-info-request")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "in_review"
+    assert body["status"] == "under_review"
     assert body["info_request_message"] is None
 
     # Verify DB state — only the status transition is persisted
     # (info_request_message is in-memory only — see _make_application note).
     db_session.expire_all()
     fresh = db_session.query(PartnerApplication).filter(PartnerApplication.id == app_row.id).first()
-    assert fresh.status == ApplicationStatus.in_review
+    assert fresh.status == ApplicationStatus.under_review
 
     # Verify audit
     entries = db_session.query(AuditLog).filter(AuditLog.object_id == app_row.id).all()
