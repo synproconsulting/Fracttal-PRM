@@ -21,6 +21,7 @@ import CommissionRates from './pages/CommissionRates.jsx'
 import InternalHome from './pages/InternalHome.jsx'
 import InternalUsers from './pages/InternalUsers.jsx'
 import PartnerUserManagement from './pages/PartnerUserManagement.jsx'
+import InternalPartnerList from './pages/InternalPartnerList.jsx'
 import ForgotPassword from './pages/ForgotPassword.jsx'
 import ResetPassword from './pages/ResetPassword.jsx'
 
@@ -89,6 +90,14 @@ export default function App() {
         <Route path="home" element={<InternalHome />} />
         <Route path="applications" element={<ApplicationQueue />} />
         <Route path="applications/:id" element={<ApplicationReview />} />
+        <Route
+          path="partners"
+          element={
+            <ProtectedRoute roles={["system_admin", "channel_ops_admin", "channel_manager"]}>
+              <InternalPartnerList />
+            </ProtectedRoute>
+          }
+        />
         <Route path="partners/:id/profile" element={<PartnerProfile />} />
         <Route path="partners/:id/documents" element={<PartnerDocuments />} />
         <Route path="deals" element={<DealQueue />} />

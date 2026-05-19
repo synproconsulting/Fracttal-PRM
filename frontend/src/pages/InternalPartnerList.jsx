@@ -1,0 +1,258 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useOutletContext } from 'react-router-dom'
+
+const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+  || 'https://fracttal-prm-backend-production.up.railway.app'
+
+const STATUS_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'applicant', label: 'Applicant' },
+  { value: 'active', label: 'Active' },
+  { value: 'suspended', label: 'Suspended' },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'terminated', label: 'Terminated' },
+]
+const CATEGORY_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'master', label: 'Master' },
+  { value: 'promotor', label: 'Promotor' },
+  { value: 'reseller', label: 'Reseller' },
+]
+const TIER_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'registered', label: 'Registered' },
+  { value: 'silver', label: 'Silver' },
+  { value: 'gold', label: 'Gold' },
+  { value: 'platinum', label: 'Platinum' },
+]
+
+const STATUS_TONE = {
+  applicant:  { bg: '#FEF3C7', fg: '#92400E' },
+  active:     { bg: '#DCFCE7', fg: '#166534' },
+  suspended:  { bg: '#FEE2E2', fg: '#991B1B' },
+  inactive:   { bg: '#E5E7EB', fg: '#475569' },
+  terminated: { bg: '#1B2236', fg: '#fff' },
+}
+const STATUS_LABEL = {
+  applicant: 'Applicant',
+  active: 'Active',
+  suspended: 'Suspended',
+  inactive: 'Inactive',
+  terminated: 'Terminated',
+}
+
+function StatusBadge({ value }) {
+  const tone = STATUS_TONE[value] || { bg: '#E5E7EB', fg: '#475569' }
+  return (
+    <span style={{
+      background: tone.bg, color: tone.fg,
+      padding: '2px 10px', borderRadius: 12,
+      fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+    }}>
+      {STATUS_LABEL[value] || value || '—'}
+    </span>
+  )
+}
+
+function fmtDate(value) {
+  if (!value) return '—'
+  try { return new Date(value).toISOString().slice(0, 10) }
+  catch (_) { return value }
+}
+
+function useDebounced(value, delay) {
+  const [v, setV] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay)
+    return () => clearTimeout(t)
+  }, [value, delay])
+  return v
+}
+
+export default function InternalPartnerList() {
+  const ctx = useOutletContext() || {}
+  const { token } = ctx
+
+  const [searchInput, setSearchInput] = useState('')
+  const debouncedSearch = useDebounced(searchInput, 300)
+  const [status, setStatus] = useState('')
+  const [category, setCategory] = useState('')
+  const [tier, setTier] = useState('')
+  const [page, setPage] = useState(1)
+  const pageSize = 20
+
+  const [rows, setRows] = useState([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  // Reset to page 1 whenever a filter changes.
+  const filterKey = `${debouncedSearch}|${status}|${category}|${tier}`
+  const filterKeyRef = useRef(filterKey)
+  useEffect(() => {
+    if (filterKeyRef.current !== filterKey) {
+      filterKeyRef.current = filterKey
+      setPage(1)
+    }
+  }, [filterKey])
+
+  const load = useCallback(() => {
+    setLoading(true); setError(null)
+    const params = new URLSearchParams()
+    if (debouncedSearch) params.set('search', debouncedSearch)
+    if (status) params.set('status', status)
+    if (category) params.set('category', category)
+    if (tier) params.set('tier', tier)
+    params.set('page', String(page))
+    params.set('page_size', String(pageSize))
+    fetch(`${API}/internal/partners?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (r) => {
+        const b = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(b.detail || `HTTP ${r.status}`)
+        return b
+      })
+      .then((b) => { setRows(b.items || []); setTotal(b.total || 0) })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [token, debouncedSearch, status, category, tier, page])
+
+  useEffect(() => { load() }, [load])
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(total / pageSize)),
+    [total]
+  )
+
+  return (
+    <div style={{ padding: 24 }}>
+      <div>
+        <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>Partner Organisations</h1>
+        <p style={{ margin: 0, color: '#5A6478' }}>
+          {total} partner{total === 1 ? '' : 's'} across all categories and statuses.
+        </p>
+      </div>
+
+      <div className="fp-card" style={{ padding: 12, marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 240 }}>
+          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Search</span>
+          <input
+            placeholder="Partner legal name…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Status</span>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}
+                  style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Category</span>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}
+                  style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
+            {CATEGORY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Tier</span>
+          <select value={tier} onChange={(e) => setTier(e.target.value)}
+                  style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
+            {TIER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {loading && <div className="fp-card" style={{ padding: 18, marginTop: 16 }}>Loading partners…</div>}
+      {error && <div className="fp-alert fp-alert--danger" style={{ marginTop: 16 }}>Could not load partners: {error}</div>}
+
+      {!loading && !error && (
+        <>
+          <div className="fp-card" style={{ padding: 0, marginTop: 16, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ background: '#F8FAFC' }}>
+                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Legal Name</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Category</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Tier</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Status</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Activation</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Created</th>
+                  <th style={{ textAlign: 'right', padding: '10px 12px' }}>Docs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
+                      No partner organisations found.
+                    </td>
+                  </tr>
+                )}
+                {rows.map((p) => (
+                  <tr key={p.id} style={{ borderTop: '1px solid #E5E7EB' }}>
+                    <td style={{ padding: '10px 12px' }}>
+                      <Link to={`/internal/partners/${p.id}/profile`}
+                            style={{ color: '#1A6EBB', fontWeight: 600, textDecoration: 'none' }}>
+                        {p.legal_name}
+                      </Link>
+                    </td>
+                    <td style={{ padding: '10px 12px', textTransform: 'capitalize' }}>{p.partner_category || '—'}</td>
+                    <td style={{ padding: '10px 12px', textTransform: 'capitalize' }}>{p.tier || '—'}</td>
+                    <td style={{ padding: '10px 12px' }}><StatusBadge value={p.status} /></td>
+                    <td style={{ padding: '10px 12px' }}>
+                      {p.activation_complete
+                        ? <span style={{ color: '#166534', fontWeight: 600 }}>✔ Activated</span>
+                        : <span style={{ color: '#92400E', fontWeight: 600 }}>⏳ Pending</span>}
+                    </td>
+                    <td style={{ padding: '10px 12px' }}>{fmtDate(p.created_at)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                      <Link to={`/internal/partners/${p.id}/documents`}
+                            style={{ color: '#1A6EBB', textDecoration: 'none', fontSize: 13 }}>
+                        Docs →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {total > pageSize && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                className="fp-btn fp-btn--ghost fp-btn--sm"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                ← Prev
+              </button>
+              <span style={{ alignSelf: 'center', fontSize: 13, color: '#5A6478' }}>
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                className="fp-btn fp-btn--ghost fp-btn--sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
