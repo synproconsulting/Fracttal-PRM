@@ -438,6 +438,66 @@ def get_partner_dashboard_summary(
     return {"deals": deals, "activation": activation, "documents": documents}
 
 
+PIPELINE_STATUSES = ("draft", "submitted", "under_review", "approved", "rejected", "info_required")
+
+
+@router.get("/{partner_id}/pipeline")
+def get_partner_pipeline(
+    partner_id: uuid.UUID,
+    status: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sprint 14 / FPRM-229 — partner_admin-only pipeline grouped by status."""
+    partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+
+    role = UserRole(current_user.role)
+    if role != UserRole.partner_admin:
+        raise HTTPException(status_code=403, detail="partner_admin role required")
+    if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    q = db.query(DealRegistration).filter(DealRegistration.partner_org_id == partner_id)
+    if status:
+        q = q.filter(DealRegistration.status == status)
+    if from_date:
+        try:
+            from datetime import date as _date
+            from_d = _date.fromisoformat(from_date)
+            q = q.filter(DealRegistration.submitted_at >= datetime.combine(from_d, datetime.min.time()))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="from_date must be ISO YYYY-MM-DD")
+    if to_date:
+        try:
+            from datetime import date as _date
+            to_d = _date.fromisoformat(to_date)
+            q = q.filter(DealRegistration.submitted_at <= datetime.combine(to_d, datetime.max.time()))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="to_date must be ISO YYYY-MM-DD")
+
+    grouped: dict = {s: [] for s in PIPELINE_STATUSES}
+    for deal in q.all():
+        bucket = grouped.get(deal.status)
+        if bucket is None:
+            grouped.setdefault(deal.status, [])
+            bucket = grouped[deal.status]
+        bucket.append({
+            "id": str(deal.id),
+            "deal_name": deal.deal_name,
+            "customer_name": deal.customer_name,
+            "estimated_deal_value": deal.estimated_deal_value,
+            "status": deal.status,
+            "submitted_at": deal.submitted_at.isoformat() if deal.submitted_at else None,
+            "estimated_close_date": deal.estimated_close_date.isoformat() if deal.estimated_close_date else None,
+            "commission_rate_snapshot": deal.commission_rate_snapshot,
+        })
+    return grouped
+
+
 @router.post("/{partner_id}/activation/recalculate")
 def post_activation_recalculate(
     partner_id: uuid.UUID,

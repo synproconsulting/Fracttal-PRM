@@ -105,6 +105,7 @@ export default function PartnerHome() {
   const [summaryError, setSummaryError] = useState(null)
   const [recentDeals, setRecentDeals] = useState([])
   const [recentDealsError, setRecentDealsError] = useState(null)
+  const [pipelineSummary, setPipelineSummary] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -126,6 +127,16 @@ export default function PartnerHome() {
       })
       .then(setSummary)
       .catch((e) => setSummaryError(e.message))
+  }, [payload?.partner_org_id, token])
+
+  useEffect(() => {
+    if (!payload?.partner_org_id || !token) return
+    fetch(`${API}/partners/${payload.partner_org_id}/pipeline`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setPipelineSummary)
+      .catch(() => {})
   }, [payload?.partner_org_id, token])
 
   useEffect(() => {
@@ -235,6 +246,45 @@ export default function PartnerHome() {
           ✅ Your account is active — all activation steps complete.
         </div>
       )}
+
+      <h2 className="fp-section-title">My pipeline</h2>
+      <div className="fp-card" style={{ padding: 18, marginBottom: 24 }}>
+        {pipelineSummary ? (
+          <>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Deals</div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>
+                  {Object.values(pipelineSummary).reduce((acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: '#22C55E' }}>
+                  {(pipelineSummary.approved || []).length}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>In Review</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: '#F59E0B' }}>
+                  {(pipelineSummary.under_review || []).length + (pipelineSummary.submitted || []).length}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Info Required</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: '#8B5CF6' }}>
+                  {(pipelineSummary.info_required || []).length}
+                </div>
+              </div>
+            </div>
+            <Link to="/portal/deals?view=pipeline" style={{ display: 'inline-block', marginTop: 12, fontSize: 13, color: 'var(--fp-primary, #1A6EBB)', textDecoration: 'none', fontWeight: 600 }}>
+              View Pipeline →
+            </Link>
+          </>
+        ) : (
+          <div style={{ color: 'var(--fp-text-secondary)' }}>No deals registered yet.</div>
+        )}
+      </div>
 
       <h2 className="fp-section-title">Recent deals</h2>
       <div className="fp-card" style={{ padding: 0, marginBottom: 24 }}>
