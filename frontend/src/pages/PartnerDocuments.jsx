@@ -311,14 +311,16 @@ export default function PartnerDocuments() {
 
   const content = (
     <>
-      <div className="fp-page-header">
+      <div className="fp-page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <h1 className="fp-page-title">Documents</h1>
-        <button type="button" onClick={exportCSV} disabled={exporting} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600, marginLeft: 12 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
-        {!isInternal && (
-          <button type="button" className="fp-btn fp-btn--primary" onClick={() => setUploadOpen(true)}>
-            Upload document
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button type="button" onClick={exportCSV} disabled={exporting} style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
+          {!isInternal && (
+            <button type="button" className="fp-btn fp-btn--primary" onClick={() => setUploadOpen(true)}>
+              Upload document
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
