@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Column,
@@ -650,3 +651,180 @@ class ActivationChecklistConfig(Base):
     is_required = Column(Boolean, default=True, nullable=False)
     description = Column(String, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+
+
+# ============================================================
+# Sprint 15 / FPRM-239 — Quoting module data model
+# ============================================================
+#
+# Pricing catalogue (migration 023): FeaturePlanPrice, VolumeDiscountTier,
+# AddonCatalogItem hold the live Fracttal pricing rules. They are seeded
+# from the Fracttal Pricing and Quotation Specification.
+#
+# Quote schema (migration 024): Quote (header), QuoteVersion (one snapshot
+# per pricing iteration / scenario), QuoteLineItem (computed line items).
+# Every Quote is bound to a deal_registrations row; quote_engine.calculate_quote
+# is the single source of truth for line-item generation (AD-16).
+
+
+class FeaturePlanPrice(Base):
+    """Sprint 15 / FPRM-239. Per-plan annual list prices for the Fracttal CMMS.
+
+    Three rows (Starter, Professional, Enterprise) are seeded by migration 023
+    from the Fracttal Pricing and Quotation Specification. ``effective_from``
+    lets future price updates coexist without losing historical pricing.
+    """
+
+    __tablename__ = "feature_plan_prices"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_code = Column(String, nullable=False)          # "starter"|"professional"|"enterprise"
+    feature_pack_annual = Column(Numeric(10, 2), nullable=False)
+    transactional_user_annual = Column(Numeric(10, 2), nullable=False)
+    limited_tech_user_annual = Column(Numeric(10, 2), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    effective_from = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class VolumeDiscountTier(Base):
+    """Sprint 15 / FPRM-239. Volume discount bands applied per user count tier.
+
+    Six rows seeded by migration 023 covering 1-10 / 11-50 / 51-100 / 101-300 /
+    301-500 / 500+ users. The unbounded top band sets ``max_users=NULL``.
+    Discounts apply only to Transactional and Limited Technician users; the
+    Feature Pack always sits in the 0% column.
+    """
+
+    __tablename__ = "volume_discount_tiers"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    min_users = Column(Integer, nullable=False)
+    max_users = Column(Integer, nullable=True)          # null = no upper bound
+    transactional_user_discount_pct = Column(Numeric(5, 2), nullable=False)
+    limited_tech_user_discount_pct = Column(Numeric(5, 2), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+
+class AddonCatalogItem(Base):
+    """Sprint 15 / FPRM-239. Catalogue of add-ons selectable for Starter /
+    Professional plans (Enterprise includes everything by default).
+
+    Twenty-one rows seeded by migration 023 matching the add-on catalogue in
+    the Fracttal Pricing and Quotation Specification. ``available_starter`` and
+    ``available_professional`` gate per-plan visibility in the quote form;
+    ``included_enterprise`` is always True (Enterprise always includes all
+    add-ons at no extra charge).
+    """
+
+    __tablename__ = "addon_catalog_items"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    addon_key = Column(String, unique=True, nullable=False)
+    display_name = Column(String, nullable=False)
+    monthly_price = Column(Numeric(10, 2), nullable=False)
+    available_starter = Column(Boolean, default=False, nullable=False)
+    available_professional = Column(Boolean, default=False, nullable=False)
+    included_enterprise = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+
+class Quote(Base):
+    """Sprint 15 / FPRM-239. Quote header bound to a registered deal.
+
+    A quote can have multiple versions (channel manager iterating on pricing)
+    and multiple scenarios per version (Good / Better / Best comparison).
+    ``active_version`` and ``active_scenario`` track the currently selected
+    pricing line that should be shown to the partner and printed on the PDF
+    (Sprint 16). ``currency_code`` is display-only; FX conversion is out of
+    Phase 5 scope.
+    """
+
+    __tablename__ = "quotes"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id = Column(Uuid(as_uuid=True), ForeignKey("deal_registrations.id"), nullable=False)
+    partner_org_id = Column(Uuid(as_uuid=True), ForeignKey("partner_organizations.id"), nullable=False)
+    created_by = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    quote_name = Column(String, nullable=True)
+    currency_code = Column(String(3), default="USD", nullable=False)
+    active_version = Column(Integer, default=1, nullable=False)
+    active_scenario = Column(String, nullable=True)
+    status = Column(String, default="draft", nullable=False)  # draft|sent|accepted|expired
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_quotes_deal_id", "deal_id"),
+    )
+
+
+class QuoteVersion(Base):
+    """Sprint 15 / FPRM-239. Versioned snapshot of pricing inputs + computed
+    totals for a Quote.
+
+    Each version captures the channel manager's pricing iteration: plan,
+    discount %, user quantities, add-ons. ``selected_addons`` is a JSON list
+    of ``addon_key`` strings. ``grand_total_*`` is computed by
+    ``quote_engine.calculate_quote`` and persisted here so list views do not
+    need to recompute on every read. ``pdf_artifact_path`` is populated in
+    Sprint 16 when a customer-facing PDF is generated.
+
+    Soft-deleted via ``is_deleted``; the active version cannot be deleted.
+    """
+
+    __tablename__ = "quote_versions"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    quote_id = Column(Uuid(as_uuid=True), ForeignKey("quotes.id"), nullable=False)
+    version_number = Column(Integer, nullable=False)
+    scenario_label = Column(String, nullable=True)        # "good"|"better"|"best"|null
+    feature_plan = Column(String, nullable=False)          # starter|professional|enterprise
+    feature_plan_discount_pct = Column(Numeric(5, 2), default=Decimal("0"), nullable=False)
+    qty_transactional_users = Column(Integer, nullable=False)
+    qty_limited_tech_users = Column(Integer, nullable=False)
+    selected_addons = Column(JSON, default=list, nullable=False)
+    grand_total_before_discount = Column(Numeric(12, 2), nullable=False)
+    grand_total_after_discount = Column(Numeric(12, 2), nullable=False)
+    pdf_artifact_path = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("quote_id", "version_number", name="uq_quote_versions_quote_version"),
+        Index("ix_quote_versions_quote_id", "quote_id"),
+    )
+
+
+class QuoteLineItem(Base):
+    """Sprint 15 / FPRM-239. Individual quote line items computed by
+    ``quote_engine.calculate_quote``.
+
+    ``line_type`` values: ``feature_pack`` | ``transactional_user`` |
+    ``limited_tech_user`` | ``addon`` | ``free_allocation``. Multiple lines of
+    the same type may exist when volume discount bands split a user quantity
+    across tiers (e.g. 25 Limited Tech users -> 10 at 0%, 15 at 30%).
+    ``addon_key`` is set only when ``line_type == 'addon'``.
+    """
+
+    __tablename__ = "quote_line_items"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    quote_version_id = Column(
+        Uuid(as_uuid=True), ForeignKey("quote_versions.id"), nullable=False
+    )
+    line_order = Column(Integer, nullable=False)
+    line_type = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Numeric(10, 2), nullable=False)
+    discount_pct = Column(Numeric(5, 2), default=Decimal("0"), nullable=False)
+    total_before_discount = Column(Numeric(12, 2), nullable=False)
+    total_after_discount = Column(Numeric(12, 2), nullable=False)
+    addon_key = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_quote_line_items_version_id", "quote_version_id"),
+    )
