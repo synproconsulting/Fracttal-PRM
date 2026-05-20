@@ -1465,6 +1465,11 @@ class AddonCatalogItem(Base):
     available_professional = Column(Boolean, default=False, nullable=False)
     included_enterprise = Column(Boolean, default=True, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Sprint 20 / FPRM-318 -- catalogue organisation. Both are admin-maintainable
+    # via PATCH /internal/config/pricing/addons/{id} (AD-25); migration 028 only
+    # creates the columns -- the categorisation taxonomy is data, not code.
+    category = Column(String, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 class Quote(Base):

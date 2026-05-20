@@ -583,3 +583,103 @@ def test_audit_log_csv_export(client, db_session):
     assert "Timestamp" in first_line
     assert "Action" in first_line
     assert "pricing.addon_created" in body
+
+
+# ============================================================
+# Sprint 20 / FPRM-318 -- Add-on category and sort_order
+# ============================================================
+
+
+def test_addon_response_includes_category_and_sort_order_defaults(client, db_session):
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_defaults", "display_name": "FPRM-318 Defaults",
+        "monthly_price": "0.00",
+    })
+    r = client.get("/internal/config/pricing/addons")
+    assert r.status_code == 200
+    item = next(a for a in r.json() if a["addon_key"] == "fprm318_defaults")
+    assert item["category"] is None
+    assert item["sort_order"] == 0
+
+
+def test_patch_addon_sets_category_and_sort_order(client, db_session):
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    create_r = client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_patch", "display_name": "FPRM-318 Patch",
+        "monthly_price": "12.50",
+    })
+    addon_id = create_r.json()["id"]
+    r = client.patch(f"/internal/config/pricing/addons/{addon_id}", json={
+        "category": "Core Platform",
+        "sort_order": 5,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["category"] == "Core Platform"
+    assert body["sort_order"] == 5
+    # Clearing category back to null via empty string
+    r2 = client.patch(f"/internal/config/pricing/addons/{addon_id}", json={"category": ""})
+    assert r2.status_code == 200
+    assert r2.json()["category"] is None
+
+
+def test_get_addons_filtered_by_category(client, db_session):
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    a1 = client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_filter_a", "display_name": "Filter A",
+        "monthly_price": "0.00",
+    }).json()
+    a2 = client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_filter_b", "display_name": "Filter B",
+        "monthly_price": "0.00",
+    }).json()
+    client.patch(f"/internal/config/pricing/addons/{a1['id']}", json={"category": "Reporting & BI"})
+    client.patch(f"/internal/config/pricing/addons/{a2['id']}", json={"category": "Field Operations"})
+    r = client.get("/internal/config/pricing/addons?category=Reporting+%26+BI")
+    assert r.status_code == 200
+    keys = {a["addon_key"] for a in r.json()}
+    assert "fprm318_filter_a" in keys
+    assert "fprm318_filter_b" not in keys
+
+
+def test_patch_addon_clamps_negative_sort_order(client, db_session):
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    create_r = client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_neg_sort", "display_name": "Neg Sort",
+        "monthly_price": "0.00",
+    })
+    addon_id = create_r.json()["id"]
+    # Negative values are clamped to 0 (defensive, not 422)
+    r = client.patch(f"/internal/config/pricing/addons/{addon_id}", json={"sort_order": -5})
+    assert r.status_code == 200
+    assert r.json()["sort_order"] == 0
+    # Non-int string -> 422
+    r2 = client.patch(f"/internal/config/pricing/addons/{addon_id}", json={"sort_order": "abc"})
+    assert r2.status_code == 422
+
+
+def test_get_addons_filter_null_category(client, db_session):
+    """``?category=__null__`` returns add-ons with no category assigned --
+    matches the quote form's "Other" bucket.
+    """
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_null_cat", "display_name": "Null Cat",
+        "monthly_price": "0.00",
+    })
+    a2 = client.post("/internal/config/pricing/addons", json={
+        "addon_key": "fprm318_assigned_cat", "display_name": "Assigned Cat",
+        "monthly_price": "0.00",
+    }).json()
+    client.patch(f"/internal/config/pricing/addons/{a2['id']}", json={"category": "AI & Automation"})
+    r = client.get("/internal/config/pricing/addons?category=__null__")
+    assert r.status_code == 200
+    keys = {a["addon_key"] for a in r.json()}
+    assert "fprm318_null_cat" in keys
+    assert "fprm318_assigned_cat" not in keys

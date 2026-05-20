@@ -169,6 +169,37 @@ export default function QuoteForm({
     return []
   }, [addons, featurePlan])
 
+  // FPRM-318 -- group the add-on selector by category. Categories sort
+  // alphabetically; rows within a group sort by sort_order then display_name;
+  // add-ons with no category bucket into "Other" which appears last.
+  const groupedAddons = useMemo(() => {
+    const buckets = new Map()
+    for (const a of availableAddons) {
+      const cat = a.category || '__other__'
+      if (!buckets.has(cat)) buckets.set(cat, [])
+      buckets.get(cat).push(a)
+    }
+    const result = []
+    const cats = Array.from(buckets.keys())
+      .filter((c) => c !== '__other__')
+      .sort((a, b) => a.localeCompare(b))
+    for (const c of cats) {
+      const items = buckets.get(c).slice().sort((a, b) => {
+        const so = (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0)
+        return so !== 0 ? so : a.display_name.localeCompare(b.display_name)
+      })
+      result.push({ category: c, items })
+    }
+    if (buckets.has('__other__')) {
+      const items = buckets.get('__other__').slice().sort((a, b) => {
+        const so = (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0)
+        return so !== 0 ? so : a.display_name.localeCompare(b.display_name)
+      })
+      result.push({ category: 'Other', items })
+    }
+    return result
+  }, [availableAddons])
+
   function toggleAddon(key) {
     setSelectedAddonKeys((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]))
   }
@@ -325,23 +356,33 @@ export default function QuoteForm({
             <div style={{ color: '#94A3B8', fontSize: 13 }}>No add-ons available for this plan.</div>
           )}
           {!isEnterprise && availableAddons.length > 0 && (
-            <div style={{ display: 'grid', gap: 8 }}>
-              {availableAddons.map((a) => {
-                const monthly = Number(a.monthly_price)
-                const annual = monthly * 12
-                const checked = selectedAddonKeys.includes(a.addon_key)
-                return (
-                  <label key={a.addon_key} style={{ display: 'flex', justifyContent: 'space-between', padding: 8, border: '1px solid #E0E4EA', borderRadius: 6, cursor: 'pointer', background: checked ? '#F0F7FF' : '#fff' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleAddon(a.addon_key)} />
-                      <strong>{a.display_name}</strong>
-                    </span>
-                    <span style={{ fontSize: 13, color: '#64748B' }}>
-                      ${monthly.toFixed(2)}/mo • ${annual.toFixed(2)}/yr
-                    </span>
-                  </label>
-                )
-              })}
+            <div style={{ display: 'grid', gap: 16 }}>
+              {/* FPRM-318 -- grouped by category; "Other" group at the bottom for nulls */}
+              {groupedAddons.map((group) => (
+                <div key={group.category}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+                    {group.category}
+                  </div>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {group.items.map((a) => {
+                      const monthly = Number(a.monthly_price)
+                      const annual = monthly * 12
+                      const checked = selectedAddonKeys.includes(a.addon_key)
+                      return (
+                        <label key={a.addon_key} style={{ display: 'flex', justifyContent: 'space-between', padding: 8, border: '1px solid #E0E4EA', borderRadius: 6, cursor: 'pointer', background: checked ? '#F0F7FF' : '#fff' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleAddon(a.addon_key)} />
+                            <strong>{a.display_name}</strong>
+                          </span>
+                          <span style={{ fontSize: 13, color: '#64748B' }}>
+                            ${monthly.toFixed(2)}/mo • ${annual.toFixed(2)}/yr
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>

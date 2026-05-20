@@ -93,6 +93,9 @@ def _serialise_addon(r: AddonCatalogItem) -> dict:
         "available_professional": r.available_professional,
         "included_enterprise": r.included_enterprise,
         "is_active": r.is_active,
+        # Sprint 20 / FPRM-318 -- catalogue organisation
+        "category": r.category,
+        "sort_order": r.sort_order if r.sort_order is not None else 0,
     }
 
 
@@ -486,6 +489,16 @@ def update_addon(
     for flag in ("available_starter", "available_professional", "is_active"):
         if flag in body and body[flag] is not None:
             setattr(row, flag, bool(body[flag]))
+    # Sprint 20 / FPRM-318 -- catalogue organisation. ``category`` accepts
+    # blank/null to clear; ``sort_order`` must be a non-negative int.
+    if "category" in body:
+        v = body["category"]
+        row.category = v.strip() if isinstance(v, str) and v.strip() else None
+    if "sort_order" in body and body["sort_order"] is not None:
+        try:
+            row.sort_order = max(0, int(body["sort_order"]))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="sort_order must be a non-negative integer")
     db.commit()
     db.refresh(row)
     log_audit_event(

@@ -243,11 +243,17 @@ def list_pricing_plans(
 @router.get("/internal/config/pricing/addons")
 def list_addon_catalog(
     include_inactive: bool = Query(default=False),
+    category: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """AddonCatalogItem rows. ``?include_inactive=true`` is admin-only and
     surfaces deactivated add-ons for history / reactivation flows.
+
+    Sprint 20 / FPRM-318 -- ``?category=`` filters to a single category
+    (case-sensitive exact match; pass ``__null__`` to filter to rows with
+    no category assigned). Response includes ``category`` and ``sort_order``;
+    rows are ordered by ``(category nulls last, sort_order, display_name)``.
     """
     if include_inactive and current_user.role not in _PRICING_ADMIN_ROLES:
         raise HTTPException(
@@ -257,7 +263,16 @@ def list_addon_catalog(
     query = db.query(AddonCatalogItem)
     if not include_inactive:
         query = query.filter(AddonCatalogItem.is_active.is_(True))
-    rows = query.order_by(AddonCatalogItem.display_name).all()
+    if category is not None:
+        if category == "__null__":
+            query = query.filter(AddonCatalogItem.category.is_(None))
+        else:
+            query = query.filter(AddonCatalogItem.category == category)
+    rows = query.order_by(
+        AddonCatalogItem.category,
+        AddonCatalogItem.sort_order,
+        AddonCatalogItem.display_name,
+    ).all()
     return [
         {
             "id": str(r.id),
@@ -268,6 +283,9 @@ def list_addon_catalog(
             "available_professional": r.available_professional,
             "included_enterprise": r.included_enterprise,
             "is_active": r.is_active,
+            # Sprint 20 / FPRM-318 -- catalogue organisation
+            "category": r.category,
+            "sort_order": r.sort_order if r.sort_order is not None else 0,
         }
         for r in rows
     ]
