@@ -42,6 +42,7 @@ from models import (
     AddonCatalogItem,
     DealRegistration,
     FeaturePlanPrice,
+    PartnerOrganization,
     Quote,
     QuoteLineItem,
     QuoteVersion,
