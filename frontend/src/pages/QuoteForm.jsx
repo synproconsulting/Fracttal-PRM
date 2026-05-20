@@ -135,6 +135,17 @@ export default function QuoteForm({
   const [preview, setPreview] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [existingScenarios, setExistingScenarios] = useState([])
+
+  useEffect(() => {
+    if (!isNewVersion || !quoteId || !token) return
+    fetch(`${API}/quotes/${quoteId}/scenarios`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => (r.ok ? r.json() : { scenarios: [] }))
+      .then((data) => setExistingScenarios((data.scenarios || []).map((s) => s.scenario_label)))
+      .catch(() => {})
+  }, [isNewVersion, quoteId, token])
+
+  const allScenariosCreated = ['good', 'better', 'best'].every((l) => existingScenarios.includes(l))
 
   useEffect(() => {
     if (!token) { setCatalogError('Not authenticated'); setLoadingCatalog(false); return }
@@ -296,10 +307,15 @@ export default function QuoteForm({
               <select value={scenarioLabel} onChange={(e) => setScenarioLabel(e.target.value)}
                 style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #E0E4EA', marginTop: 4 }}>
                 <option value="">None</option>
-                <option value="good">Good</option>
-                <option value="better">Better</option>
-                <option value="best">Best</option>
+                <option value="good" disabled={isNewVersion && existingScenarios.includes('good')}>Good{isNewVersion && existingScenarios.includes('good') ? ' (already created)' : ''}</option>
+                <option value="better" disabled={isNewVersion && existingScenarios.includes('better')}>Better{isNewVersion && existingScenarios.includes('better') ? ' (already created)' : ''}</option>
+                <option value="best" disabled={isNewVersion && existingScenarios.includes('best')}>Best{isNewVersion && existingScenarios.includes('best') ? ' (already created)' : ''}</option>
               </select>
+              {isNewVersion && allScenariosCreated && (
+                <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#64748B' }}>
+                  All 3 scenarios created — new versions will be unlabelled.
+                </span>
+              )}
             </label>
           </div>
           {discountActive && (

@@ -322,6 +322,7 @@ function PortalQuoteSection({ dealId }) {
     || 'https://fracttal-prm-backend-production.up.railway.app'
   const token = localStorage.getItem('token')
   const [quote, setQuote] = useState(null)
+  const [scenarios, setScenarios] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -337,14 +338,21 @@ function PortalQuoteSection({ dealId }) {
         return r.json()
       })
       .then(async (quotes) => {
-        if (!quotes || quotes.length === 0) { setQuote(null); return }
+        if (!quotes || quotes.length === 0) { setQuote(null); setScenarios([]); return }
         const picked = quotes[0] // most recent
-        const detailRes = await fetch(`${API}/quotes/${picked.id}`, { headers: { Authorization: `Bearer ${token}` } })
+        const [detailRes, scenariosRes] = await Promise.all([
+          fetch(`${API}/quotes/${picked.id}`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/quotes/${picked.id}/scenarios`, { headers: { Authorization: `Bearer ${token}` } }),
+        ])
         if (!detailRes.ok) {
           const body = await detailRes.json().catch(() => ({}))
           throw new Error(body.detail || `HTTP ${detailRes.status}`)
         }
         setQuote(await detailRes.json())
+        if (scenariosRes.ok) {
+          const data = await scenariosRes.json()
+          setScenarios(data.scenarios || [])
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
@@ -405,6 +413,40 @@ function PortalQuoteSection({ dealId }) {
           Download Quote PDF
         </button>
       </div>
+      {quote.active_scenario && (
+        <div style={{
+          background: '#EBF4FF', border: '1px solid #1A6EBB', borderRadius: 8,
+          padding: '10px 14px', marginBottom: 12, fontSize: 14,
+        }}>
+          <strong>Your recommended option:</strong>{' '}
+          <span style={{ color: '#1A6EBB', fontWeight: 700, textTransform: 'capitalize' }}>
+            {quote.active_scenario}
+          </span>
+        </div>
+      )}
+      {scenarios.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {scenarios.map((s) => {
+            const isActive = s.scenario_label === quote.active_scenario
+            return (
+              <div key={s.scenario_label}
+                title={isActive ? 'Currently selected' : 'Available alternative'}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  fontSize: 12,
+                  fontWeight: isActive ? 700 : 500,
+                  background: isActive ? '#1A6EBB' : '#F5F7FA',
+                  color: isActive ? '#fff' : '#475569',
+                  border: isActive ? 'none' : '1px solid #E0E4EA',
+                  textTransform: 'capitalize',
+                }}>
+                {isActive ? '⭐ ' : ''}{s.scenario_label} — {fmtMoney(s.grand_total_after_discount, currency)}
+              </div>
+            )
+          })}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 12, fontSize: 13, color: '#64748B' }}>
         <div><strong>Plan:</strong> {v?.feature_plan || '—'}</div>
         <div><strong>Currency:</strong> {currency}</div>

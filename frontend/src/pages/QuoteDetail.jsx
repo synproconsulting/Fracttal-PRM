@@ -133,10 +133,58 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
 
   const [pdfGenerating, setPdfGenerating] = useState(false)
   const [pdfAvailable, setPdfAvailable] = useState(false)
+  const [scenarios, setScenarios] = useState([])
+  const [activeScenario, setActiveScenario] = useState(null)
+  const [scenarioBusy, setScenarioBusy] = useState(false)
 
   useEffect(() => {
     setPdfAvailable(!!selectedVersion?.pdf_generated_at)
   }, [selectedVersion])
+
+  useEffect(() => {
+    if (!quoteId || !token) return
+    fetch(`${API}/quotes/${quoteId}/scenarios`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => {
+        if (!r.ok) return { scenarios: [], active_scenario: null }
+        return r.json()
+      })
+      .then((data) => {
+        setScenarios(data.scenarios || [])
+        setActiveScenario(data.active_scenario || null)
+      })
+      .catch(() => {})
+  }, [quoteId, token, quote])
+
+  async function handleSelectScenario(scenario) {
+    if (scenarioBusy) return
+    setScenarioBusy(true); setError(null)
+    try {
+      const r1 = await fetch(`${API}/quotes/${quoteId}/active-scenario`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ scenario_label: scenario.scenario_label }),
+      })
+      if (!r1.ok) {
+        const body = await r1.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r1.status}`)
+      }
+      const r2 = await fetch(`${API}/quotes/${quoteId}/active-version`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ version_number: scenario.version_number, scenario_label: scenario.scenario_label }),
+      })
+      if (!r2.ok) {
+        const body = await r2.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r2.status}`)
+      }
+      await loadQuote()
+      showToast(`Selected ${scenario.scenario_label} scenario`)
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setScenarioBusy(false)
+    }
+  }
 
   async function handleGeneratePdf() {
     if (pdfGenerating || !selectedVersion) return
@@ -251,6 +299,57 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
           </button>
         )}
       </section>
+
+      {scenarios.length > 0 && (
+        <section className="fp-card" style={{ marginBottom: 16 }}>
+          <h3 className="fp-section-title">Scenario Comparison</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${scenarios.length}, minmax(0, 1fr))`, gap: 12 }}>
+            {scenarios.map((scenario) => {
+              const isActive = scenario.scenario_label === activeScenario
+              return (
+                <div key={scenario.scenario_label}
+                  style={{
+                    border: isActive ? '2px solid #1A6EBB' : '1px solid #E0E4EA',
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    background: '#fff',
+                  }}>
+                  <div style={{
+                    background: '#1A6EBB', color: '#fff',
+                    padding: '8px 12px', fontWeight: 700,
+                    display: 'flex', justifyContent: 'space-between',
+                  }}>
+                    <span>{isActive ? '⭐ ' : ''}{scenario.scenario_label.charAt(0).toUpperCase() + scenario.scenario_label.slice(1)}</span>
+                    <span style={{ fontSize: 12, opacity: 0.85 }}>v{scenario.version_number}</span>
+                  </div>
+                  <div style={{ padding: 14 }}>
+                    <div style={{ fontSize: 13, color: '#64748B', textTransform: 'capitalize', marginBottom: 8 }}>
+                      {scenario.feature_plan} Plan
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: '#1A6EBB', marginBottom: 4 }}>
+                      {fmtMoney(scenario.grand_total_after_discount, currency)}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 14 }}>per year</div>
+                    {isActive ? (
+                      <div style={{ color: '#1A6EBB', fontWeight: 600, fontSize: 13 }}>✓ Selected</div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={scenarioBusy}
+                        onClick={() => handleSelectScenario(scenario)}
+                        className="fp-btn fp-btn--primary"
+                        style={{ width: '100%' }}
+                      >
+                        Select This Option
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <h3 className="fp-section-title">Line items{selectedVersion ? ` — Version ${selectedVersion.version_number}` : ''}</h3>
