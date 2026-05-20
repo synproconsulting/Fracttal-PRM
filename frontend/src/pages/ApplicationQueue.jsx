@@ -108,7 +108,7 @@ export default function ApplicationQueue() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Partner Applications</h1>
         <button type="button" onClick={exportCSV} disabled={exporting}
-                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600 }}>
+                style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>
           {exporting ? 'Exporting...' : 'Export CSV'}
         </button>
       </div>

@@ -207,7 +207,7 @@ export default function DealList() {
               }}
             >Pipeline ⬛</button>
           </div>
-          <button type="button" onClick={exportCSV} disabled={exporting} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
+          <button type="button" onClick={exportCSV} disabled={exporting} style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
           <Link to="/portal/deals/new" className="fp-btn fp-btn--primary">Register a deal</Link>
         </div>
       </div>

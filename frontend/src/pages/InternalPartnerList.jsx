@@ -195,12 +195,14 @@ export default function InternalPartnerList() {
 
   return (
     <div style={{ padding: 24 }}>
-      <div>
-        <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>Partner Organisations</h1>
-        <button type="button" onClick={exportCSV} disabled={exporting} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600, marginLeft: 12 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
-        <p style={{ margin: 0, color: '#5A6478' }}>
-          {total} partner{total === 1 ? '' : 's'} across all categories and statuses.
-        </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>Partner Organisations</h1>
+          <p style={{ margin: 0, color: '#5A6478' }}>
+            {total} partner{total === 1 ? '' : 's'} across all categories and statuses.
+          </p>
+        </div>
+        <button type="button" onClick={exportCSV} disabled={exporting} style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
       </div>
 
       <div className="fp-card" style={{ padding: 12, marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
