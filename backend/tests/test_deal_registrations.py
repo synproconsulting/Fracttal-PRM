@@ -810,3 +810,151 @@ def test_created_on_behalf_of_not_settable_via_partner_patch(db_session):
         assert body["created_on_behalf_of"] is False
     finally:
         clear_overrides()
+
+
+# ------------------ Sprint 20 / FPRM-317 -- Internal deal creation ------------------
+
+
+def test_channel_manager_can_create_deal_on_behalf_of_partner(db_session):
+    org = make_org(db_session)
+    # Note: NO activation checklist -- channel manager skips that gate.
+    user = make_user(UserRole.channel_manager)  # no partner_org_id (internal)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "partner_org_id": str(org.id),
+            "customer_name": "Behalf Customer",
+            "deal_name": "Behalf Deal",
+            "about_client": "Captured during initial intro call.",
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["partner_org_id"] == str(org.id)
+        assert body["status"] == "draft"
+        assert body["created_on_behalf_of"] is True
+        assert body["about_client"].startswith("Captured")
+    finally:
+        clear_overrides()
+
+
+def test_internal_create_without_partner_org_id_returns_422(db_session):
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "customer_name": "Anon Customer",
+            "deal_name": "Anon Deal",
+        })
+        assert r.status_code == 422
+        assert "partner_org_id" in r.json()["detail"]
+    finally:
+        clear_overrides()
+
+
+def test_internal_create_with_nonexistent_partner_org_returns_404(db_session):
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "partner_org_id": str(uuid.uuid4()),
+            "customer_name": "Ghost Customer",
+            "deal_name": "Ghost Deal",
+        })
+        assert r.status_code == 404
+    finally:
+        clear_overrides()
+
+
+def test_internal_create_with_inactive_partner_returns_422(db_session):
+    from models import PartnerStatus as _PS
+    org = PartnerOrganization(
+        id=uuid.uuid4(),
+        legal_name=f"Suspended Org {uuid.uuid4().hex[:6]}",
+        program_type=ProgramType.distributor,
+        partner_category=PartnerCategory.reseller,
+        status=_PS.suspended,
+    )
+    db_session.add(org)
+    db_session.commit()
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "partner_org_id": str(org.id),
+            "customer_name": "Suspended Customer",
+            "deal_name": "Suspended Deal",
+        })
+        assert r.status_code == 422
+        assert "not active" in r.json()["detail"]
+    finally:
+        clear_overrides()
+
+
+def test_partner_admin_post_still_works_no_regression(db_session):
+    """Regression guard for FPRM-317: the existing partner-side POST must
+    continue to honour the activation gate and never need partner_org_id.
+    """
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "customer_name": "Regression Customer",
+            "deal_name": "Regression Deal",
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["partner_org_id"] == str(org.id)
+        assert body["created_on_behalf_of"] is False  # partner-created
+    finally:
+        clear_overrides()
+
+
+def test_internal_create_logs_distinct_audit_event(db_session):
+    org = make_org(db_session)
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "partner_org_id": str(org.id),
+            "customer_name": "Audited Customer",
+            "deal_name": "Audited Deal",
+        })
+        assert r.status_code == 201
+        deal_id = uuid.UUID(r.json()["id"])
+        entry = (
+            db_session.query(AuditLog)
+            .filter(
+                AuditLog.object_id == deal_id,
+                AuditLog.action == "deal_registration.created_internal",
+            )
+            .first()
+        )
+        assert entry is not None
+        assert "partner_org_id" in entry.after_state
+    finally:
+        clear_overrides()
+
+
+def test_partner_user_role_cannot_create_on_behalf(db_session):
+    """partner_user is neither partner_admin nor internal -- 403 either way."""
+    org = make_org(db_session)
+    user = make_user(UserRole.partner_user, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "partner_org_id": str(org.id),
+            "customer_name": "Blocked Customer",
+            "deal_name": "Blocked Deal",
+        })
+        assert r.status_code == 403
+    finally:
+        clear_overrides()

@@ -995,6 +995,16 @@ export default function InternalDealDetail() {
 
             </span>
 
+            {deal.created_on_behalf_of && (
+
+              <span className="fp-badge fp-badge--neutral" title="Created by a channel manager on behalf of the partner">
+
+                Created by Channel Manager
+
+              </span>
+
+            )}
+
             <span style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
 
               Partner: {deal.partner_legal_name || deal.partner_org_id}
