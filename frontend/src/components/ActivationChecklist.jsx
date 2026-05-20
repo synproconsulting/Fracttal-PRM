@@ -4,30 +4,38 @@ import { Link } from 'react-router-dom'
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
-const ITEMS = [
-  {
-    key: 'profile_complete',
-    label: 'Complete your partner profile (at least 80%)',
+// FPRM-270 / Sprint 17 — per-criterion CTA / hint vocabulary. The criterion
+// keys themselves now come from the backend ``/activation/criteria``
+// endpoint, so this map only enriches each row with a friendly action.
+const KEY_ACTIONS = {
+  profile_complete: {
     actionLabel: 'Complete profile',
     actionTo: '/portal/profile',
   },
-  {
-    key: 'documents_uploaded',
-    label: 'Upload required documents (Fiscal ID + ID of legal representative)',
+  documents_uploaded: {
     actionLabel: 'Upload documents',
     actionTo: '/portal/documents',
   },
-  {
-    key: 'terms_signed',
-    label: 'Sign the partnership agreement',
-    actionLabel: null,
-    actionTo: null,
+  terms_signed: {
     fallbackHint: 'Your Fracttal channel manager will set this once the agreement is signed.',
   },
-]
+  contract_signed: {
+    fallbackHint: 'Awaiting countersignature from Fracttal.',
+  },
+  baseline_training_complete: {
+    fallbackHint: 'Your Fracttal channel manager will mark training complete once you finish baseline modules.',
+  },
+  training_complete: {
+    fallbackHint: 'Your Fracttal channel manager will mark training complete once you finish baseline modules.',
+  },
+  training_advanced_complete: {
+    fallbackHint: 'Advanced training is tracked by your Fracttal channel manager.',
+  },
+}
 
 export default function ActivationChecklist({ partnerId, token: tokenProp }) {
-  const [checklist, setChecklist] = useState(null)
+  const [criteria, setCriteria] = useState(null)
+  const [activationComplete, setActivationComplete] = useState(false)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
   const token = tokenProp || localStorage.getItem('token')
@@ -36,19 +44,22 @@ export default function ActivationChecklist({ partnerId, token: tokenProp }) {
     if (!partnerId || !token) return
     setLoading(true)
     setError(null)
-    fetch(`${API}/partners/${partnerId}/activation`, {
+    fetch(`${API}/partners/${partnerId}/activation/criteria`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (r) => {
         if (r.ok) return r.json()
         if (r.status === 404) {
-          setChecklist(null)
+          setCriteria([])
           return null
         }
         throw new Error(`HTTP ${r.status}`)
       })
       .then((data) => {
-        if (data) setChecklist(data)
+        if (data) {
+          setCriteria(Array.isArray(data.required_criteria) ? data.required_criteria : [])
+          setActivationComplete(Boolean(data.activation_complete))
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
@@ -64,12 +75,12 @@ export default function ActivationChecklist({ partnerId, token: tokenProp }) {
       </div>
     )
   }
-  if (!checklist) return null
+  if (!criteria) return null
 
-  const doneCount = ITEMS.filter((i) => checklist[i.key]).length
-  const total = ITEMS.length
-  const pct = Math.round((doneCount / total) * 100)
-  const allDone = checklist.activation_complete
+  const doneCount = criteria.filter((c) => c.is_met).length
+  const total = criteria.length
+  const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0
+  const allDone = activationComplete
 
   return (
     <section className="fp-card">
@@ -92,11 +103,12 @@ export default function ActivationChecklist({ partnerId, token: tokenProp }) {
       )}
 
       <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0 16px' }}>
-        {ITEMS.map((item) => {
-          const done = !!checklist[item.key]
+        {criteria.map((c) => {
+          const done = Boolean(c.is_met)
+          const action = KEY_ACTIONS[c.criterion_key] || {}
           return (
             <li
-              key={item.key}
+              key={c.criterion_key}
               className={`fp-checklist__item${done ? ' fp-checklist__item--done' : ''}`}
             >
               <span className={`fp-checklist__tick${done ? ' fp-checklist__tick--done' : ''}`}>
@@ -104,16 +116,16 @@ export default function ActivationChecklist({ partnerId, token: tokenProp }) {
               </span>
               <div style={{ flex: 1 }}>
                 <div className={`fp-checklist__label${done ? ' fp-checklist__label--done' : ''}`}>
-                  {item.label}
+                  {c.description}
                 </div>
-                {!done && item.actionTo && (
-                  <Link to={item.actionTo} className="fp-checklist__link">
-                    {item.actionLabel} →
+                {!done && action.actionTo && (
+                  <Link to={action.actionTo} className="fp-checklist__link">
+                    {action.actionLabel} →
                   </Link>
                 )}
-                {!done && !item.actionTo && item.fallbackHint && (
+                {!done && !action.actionTo && action.fallbackHint && (
                   <div style={{ fontSize: 'var(--fp-fs-xs)', color: 'var(--fp-text-secondary)', marginTop: 4 }}>
-                    {item.fallbackHint}
+                    {action.fallbackHint}
                   </div>
                 )}
               </div>

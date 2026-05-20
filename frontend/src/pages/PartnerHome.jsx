@@ -106,6 +106,10 @@ export default function PartnerHome() {
   const [recentDeals, setRecentDeals] = useState([])
   const [recentDealsError, setRecentDealsError] = useState(null)
   const [pipelineSummary, setPipelineSummary] = useState(null)
+  // FPRM-270 / Sprint 17 — dynamic activation criteria for the progress
+  // widget. Source of truth for required-item count instead of the
+  // dashboard summary's hardcoded ``items_total``.
+  const [criteriaSummary, setCriteriaSummary] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -127,6 +131,24 @@ export default function PartnerHome() {
       })
       .then(setSummary)
       .catch((e) => setSummaryError(e.message))
+  }, [payload?.partner_org_id, token])
+
+  useEffect(() => {
+    if (!payload?.partner_org_id || !token) return
+    fetch(`${API}/partners/${payload.partner_org_id}/activation/criteria`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.required_criteria)) {
+          setCriteriaSummary({
+            total: data.required_criteria.length,
+            done: data.required_criteria.filter((c) => c.is_met).length,
+            complete: Boolean(data.activation_complete),
+          })
+        }
+      })
+      .catch(() => {})
   }, [payload?.partner_org_id, token])
 
   useEffect(() => {
@@ -164,9 +186,16 @@ export default function PartnerHome() {
     return Object.values(summary.deals).reduce((acc, v) => acc + (Number(v) || 0), 0)
   }, [summary])
 
-  const isActive = summary ? summary.activation.complete : false
-  const itemsComplete = summary?.activation?.items_complete ?? 0
-  const itemsTotal = summary?.activation?.items_total ?? 4
+  // Prefer the dynamic criteria endpoint (FPRM-270) when available — it
+  // reflects whatever ``activation_checklist_config`` says is required for
+  // this partner's category/tier. Fall back to the dashboard summary's
+  // pre-computed counts for the brief window before the criteria fetch
+  // resolves, or if the criteria fetch failed.
+  const isActive = criteriaSummary
+    ? criteriaSummary.complete
+    : (summary ? summary.activation.complete : false)
+  const itemsComplete = criteriaSummary?.done ?? summary?.activation?.items_complete ?? 0
+  const itemsTotal = criteriaSummary?.total ?? summary?.activation?.items_total ?? 4
   const pct = itemsTotal > 0 ? Math.round((itemsComplete / itemsTotal) * 100) : 0
   const docsPending = summary?.documents?.pending_review ?? 0
   const dealsInfoRequired = summary?.deals?.info_required ?? 0
