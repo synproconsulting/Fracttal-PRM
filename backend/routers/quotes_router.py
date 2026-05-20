@@ -626,3 +626,260 @@ def soft_delete_version(
         ip_address=_client_ip(request) if request else None,
     )
     return {"version_number": version_number, "is_deleted": True}
+
+import base64
+import io
+from datetime import date as _date
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import ParagraphStyle
+
+from fastapi.responses import Response
+
+from models import PartnerOrganization as _PartnerOrg
+
+FRACTTAL_BLUE = colors.HexColor('#1A6EBB')
+FRACTTAL_LIGHT = colors.HexColor('#F5F7FA')
+
+CURRENCY_SYMBOL = {
+    "USD": "$", "EUR": "EUR ", "GBP": "GBP ",
+    "AUD": "A$", "CAD": "CA$", "ZAR": "R",
+    "AED": "AED ", "SAR": "SAR ", "EGP": "EGP ",
+}
+
+
+def _fmt(val, sym):
+    try:
+        f = float(val)
+    except Exception:
+        return "-"
+    return f"{sym}{f:,.2f}"
+
+
+def generate_quote_pdf(
+    quote_version,
+    quote,
+    line_items,
+    deal_name,
+    customer_name,
+    partner_name,
+    prepared_by_name,
+) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        rightMargin=20 * mm, leftMargin=20 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
+    )
+    story = []
+    header_style = ParagraphStyle('header', fontSize=18, textColor=FRACTTAL_BLUE,
+                                  spaceAfter=4, fontName='Helvetica-Bold')
+    title_style = ParagraphStyle('title', fontSize=14, fontName='Helvetica-Bold', spaceAfter=2)
+    sub_style = ParagraphStyle('sub', fontSize=10, textColor=colors.grey, spaceAfter=2)
+    footer_style = ParagraphStyle('footer', fontSize=7, textColor=colors.grey, leading=10)
+
+    story.append(Paragraph("FRACTTAL", header_style))
+    story.append(Paragraph("Software Pricing Quotation", title_style))
+    scenario_suffix = (
+        f" - {quote_version.scenario_label.title()}" if quote_version.scenario_label else ""
+    )
+    story.append(Paragraph(
+        f"Quote #{str(quote.id)[:8].upper()} | Version {quote_version.version_number}{scenario_suffix}",
+        sub_style,
+    ))
+    story.append(Paragraph(f"Date: {_date.today().strftime('%d %B %Y')}", sub_style))
+    story.append(Spacer(1, 6 * mm))
+
+    info_data = [
+        ['Customer:', customer_name or '-', 'Deal:', deal_name or '-'],
+        ['Partner:', partner_name or '-', 'Prepared By:', prepared_by_name or '-'],
+        ['Currency:', quote.currency_code, '', ''],
+    ]
+    info_table = Table(info_data, colWidths=[35 * mm, 65 * mm, 30 * mm, 40 * mm])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 6 * mm))
+
+    sym = CURRENCY_SYMBOL.get(quote.currency_code, '$')
+    headers = ['Description', 'Qty', 'Unit Price', 'Discount', 'Total Before', 'Total After']
+    col_widths = [75 * mm, 12 * mm, 25 * mm, 18 * mm, 25 * mm, 25 * mm]
+    table_data = [headers]
+    for item in line_items:
+        unit = _fmt(item.unit_price, sym) if float(item.unit_price) > 0 else '-'
+        disc = f"{float(item.discount_pct):.0f}%" if float(item.discount_pct) > 0 else '-'
+        table_data.append([
+            item.description,
+            str(item.quantity),
+            unit,
+            disc,
+            _fmt(item.total_before_discount, sym),
+            _fmt(item.total_after_discount, sym),
+        ])
+    table_data.append([
+        'Annual Total', '', '', '',
+        _fmt(quote_version.grand_total_before_discount, sym),
+        _fmt(quote_version.grand_total_after_discount, sym),
+    ])
+
+    line_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    line_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), FRACTTAL_BLUE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, FRACTTAL_LIGHT]),
+        ('BACKGROUND', (0, -1), (-1, -1), FRACTTAL_LIGHT),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('LINEABOVE', (0, -1), (-1, -1), 1, FRACTTAL_BLUE),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (0, -1), 3),
+    ]))
+    story.append(line_table)
+    story.append(Spacer(1, 8 * mm))
+
+    story.append(Paragraph(
+        f"This quotation is valid for 30 days from the date of issue. "
+        f"Prices are in {quote.currency_code} and are per annum unless otherwise stated. "
+        f"Subject to standard Fracttal terms and conditions.",
+        footer_style,
+    ))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+# ===================== Sprint 16 PDF endpoints =====================
+
+
+@router.post("/quotes/{quote_id}/versions/{version_number}/generate-pdf")
+def generate_pdf_for_version(
+    quote_id: uuid.UUID,
+    version_number: int,
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Generate (or regenerate) the PDF artefact for a quote version.
+
+    Internal write roles only (channel_manager, channel_ops_admin, system_admin).
+    The PDF is stored base64-encoded in ``quote_versions.pdf_artifact_data`` so
+    Railway's ephemeral filesystem does not lose it on redeploy (see AD-17).
+    """
+    _check_write_role(current_user)
+    quote = _get_quote_or_404(db, quote_id)
+    version = (
+        db.query(QuoteVersion)
+        .filter(
+            QuoteVersion.quote_id == quote.id,
+            QuoteVersion.version_number == version_number,
+            QuoteVersion.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Quote version not found")
+
+    deal = _get_deal_or_404(db, quote.deal_id)
+    partner = (
+        db.query(_PartnerOrg)
+        .filter(_PartnerOrg.id == quote.partner_org_id)
+        .first()
+    )
+    created_by = (
+        db.query(User).filter(User.id == quote.created_by).first()
+    )
+
+    line_items = (
+        db.query(QuoteLineItem)
+        .filter(QuoteLineItem.quote_version_id == version.id)
+        .order_by(QuoteLineItem.line_order)
+        .all()
+    )
+
+    pdf_bytes = generate_quote_pdf(
+        quote_version=version,
+        quote=quote,
+        line_items=line_items,
+        deal_name=deal.deal_name,
+        customer_name=deal.customer_name,
+        partner_name=partner.legal_name if partner else None,
+        prepared_by_name=created_by.email if created_by else None,
+    )
+    pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    filename = (
+        f"quote-{str(quote.id)[:8]}-v{version_number}-"
+        f"{_date.today().isoformat()}.pdf"
+    )
+
+    version.pdf_artifact_data = pdf_b64
+    version.pdf_generated_at = datetime.utcnow()
+    version.pdf_filename = filename
+    db.commit()
+    db.refresh(version)
+
+    log_audit_event(
+        db=db, actor=current_user,
+        action="quote.pdf_generated",
+        object_type="quote",
+        object_id=quote.id,
+        after={"version_number": version_number, "filename": filename},
+        ip_address=_client_ip(request) if request else None,
+    )
+    return {
+        "pdf_filename": filename,
+        "pdf_generated_at": version.pdf_generated_at.isoformat(),
+    }
+
+
+@router.get("/quotes/{quote_id}/versions/{version_number}/pdf")
+def download_quote_pdf(
+    quote_id: uuid.UUID,
+    version_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Decode and stream back the previously-generated PDF.
+
+    Partner-side users may download their own org's quotes only; internal
+    review roles may download any.
+    """
+    quote = _get_quote_or_404(db, quote_id)
+    _check_tenant_read(current_user, quote.partner_org_id)
+    version = (
+        db.query(QuoteVersion)
+        .filter(
+            QuoteVersion.quote_id == quote.id,
+            QuoteVersion.version_number == version_number,
+            QuoteVersion.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Quote version not found")
+    if not version.pdf_artifact_data:
+        raise HTTPException(
+            status_code=404,
+            detail="PDF has not been generated yet - call generate-pdf first",
+        )
+    pdf_bytes = base64.b64decode(version.pdf_artifact_data)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{version.pdf_filename or "quote.pdf"}"'
+            )
+        },
+    )
