@@ -310,7 +310,138 @@ export default function DealDetail() {
             )}
           </section>
         </div>
+
       </div>
+      <PortalQuoteSection dealId={deal.id} />
     </div>
   )
 }
+
+function PortalQuoteSection({ dealId }) {
+  const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    || 'https://fracttal-prm-backend-production.up.railway.app'
+  const token = localStorage.getItem('token')
+  const [quote, setQuote] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!dealId || !token) return
+    setLoading(true); setError(null)
+    fetch(`${API}/deals/${dealId}/quotes`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}))
+          throw new Error(body.detail || `HTTP ${r.status}`)
+        }
+        return r.json()
+      })
+      .then(async (quotes) => {
+        if (!quotes || quotes.length === 0) { setQuote(null); return }
+        const picked = quotes[0] // most recent
+        const detailRes = await fetch(`${API}/quotes/${picked.id}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!detailRes.ok) {
+          const body = await detailRes.json().catch(() => ({}))
+          throw new Error(body.detail || `HTTP ${detailRes.status}`)
+        }
+        setQuote(await detailRes.json())
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [dealId, token])
+
+  function fmtMoney(v, currency) {
+    if (v === null || v === undefined || v === '') return '—'
+    const n = Number(v); if (!Number.isFinite(n)) return '—'
+    const sym = currency === 'USD' ? '$' : `${currency} `
+    return `${sym}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
+  async function handleDownloadPdf() {
+    if (!quote?.active_version_data?.pdf_generated_at) return
+    try {
+      const r = await fetch(`${API}/quotes/${quote.id}/versions/${quote.active_version}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `quote-v${quote.active_version}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  if (loading) return null
+  if (error) return <section className="fp-card" style={{ marginTop: 16 }}><div className="fp-alert fp-alert--danger">{error}</div></section>
+  if (!quote) {
+    return (
+      <section className="fp-card" style={{ marginTop: 16 }}>
+        <h2 className="fp-section-title">Quote</h2>
+        <div style={{ color: '#64748B', fontSize: 14 }}>No quote has been created for this deal yet.</div>
+      </section>
+    )
+  }
+
+  const v = quote.active_version_data
+  const currency = quote.currency_code || 'USD'
+  const items = v?.line_items || []
+  const pdfAvailable = !!v?.pdf_generated_at
+
+  return (
+    <section className="fp-card" style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <h2 className="fp-section-title" style={{ margin: 0 }}>Quote</h2>
+        <button type="button" onClick={handleDownloadPdf} disabled={!pdfAvailable} className="fp-btn fp-btn--primary">
+          Download Quote PDF
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 12, fontSize: 13, color: '#64748B' }}>
+        <div><strong>Plan:</strong> {v?.feature_plan || '—'}</div>
+        <div><strong>Currency:</strong> {currency}</div>
+        <div><strong>Version:</strong> v{quote.active_version}{v?.scenario_label ? ` (${v.scenario_label})` : ''}</div>
+      </div>
+      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#1A6EBB', color: '#fff' }}>
+            <th style={{ textAlign: 'left', padding: 8 }}>Description</th>
+            <th style={{ textAlign: 'right', padding: 8 }}>Qty</th>
+            <th style={{ textAlign: 'right', padding: 8 }}>Unit</th>
+            <th style={{ textAlign: 'right', padding: 8 }}>Discount</th>
+            <th style={{ textAlign: 'right', padding: 8 }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((li) => (
+            <tr key={li.id || `${li.line_order}-${li.line_type}`} style={{
+              borderBottom: '1px solid #F1F5F9',
+              background: li.line_type === 'free_allocation' ? '#F0FDF4' : 'transparent',
+              color: li.line_type === 'free_allocation' ? '#15803D' : 'inherit',
+              fontStyle: li.line_type === 'free_allocation' ? 'italic' : 'normal',
+            }}>
+              <td style={{ padding: 8 }}>{li.description}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{li.quantity}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{Number(li.unit_price) > 0 ? fmtMoney(li.unit_price, currency) : '—'}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{Number(li.discount_pct) > 0 ? `${Number(li.discount_pct).toFixed(0)}%` : '—'}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(li.total_after_discount, currency)}</td>
+            </tr>
+          ))}
+          <tr style={{ borderTop: '2px solid #1A6EBB', background: '#F5F7FA', fontWeight: 700 }}>
+            <td style={{ padding: 8 }} colSpan={4}>Annual Total After Discount</td>
+            <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(v?.grand_total_after_discount, currency)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  )
+}
+
