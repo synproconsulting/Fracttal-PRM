@@ -125,11 +125,22 @@ export default function ApplicationReview() {
   const [reviewerNotes, setReviewerNotes] = useState('')
   const [modal, setModal] = useState(null)  // null | 'reject' | 'request-info'
   const [submitting, setSubmitting] = useState(false)
+  // FPRM-274 / Sprint 17 — role of the logged-in reviewer, used to gate the
+  // Approve button when multi-step workflow has a role-specific step.
+  const [currentUserRole, setCurrentUserRole] = useState(null)
   const token = localStorage.getItem('token')
 
   const authHeaders = useCallback(() => (
     token ? { Authorization: `Bearer ${token}` } : {}
   ), [token])
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => { if (me?.role) setCurrentUserRole(me.role) })
+      .catch(() => {})
+  }, [token])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -266,19 +277,67 @@ export default function ApplicationReview() {
       </div>
 
       <aside style={{ position: 'sticky', top: 16, alignSelf: 'flex-start' }}>
+        {/* FPRM-274 / Sprint 17 — multi-step approval progress */}
+        {a.approval_progress && (
+          <div style={{
+            border: '1px solid #ddd', borderRadius: 6, padding: 16, marginBottom: 16,
+            background: '#f7f9fc',
+          }}>
+            <div style={{ fontSize: 12, color: '#555', textTransform: 'uppercase', fontWeight: 600 }}>
+              Approval Workflow
+            </div>
+            <div style={{ fontSize: 14, marginTop: 6, fontWeight: 600 }}>
+              {a.approval_progress.current_step_order
+                ? `Step ${a.approval_progress.current_step_order} of ${a.approval_progress.total_steps} — ${a.approval_progress.current_step_name}`
+                : `All ${a.approval_progress.total_steps} steps complete`}
+            </div>
+            {a.approval_progress.current_required_role && (
+              <div style={{ fontSize: 12, color: '#555', marginTop: 2 }}>
+                Requires role: <code>{a.approval_progress.current_required_role}</code>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+              {Array.from({ length: a.approval_progress.total_steps }, (_, i) => {
+                const done = i < a.approval_progress.completed_steps
+                return (
+                  <span key={i} style={{
+                    width: 18, height: 6, borderRadius: 3,
+                    background: done ? '#4caf50' : '#ddd',
+                  }} />
+                )
+              })}
+            </div>
+          </div>
+        )}
         <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 16, marginBottom: 16 }}>
           <h3 style={{ margin: '0 0 12px 0' }}>Review actions</h3>
-          <button
-            onClick={() => callAction('approve')}
-            disabled={isFinal || submitting}
-            style={{
-              width: '100%', marginBottom: 8, padding: 10,
-              background: isFinal ? '#ccc' : '#4caf50', color: 'white',
-              border: 'none', borderRadius: 4, fontSize: 14, cursor: isFinal ? 'default' : 'pointer',
-            }}
-          >
-            Approve
-          </button>
+          {(() => {
+            const roleMismatch = (
+              a.approval_progress &&
+              a.approval_progress.current_required_role &&
+              currentUserRole &&
+              currentUserRole !== a.approval_progress.current_required_role
+            )
+            const approveDisabled = isFinal || submitting || roleMismatch
+            const tooltip = roleMismatch
+              ? `This step requires role: ${a.approval_progress.current_required_role}`
+              : undefined
+            return (
+              <button
+                onClick={() => callAction('approve')}
+                disabled={approveDisabled}
+                title={tooltip}
+                style={{
+                  width: '100%', marginBottom: 8, padding: 10,
+                  background: approveDisabled ? '#ccc' : '#4caf50', color: 'white',
+                  border: 'none', borderRadius: 4, fontSize: 14,
+                  cursor: approveDisabled ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {roleMismatch ? `Approve (requires ${a.approval_progress.current_required_role})` : 'Approve'}
+              </button>
+            )
+          })()}
           <button
             onClick={() => setModal('reject')}
             disabled={isFinal || submitting}

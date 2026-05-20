@@ -38,6 +38,12 @@ from models import (
     PartnerApplicationMessage,
     User,
 )
+from approval_helpers import (
+    WORKFLOW_PARTNER_APPLICATION,
+    build_approval_progress,
+    get_approval_step_context,
+    record_step_action,
+)
 from permissions import has_permission, require_permission
 from notifications import (
     notify_application_approved,
@@ -209,7 +215,12 @@ def get_application(
     user: Optional[User] = Depends(get_optional_bearer_user),
     db: Session = Depends(get_db),
 ):
-    """Public with ?draft_token=... OR internal with Bearer token (read_all)."""
+    """Public with ?draft_token=... OR internal with Bearer token (read_all).
+
+    FPRM-274 / Sprint 17 — internal callers receive an ``approval_progress``
+    field summarising the multi-step approval state (``None`` when no
+    workflow steps are configured for ``partner_application``).
+    """
     if draft_token:
         return _serialize(_validate_draft_token(application_id, draft_token, db))
 
@@ -218,7 +229,12 @@ def get_application(
     if not has_permission(user.role, "partner_application:read_all"):
         raise HTTPException(status_code=403, detail="Permission denied: partner_application:read_all required")
     app_record = _get_application_or_404(application_id, db)
-    return _serialize(app_record)
+    data = _serialize(app_record)
+    steps, _current, completed = get_approval_step_context(
+        db, WORKFLOW_PARTNER_APPLICATION, app_record.id
+    )
+    data["approval_progress"] = build_approval_progress(steps, completed)
+    return data
 
 
 @router.patch("/{application_id}")
@@ -340,13 +356,20 @@ def upload_document_metadata(
 def approve_application(
     application_id: uuid.UUID,
     request: Request,
+    payload: Optional[dict] = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("partner_application:read_all")),
 ):
     """Internal: approve an application. Allowed from status=submitted or under_review.
 
-    Triggers ``provision_partner_from_application`` to create the partner org / profile
-    / invite (wired up in FPRM-92). Logs ``partner_application.approved`` audit event.
+    FPRM-274 / Sprint 17 — when ``approval_workflow_steps`` defines multiple
+    steps for ``partner_application``, each step must be approved by a user
+    whose role matches the step's ``required_role``. Intermediate-step
+    approvals stamp an ``ApprovalStepRecord`` and return ``approval_progress``
+    without changing the application status. The final step runs the
+    existing approval flow (status → approved, provisioning, notifications).
+
+    If no steps are configured, single-step legacy behaviour is preserved.
     """
     _require_review_role(current_user)
     app_record = _get_application_or_404(application_id, db)
@@ -356,6 +379,63 @@ def approve_application(
             status_code=400,
             detail=f"Cannot approve application in status '{_status_value(app_record.status)}'",
         )
+
+    notes = (payload.get("notes") if payload else None) or None
+
+    steps, current_step, completed_count = get_approval_step_context(
+        db, WORKFLOW_PARTNER_APPLICATION, app_record.id,
+    )
+
+    if steps:
+        if current_step is None:
+            raise HTTPException(
+                status_code=422,
+                detail="All approval steps are already completed",
+            )
+        if current_user.role != current_step.required_role:
+            raise HTTPException(
+                status_code=403,
+                detail=f"This step requires role: {current_step.required_role}",
+            )
+
+        record_step_action(
+            db,
+            workflow_type=WORKFLOW_PARTNER_APPLICATION,
+            object_id=app_record.id,
+            step=current_step,
+            actor_id=current_user.id,
+            action="approved",
+            notes=notes,
+        )
+
+        is_final_step = (completed_count + 1) >= len(steps)
+
+        if not is_final_step:
+            db.commit()
+            db.refresh(app_record)
+            log_audit_event(
+                db=db,
+                actor=current_user,
+                action="partner_application.step_approved",
+                object_type="partner_application",
+                object_id=app_record.id,
+                before={"status": _status_value(app_record.status)},
+                after={
+                    "step_order": current_step.step_order,
+                    "step_name": current_step.step_name,
+                    "completed_steps": completed_count + 1,
+                    "total_steps": len(steps),
+                },
+                ip_address=_client_ip(request),
+            )
+            data = _serialize(app_record)
+            data["approval_progress"] = build_approval_progress(steps, completed_count + 1)
+            data["message"] = (
+                f"Step {current_step.step_order} of {len(steps)} approved. "
+                "Awaiting next step."
+            )
+            return data
+        # Final step — fall through to the existing approval flow below.
 
     before_status = _status_value(app_record.status)
     app_record.status = ApplicationStatus.approved
@@ -426,6 +506,22 @@ def reject_application(
         raise HTTPException(
             status_code=400,
             detail=f"Cannot reject application in status '{_status_value(app_record.status)}'",
+        )
+
+    # FPRM-274 / Sprint 17 — capture a step-record snapshot at rejection time
+    # so the audit trail shows which step terminated the workflow.
+    steps, current_step, _completed = get_approval_step_context(
+        db, WORKFLOW_PARTNER_APPLICATION, app_record.id,
+    )
+    if steps and current_step is not None:
+        record_step_action(
+            db,
+            workflow_type=WORKFLOW_PARTNER_APPLICATION,
+            object_id=app_record.id,
+            step=current_step,
+            actor_id=current_user.id,
+            action="rejected",
+            notes=rejection_reason,
         )
 
     before_status = _status_value(app_record.status)
