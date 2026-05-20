@@ -45,27 +45,6 @@ function decodeJwt(token) {
 }
 
 function StatusBadge({ status }) {
-
-  async function exportCSV() {
-    setExporting(true)
-    try {
-      const r = await fetch(`${API}/deal-registrations?export=csv`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const blob = await r.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = 'deals_export.csv'
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      console.error('CSV export error:', e); setError(e.message)
-    } finally {
-      setExporting(false)
-    }
-  }
-
   return (
     <span className={`fp-badge ${STATUS_TONE[status] || 'fp-badge--neutral'}`}>
       {STATUS_LABEL[status] || status}
@@ -180,6 +159,26 @@ export default function DealList() {
     const approvedValue = approved.reduce((acc, d) => acc + (d.estimated_deal_value || 0), 0)
     return { total: all.length, totalValue, approvedValue, infoRequired }
   }, [pipeline])
+
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const r = await fetch(`${API}/deal-registrations?export=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'deals_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e); setError(e.message)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div>
