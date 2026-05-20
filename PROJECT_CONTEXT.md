@@ -215,6 +215,19 @@
 | GET | `/quotes/{quote_id}/scenarios` | tenant-scoped | Sprint 18 / FPRM-283 (AD-24). Returns `{scenarios: [{scenario_label, version_number, feature_plan, grand_total_after_discount, is_active}], active_scenario}`. Groups non-deleted versions by `scenario_label`, returns the latest version per label, in canonical good/better/best order. |
 | GET | `/internal/quotes` | channel_manager / channel_ops_admin / system_admin | Sprint 18 / FPRM-287. Cross-deal quote dashboard. Filters: `status` / `partner_org_id` / `feature_plan` / `search` (matches `quote_name` or `deal_name`). Pagination: `page` (>=1) / `page_size` (1–100, default 20). Returns `{items, total, page, page_size, summary}`. `summary` rolls up system-wide totals and pipeline value (expired excluded). Joins Quote → active QuoteVersion → DealRegistration → PartnerOrganization. |
 | GET | `/partners/{partner_org_id}/quotes` | partner_admin / partner_user (own org only) | Sprint 18 / FPRM-291. Partner-facing quote history scoped to the user's own org. Internal users are 403'd (use `/internal/quotes`). Optional `?status=` filter. Returns `{items: [{quote_name, deal_name, feature_plan, currency_code, grand_total_after_discount, status, active_version, active_scenario, ...}]}` with grand totals joined from the active non-deleted version. |
+| GET | `/internal/config/pricing/plans` | any authenticated user; `?include_inactive=true` admin-only | Sprint 15; Sprint 19 / FPRM-300 (AD-25) extended with `?include_inactive=true` (admin-only) to surface deactivated + scheduled rows. Always includes `is_active` in the response. Ordered by `plan_code, effective_from DESC`. |
+| POST | `/internal/config/pricing/plans` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300 (AD-25). Create a new FeaturePlanPrice row. Required body: `plan_code` (starter/professional/enterprise), `feature_pack_annual`, `transactional_user_annual`, `limited_tech_user_annual`, `effective_from` (ISO date). Audit `pricing.plan_price_created`. |
+| PATCH | `/internal/config/pricing/plans/{plan_price_id}` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Update price fields, effective_from, or is_active. Audit `pricing.plan_price_updated`. |
+| DELETE | `/internal/config/pricing/plans/{plan_price_id}` | system_admin only | Sprint 19 / FPRM-300. Soft delete (`is_active=False`). 422 if it would leave a plan with zero active rows. Audit `pricing.plan_price_deactivated`. |
+| GET | `/internal/config/pricing/volume-tiers` | any authenticated user; `?include_inactive=true` admin-only | Sprint 19 / FPRM-300. Returns active `VolumeDiscountTier` rows ordered by `min_users`. |
+| POST | `/internal/config/pricing/volume-tiers` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Create a tier. Body: `min_users`, `max_users` (null = no upper bound), `transactional_user_discount_pct`, `limited_tech_user_discount_pct`. 422 if the new band overlaps any active tier. Audit `pricing.volume_tier_created`. |
+| PATCH | `/internal/config/pricing/volume-tiers/{tier_id}` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Update min/max/discounts/is_active. Min/max changes re-run the overlap check against other active tiers. Audit `pricing.volume_tier_updated`. |
+| DELETE | `/internal/config/pricing/volume-tiers/{tier_id}` | system_admin only | Sprint 19 / FPRM-300. Soft delete with gap-coverage check: 422 if removing this tier would leave a gap unless `?force=true`. Audit `pricing.volume_tier_deactivated`. |
+| GET | `/internal/config/pricing/addons` | any authenticated user; `?include_inactive=true` admin-only | Sprint 15; Sprint 19 / FPRM-300 extended with `?include_inactive=true` admin-only. Always includes `is_active`. |
+| POST | `/internal/config/pricing/addons` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Create an add-on. Body: `addon_key` (unique, case-insensitive), `display_name`, `monthly_price`, `available_starter`, `available_professional`. `included_enterprise` always True. 422 on duplicate key. Audit `pricing.addon_created`. |
+| PATCH | `/internal/config/pricing/addons/{addon_id}` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Update display_name / monthly_price / availability flags / is_active. Audit `pricing.addon_updated`. |
+| DELETE | `/internal/config/pricing/addons/{addon_id}` | system_admin only | Sprint 19 / FPRM-300. Soft delete (`is_active=False`). Audit `pricing.addon_deactivated`. |
+| GET | `/admin/audit-log` | system_admin (`user_management:read_all`) | Existing endpoint; Sprint 19 / FPRM-308 adds `?action_prefix=` (matches `action LIKE '{prefix}.%'`) and `?export=csv` (text/csv with `Content-Disposition: attachment`). Same Bearer-header auth as JSON path (AD-20). |
 
 
 
@@ -1002,6 +1015,24 @@ The shared helpers live in `backend/approval_helpers.py` (`get_approval_step_con
 **Consequence:** The currency picker in `QuoteForm.jsx` is `disabled={isNewVersion}` already — currency stays constant across a quote's lifetime to keep version comparisons meaningful. PDF and frontend share the same nine seeded currency codes (USD/EUR/GBP/AUD/CAD/ZAR/AED/SAR/EGP); adding a new currency is a single-line addition to both `CURRENCY_SYMBOL` maps with no schema change.
 
 **Do not:** Persist currency symbols in any numeric column. Do not bake FX conversion into the quote engine — Phase 5 is explicitly display-only. Do not split `formatCurrency` into per-page helpers; the canonical implementation lives in `utils/currency.js`.
+
+---
+
+### AD-25 — Pricing catalogue is admin-maintainable (no Alembic migration required for price changes)
+
+**Decision:** After Sprint 19 (FPRM-300 / FPRM-308), every row in `feature_plan_prices`, `volume_discount_tiers`, and `addon_catalog_items` is a data operation via the `/internal/config/pricing/*` admin API instead of an Alembic migration. The admin UI lives on a new "Pricing" tab inside `frontend/src/pages/ProgramConfig.jsx`. Soft-delete is the only deactivation mechanism (`is_active = False`) — rows are never hard-deleted, so the quote engine and audit history both stay coherent. Audit events are emitted on every write with action prefix `pricing.*` so `/admin/audit-log?action_prefix=pricing` surfaces the change timeline; CSV download follows AD-20 (fetch + Bearer + Blob).
+
+Three guardrails preserve quote-engine integrity:
+
+* **Last-active-row guard on plan prices.** `DELETE /internal/config/pricing/plans/{id}` returns 422 if the row would leave its `plan_code` with zero active rows. Add a replacement row first.
+* **Range-overlap validation on volume tiers.** POST / PATCH reject ranges that intersect any other active tier. DELETE refuses (with a gap-coverage check) to leave the active set non-contiguous unless `?force=true`.
+* **Effective-date scheduling on plan prices.** `quote_engine.calculate_quote` filters `effective_from <= today` so a row with a future date is stored but inert until its date — the admin UI badges those rows as "Scheduled".
+
+**Why:** Pricing data lived inside migration 023 throughout Phase 5, which meant every price change required a code PR + CI run + Railway deploy. That cadence is incompatible with how partner pricing actually moves (commercial decisions, ad-hoc tier adjustments, scheduled annual increases). Moving the data behind an admin API keeps the schema frozen at migration 026, preserves the audit trail, and makes admin actions reversible (`is_active=True` again).
+
+**Consequence:** All future pricing changes — new plans, new add-ons, discount adjustments, scheduled annual increases — are POSTs / PATCHes by `channel_ops_admin` or `system_admin`. Deactivations are `system_admin` only. The quote engine reads pricing live per AD-18, so changes take effect immediately for new quotes; existing `QuoteVersion` rows are never recalculated (they are snapshots at quote-creation time, by design).
+
+**Do not:** Write a new Alembic migration to change a price. Do not hard-delete a pricing row — always soft delete via the admin API. Do not bypass the engine's `effective_from <= today` filter; scheduled rows are intentional. Do not move the `Pricing` tab into a separate page — it belongs alongside Approval Workflow / Tiers / Activation Checklist as program-config.
 
 ---
 

@@ -1878,3 +1878,97 @@ Test baseline entering Phase 6: **~556 passing**
 Phase 5 epic status: **FPRM-238 — Done**
 
 ---
+
+## Sprint 19 — Pricing Catalogue Admin (Phase 6 Sprint 1 of 4)
+
+**Started:** 2026-05-20
+**Closed:** 2026-05-20 (single-day intensive)
+**Fix Version ID:** `10802`
+**Native Sprint ID:** `775`
+**Phase 6 epic:** **FPRM-299** — Pricing Admin, Services Quote & Partner Enablement
+
+Sprint 19 made the Sprint 15 pricing catalogue admin-maintainable. Every row in `feature_plan_prices`, `volume_discount_tiers`, and `addon_catalog_items` — previously seed-only via migration 023 — is now a data operation behind a new admin CRUD API + Program Config UI. AD-25 codifies the convention that pricing changes are never new Alembic migrations.
+
+### Sprint 19 stories — outcome
+
+| Key | Story | Pts | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-300 | Pricing catalogue backend — admin CRUD API | 6 | Done | #124 | New `backend/routers/pricing_admin_router.py` with 9 write endpoints. Existing GETs for plans + addons gained `?include_inactive=true` (admin-only). Soft-delete pattern. Last-active-row guard on plan prices. Range-overlap validation on volume tiers; gap-aware DELETE with `?force=true` override. Case-insensitive unique addon_key. Audit events under `pricing.*` action prefix. 18 unit tests in `test_pricing_admin.py`. |
+| FPRM-304 | Pricing catalogue admin UI — Program Config integration | 8 | Done | #125 | New "Pricing" tab on `/internal/program-config` with three sub-sections (Feature Plan Prices / Volume Discount Tiers / Add-on Catalogue). Inline edit + soft-delete + add forms. Status badges per plan price row (Active / Scheduled / Inactive). View-history + show-inactive toggles. Reactivate flow. Persistent amber warning banner: "Price changes take effect immediately for all new quotes. Existing quote versions are not affected." Role-gated: channel_ops_admin / system_admin can edit; system_admin only for deactivation. Auto-generated addon_key on new add-ons. |
+| FPRM-308 | Pricing catalogue audit trail and effective-date management | 4 | Done | #126 | Backend: `/admin/audit-log` gains `?action_prefix=pricing` and `?export=csv` (AD-20 pattern). `quote_engine.calculate_quote` filters `effective_from <= date.today()` so scheduled future-dated rows are stored but inert. +5 unit tests. Frontend: new `PricingHistoryPanel` collapsible at the bottom of the Pricing tab (system_admin only — `/admin/audit-log` requires `user_management:read_all`) groups events by date with a discreet `Export CSV` button. New preview impact widget in plan-price EditRow showing a 5T + 5L compact preview plus an amber change-impact banner when any field differs from the original. AD-25 codifies the pricing-as-data pattern. |
+| FPRM-311 | Sprint 19 docs and closeout | 3 | Done | #<this PR> | This entry + Phase 6 sprint summary table + PROJECT_CONTEXT.md Section 1 (13 new / extended endpoints) + AD-25 + CLAUDE.md (current-state paragraph, Sprint 19 IDs, AD-25 reference). |
+
+All 11 sub-tasks (FPRM-301..303, 305..307, 309..310, 312..314) closed Done.
+
+### What landed on `main` during Sprint 19
+
+- `backend/routers/pricing_admin_router.py` (new) — 9 write endpoints + 1 GET for volume tiers
+- `backend/routers/quotes_router.py` — `?include_inactive=true` on the two existing pricing GETs
+- `backend/routers/admin_router.py` — `?action_prefix` filter and `?export=csv` on `/admin/audit-log`
+- `backend/quote_engine.py` — added `from datetime import date`; engine now filters `effective_from <= date.today()`
+- `backend/tests/test_pricing_admin.py` (new, 23 tests total: 18 CRUD + 5 audit/effective-date)
+- `backend/main.py` — registered `pricing_admin_router`
+- `frontend/src/pages/ProgramConfig.jsx` — new `pricing` tab + three sub-sections + `PricingHistoryPanel` + preview impact widget
+- `PROJECT_CONTEXT.md` — Section 1 (13 new/extended endpoints), Section 6 (AD-25)
+- `CLAUDE.md` — current-state paragraph, Sprint 19 fix/native IDs, AD-25 reference
+
+### API endpoints added (Sprint 19)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/internal/config/pricing/plans` | channel_ops_admin / system_admin | Create FeaturePlanPrice |
+| PATCH | `/internal/config/pricing/plans/{plan_price_id}` | channel_ops_admin / system_admin | Update prices, effective_from, is_active |
+| DELETE | `/internal/config/pricing/plans/{plan_price_id}` | system_admin only | Soft delete; last-active-row guard |
+| GET | `/internal/config/pricing/volume-tiers` | any internal | New read endpoint |
+| POST | `/internal/config/pricing/volume-tiers` | channel_ops_admin / system_admin | Create with overlap check |
+| PATCH | `/internal/config/pricing/volume-tiers/{tier_id}` | channel_ops_admin / system_admin | Update with overlap re-check |
+| DELETE | `/internal/config/pricing/volume-tiers/{tier_id}` | system_admin only | Soft delete with gap warning + `?force=true` |
+| POST | `/internal/config/pricing/addons` | channel_ops_admin / system_admin | Unique addon_key (case-insensitive) |
+| PATCH | `/internal/config/pricing/addons/{addon_id}` | channel_ops_admin / system_admin | Update display / price / availability |
+| DELETE | `/internal/config/pricing/addons/{addon_id}` | system_admin only | Soft delete |
+
+Extended endpoints:
+
+| Method | Path | Change |
+|---|---|---|
+| GET | `/internal/config/pricing/plans` | + `?include_inactive=true` (admin-only) |
+| GET | `/internal/config/pricing/addons` | + `?include_inactive=true` (admin-only) |
+| GET | `/admin/audit-log` | + `?action_prefix=pricing` and `?export=csv` |
+
+Total API surface ends Sprint 19 at **~127 endpoints** (Sprint 18 baseline 118 + 9 new write endpoints) + 8 endpoints with the `?export=csv` extension (Sprint 18 baseline 7 + `/admin/audit-log`).
+
+### Migrations added
+
+None. Alembic head remains **026** (Sprint 17). All pricing tables shipped in migration 023 (Sprint 15). AD-25 codifies the convention that pricing changes are data operations, not migrations.
+
+### Test count
+
+| Source | Count |
+|---|---|
+| Sprint 18 + post-phase fixes baseline | 556 |
+| Story 1 pricing admin CRUD tests | +18 |
+| Story 3 audit + effective-date tests | +5 |
+| **Sprint 19 total** | **579** |
+
+(A precise post-merge count is asserted in the Phase C closeout report after `pytest backend/tests/ -v` against merged `main`.)
+
+### Sprint 19 lessons
+
+1. **Auditing `action` ≠ `object_type`.** The audit log column is `action` (dot-notation like `pricing.plan_price_created`), not `event_type` as the prompt's pseudocode suggested. The existing `object_type` filter does an exact-match on the model name (`feature_plan_price`). Reading `audit.py` + `admin_router.py` *before* writing made the right design jump: add a new `action_prefix` query param that filters `AuditLog.action LIKE 'pricing.%'` instead of overloading the existing `object_type` filter. Lesson: confirm column names + existing filter semantics first; the prompt's pseudocode is a sketch, not a spec.
+2. **Scheduled rows mean the engine needs a `<= today` filter.** Sprint 15 ordered by `effective_from DESC` and took the first row — which would immediately apply any future-dated row, breaking the "Scheduled" badge concept. Adding `FeaturePlanPrice.effective_from <= date.today()` to the engine query is the smallest change that makes the badge meaningful. Existing tests (all using 2024-01-01 seed dates) are unaffected.
+3. **/admin/audit-log permission gating constrains who can see the history panel.** `user_management:read_all` is system_admin-only, so the frontend `PricingHistoryPanel` is shown only to system_admin. Channel_ops_admin can still edit pricing — they just can't view the change history in the UI. Loosening the permission was tempting but out of scope for Sprint 19; the design note is captured here so a future sprint can decide whether to widen it.
+4. **calculate_quote signature is `qty_transactional` / `qty_limited_tech_quoted`, not `qty_transactional_users` / `qty_limited_tech_users`.** The Story 3 effective-date tests initially passed the API-layer field names and got `TypeError`. The router (`quotes_router.py`) re-maps the field names; the engine uses its own. When writing engine-level tests, read the signature, don't infer it from the API.
+5. **No migration is a feature, not an omission.** Sprint 19 ships purely as API + UI changes — Alembic head stays at 026 throughout. AD-25 codifies this as the standing convention: pricing is data, not schema. The same will apply to any future admin-config sprint that operates on already-existing tables.
+
+### Phase 6 progress (running)
+
+| Sprint | Theme | Stories | Points | Status |
+|---|---|---|---|---|
+| 19 | Pricing catalogue admin (CRUD API + UI + audit trail) | 4 | 21 | **Done** |
+| 20 | Implementation services pricing quote | TBD | TBD | Pending design |
+| 21 | TBD | TBD | TBD | Pending |
+| 22 | TBD | TBD | TBD | Pending |
+
+(Sprint 20 deferred pending critical design input from the user on services pricing model — per Sprint 19 prompt.)
+
+---
