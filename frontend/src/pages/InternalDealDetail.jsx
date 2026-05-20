@@ -131,6 +131,248 @@ function DisplayField({ label, value }) {
 
 
 
+// FPRM-316 -- Section A additional + Section B SPICED read-only display.
+
+const _DI_SECTION_A = [
+
+  { key: 'engagement_date',           label: 'Engagement date' },
+
+  { key: 'prospect_contact_name',     label: 'Prospect contact name' },
+
+  { key: 'prospect_contact_position', label: 'Contact position' },
+
+  { key: 'prospect_phone',            label: 'Prospect phone' },
+
+  { key: 'prospect_website',          label: 'Website / LinkedIn' },
+
+  { key: 'industry_sector',           label: 'Industry sector' },
+
+  { key: 'company_size',              label: 'Company size' },
+
+  { key: 'compiled_by',               label: 'Compiled by' },
+
+  { key: 'feature_plan_preference',   label: 'Indicative feature plan' },
+
+]
+
+const _DI_SYSTEMS = [
+
+  { key: 'current_system',    label: 'Current System' },
+
+  { key: 'old_system',        label: 'Old System' },
+
+  { key: 'inventory_stores',  label: 'Inventory / Stores' },
+
+  { key: 'work_orders_prs',   label: 'Work Orders & PRs' },
+
+  { key: 'monitoring_system', label: 'Monitoring' },
+
+]
+
+const _DI_FEATURES = [
+
+  { key: 'need_asset_depreciation',     label: 'Asset Depreciation' },
+
+  { key: 'need_wo_wr',                  label: 'WO / WR' },
+
+  { key: 'need_reports',                label: 'Reports' },
+
+  { key: 'need_tool_management',        label: 'Tool Management' },
+
+  { key: 'need_purchasing',             label: 'Purchasing' },
+
+  { key: 'need_integration',            label: 'Integration' },
+
+  { key: 'need_multi_language',         label: 'Multi-language' },
+
+  { key: 'need_asset_management',       label: 'Asset Management' },
+
+  { key: 'need_document_management',    label: 'Document Management' },
+
+  { key: 'need_cost_tracking',          label: 'Cost Tracking' },
+
+  { key: 'need_monitoring',             label: 'Monitoring' },
+
+  { key: 'need_schedule_third_parties', label: 'Schedule Third Parties' },
+
+  { key: 'need_track_labour',           label: 'Track Labour' },
+
+]
+
+const _DI_NARRATIVES = [
+
+  { key: 'about_client',   label: 'About the Client' },
+
+  { key: 'pain',           label: 'Pain (P)' },
+
+  { key: 'impact',         label: 'Impact (I)' },
+
+  { key: 'critical_event', label: 'Critical Event (CE)' },
+
+  { key: 'decision',       label: 'Decision (D)' },
+
+  { key: 'next_steps',     label: 'Next Steps' },
+
+]
+
+function _hasAnySectionData(deal) {
+
+  if (!deal) return false
+
+  const keys = [
+
+    ..._DI_SECTION_A.map((f) => f.key),
+
+    ..._DI_SYSTEMS.map((f) => f.key),
+
+    ..._DI_FEATURES.map((f) => f.key),
+
+    ..._DI_NARRATIVES.map((f) => f.key),
+
+    'integration_with', 'languages_required',
+
+  ]
+
+  return keys.some((k) => {
+
+    const v = deal[k]
+
+    return v !== null && v !== undefined && v !== ''
+
+  })
+
+}
+
+function _featureIcon(v) {
+
+  if (v === true) return '✅'
+
+  if (v === false) return '❌'
+
+  return '—'
+
+}
+
+function DealInformationSection({ deal }) {
+
+  const [open, setOpen] = useState(false)
+
+  const hasData = _hasAnySectionData(deal)
+
+  const headerNote = hasData ? '' : ' — not yet completed by partner'
+
+  return (
+
+    <section className="fp-card" style={{ marginBottom: 16 }}>
+
+      <button
+
+        type="button"
+
+        onClick={() => setOpen((v) => !v)}
+
+        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, width: '100%', textAlign: 'left' }}
+
+      >
+
+        <h2 className="fp-section-title" style={{ margin: 0 }}>
+
+          {open ? '▼' : '▶'} Deal Information (Section A + B SPICED){headerNote}
+
+        </h2>
+
+      </button>
+
+      {open && (
+
+        <div style={{ marginTop: 12 }}>
+
+          {/* Section A grid */}
+
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Section A — Prospect &amp; Engagement</h3>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+
+            {_DI_SECTION_A.map((f) => (
+
+              <DisplayField key={f.key} label={f.label} value={deal[f.key]} />
+
+            ))}
+
+          </div>
+
+          {/* Current Systems */}
+
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Situation (S) — Current Systems</h3>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+
+            {_DI_SYSTEMS.map((f) => (
+
+              <DisplayField key={f.key} label={f.label} value={deal[f.key]} />
+
+            ))}
+
+          </div>
+
+          {/* Features Required */}
+
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Features Required</h3>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 16px', marginBottom: 12, fontSize: 'var(--fp-fs-sm)' }}>
+
+            {_DI_FEATURES.map((f) => (
+
+              <div key={f.key}>{_featureIcon(deal[f.key])} {f.label}</div>
+
+            ))}
+
+          </div>
+
+          {(deal.integration_with || deal.languages_required) && (
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+
+              {deal.integration_with && <DisplayField label="Integrate with" value={deal.integration_with} />}
+
+              {deal.languages_required && <DisplayField label="Languages required" value={deal.languages_required} />}
+
+            </div>
+
+          )}
+
+          {/* SPICED Narratives */}
+
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>SPICED Narrative</h3>
+
+          <div style={{ display: 'grid', gap: 12 }}>
+
+            {_DI_NARRATIVES.map((f) => (
+
+              <div key={f.key}>
+
+                <div style={{ fontSize: 'var(--fp-fs-xs)', fontWeight: 600, color: 'var(--fp-text-secondary)', marginBottom: 2 }}>{f.label}</div>
+
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fp-fs-sm)' }}>{deal[f.key] || '—'}</div>
+
+              </div>
+
+            ))}
+
+          </div>
+
+        </div>
+
+      )}
+
+    </section>
+
+  )
+
+}
+
+
+
 function ActionModal({ mode, deal, onClose, onConfirm, saving }) {
 
   const [text, setText] = useState('')
@@ -828,6 +1070,13 @@ export default function InternalDealDetail() {
             </div>
 
           </section>
+
+
+
+          {/* FPRM-316 -- Section A additional prospect fields + Section B
+              (Current Systems / Features Required / SPICED) -- read-only. */}
+
+          <DealInformationSection deal={deal} />
 
 
 
