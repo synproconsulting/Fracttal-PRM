@@ -1965,10 +1965,92 @@ None. Alembic head remains **026** (Sprint 17). All pricing tables shipped in mi
 | Sprint | Theme | Stories | Points | Status |
 |---|---|---|---|---|
 | 19 | Pricing catalogue admin (CRUD API + UI + audit trail) | 4 | 21 | **Done** |
-| 20 | Implementation services pricing quote | TBD | TBD | Pending design |
+| 20 | Deal enhancements (Section A + B SPICED form, internal create, addon category/sort) | 5 | 22 | **Done** |
 | 21 | TBD | TBD | TBD | Pending |
 | 22 | TBD | TBD | TBD | Pending |
 
-(Sprint 20 deferred pending critical design input from the user on services pricing model — per Sprint 19 prompt.)
+(Sprint 20 was reframed from "Implementation services pricing quote" to "Deal enhancements" mid-Phase 6 — services quote deferred again pending business design input.)
+
+---
+
+## Sprint 20 — Deal Enhancements (Phase 6 Sprint 2 of 4)
+
+**Started:** 2026-05-20
+**Closed:** 2026-05-20 (single-day intensive)
+**Fix Version ID:** `10835`
+**Native Sprint ID:** `808`
+**Phase 6 epic:** **FPRM-299** — Pricing Admin, Services Quote & Partner Enablement
+
+Sprint 20 was reframed from the originally-planned "Implementation Services Pricing Quote" (deferred again pending business design input) into a **Deal Enhancements** sprint addressing two UI-testing-discovered gaps and one catalogue scalability problem: (1) the deal registration form was missing the full DEAL INFORMATION specification (Section A additional prospect/engagement fields + Section B Current State and Needs Assessment using the SPICED framework); (2) only partners could create deal registrations — channel managers had no way to capture an opportunity identified during a partner call; (3) the add-on catalogue had grown to 68 items with no organisation, making the Pricing tab and quote-form selector unwieldy.
+
+### Sprint 20 stories — outcome
+
+| Key | Story | Pts | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-315 | Deal schema extension — Section A + Section B SPICED + `created_on_behalf_of` | 5 | Done | #129 | Migration 027 adds 36 columns to `deal_registrations`. Section A (9): engagement_date, prospect_phone, compiled_by, prospect_contact_name/position, prospect_website, industry_sector, company_size, feature_plan_preference. Section B Current Systems (5): current_system/old_system/inventory_stores/work_orders_prs/monitoring_system. Section B Feature Requirements (15): 13 need_* booleans + integration_with + languages_required free-text. Section B SPICED narratives (6 Text): about_client, pain, impact, critical_event, decision, next_steps. Story 3's `created_on_behalf_of` (Boolean NOT NULL default False, `server_default='false'` for Postgres backfill) consolidated into the same migration. 7 model-level tests cover Section A round-trip, Section B current systems, feature requirements with True/False/null mix, SPICED narratives, no-regression default-null, on-behalf flag, and a schema-presence smoke test. |
+| FPRM-316 | Deal form update — full Section A + Section B in portal and internal view | 6 | Done | #130 | Backend `CREATABLE_FIELDS` extended with 35 new keys (`created_on_behalf_of` deliberately excluded — server-only). New `_coerce_dates` helper parses ISO date strings for `estimated_close_date` and `engagement_date`, fixing a latent Postgres/SQLite parity issue. Partner portal `DealRegistrationForm.jsx` gains two new sections: "Additional prospect details" (Section A) and "Current State and Needs Assessment (SPICED)" (Section B with About-the-Client textarea, Current Systems table of 5 dropdowns, Features Required checkbox grid with conditional integration_with / languages_required follow-ups, and SPICED narrative textareas). `compiled_by` pre-populates with the logged-in user's email on a new draft. Internal `InternalDealDetail.jsx` gets a new collapsible `DealInformationSection` showing all Section A + B read-only with ✅/❌/— for the booleans. 6 API-level tests cover Section A round-trip, Section B PATCH, no-regression bare create, `feature_plan_preference` returned on GET, three-state boolean handling, and `created_on_behalf_of` whitelist lockdown. **Spec deviation**: the Phase 6 doc claimed `qty_transactional_users` and `qty_limited_tech_users` already lived on `deal_registrations`, but they're on `quote_versions` — those fields were **omitted** from the partner deal form to honour the user's "two migrations in Sprint 20" constraint. User counts continue to be set at quote time. |
+| FPRM-317 | Internal deal creation — channel managers create deals on behalf of partners | 4 | Done | #131 | New `_resolve_create_partner` helper in `deal_registrations_router.py` consolidates auth for POST: partner_admin uses JWT (existing path, activation-gated); channel_manager / channel_ops_admin / system_admin must supply `partner_org_id` in body (validated against `PartnerStatus.active`); activation gate **skipped** on the internal path; `created_on_behalf_of` set True; distinct `deal_registration.created_internal` audit action. Frontend: "+ New Deal" primary button on `DealQueue.jsx` opens a focused `NewDealModal` (Partner Org selector loading from `/internal/partners?status=active` + Section A core fields + opening SPICED textareas). After save, channel manager is navigated to the deal detail page. Grey "Created by Channel Manager" badge on `InternalDealDetail.jsx` header when `created_on_behalf_of=True`. 7 API-level tests cover the happy path, missing `partner_org_id` (422), nonexistent partner (404), suspended partner (422), partner_admin no-regression, audit event presence, and partner_user 403. **Spec deviation**: the modal does not embed the full `DealRegistrationForm.jsx` page — extracting that 500-line page into a reusable presentational component was beyond the 4-point scope. Modal captures essentials; partner completes remaining Section B fields. |
+| FPRM-318 | Add-on catalogue category and sort order | 4 | Done | #132 | Migration 028 adds `category` (String, nullable) and `sort_order` (Integer, NOT NULL, default 0 via `server_default='0'`) to `addon_catalog_items`. `_serialise_addon` returns both new fields. PATCH accepts `category` (empty string clears to null) and `sort_order` (negatives clamped to 0; non-int → 422). GET `/internal/config/pricing/addons` accepts `?category=` filter (`__null__` matches uncategorised); orders by `(category, sort_order, display_name)`. Per AD-25 the taxonomy itself is admin-maintainable data — migration only creates the columns. Pricing admin tab adds category filter dropdown + inline-editable Category and Sort columns; create flow does POST then follow-up PATCH so admins get one-click create-with-organisation. Quote-form add-on selector groups by category with uppercase section headers; uncategorised items in a final "Other" group. 5 backend tests cover defaults, PATCH set/clear, category filter, negative clamp + invalid 422, and `__null__` filter. |
+| FPRM-319 | Sprint 20 docs and closeout | 3 | Done | #<this PR> | This entry + Sprint 20 row in Phase 6 progress table + PROJECT_CONTEXT.md endpoint additions + CLAUDE.md (current-state paragraph, Sprint 20 IDs, refreshed tech-debt entries: services-quote deferral note, full-form-reuse polish backlog, empty category taxonomy follow-up). |
+
+All 12 sub-tasks (FPRM-320..328 implementation, FPRM-329..331 docs/closeout) closed Done.
+
+### What landed on `main` during Sprint 20
+
+- `backend/models.py` — 36 new columns on `DealRegistration`; 2 new columns on `AddonCatalogItem`
+- `backend/alembic/versions/027_extend_deal_registrations.py` (new) — Section A + B + `created_on_behalf_of`
+- `backend/alembic/versions/028_addon_category_sort_order.py` (new) — addon `category` and `sort_order`
+- `backend/routers/deal_registrations_router.py` — `CREATABLE_FIELDS` extended; `_coerce_dates` helper; `_resolve_create_partner` helper; POST refactored for dual partner/internal paths; new `deal_registration.created_internal` audit action
+- `backend/routers/pricing_admin_router.py` — `_serialise_addon` extended; PATCH accepts category/sort_order
+- `backend/routers/quotes_router.py` — GET addons accepts `?category=` filter, returns new fields, orders by `(category, sort_order, display_name)`
+- `backend/tests/test_deal_registration_model.py` — +7 model tests
+- `backend/tests/test_deal_registrations.py` — +6 Section A/B API tests + +7 internal create tests
+- `backend/tests/test_pricing_admin.py` — +5 addon category/sort tests
+- `frontend/src/pages/DealRegistrationForm.jsx` — Section A additional details + Section B SPICED sections; `compiled_by` JWT pre-fill
+- `frontend/src/pages/InternalDealDetail.jsx` — collapsible `DealInformationSection` + on-behalf badge
+- `frontend/src/pages/DealQueue.jsx` — "+ New Deal" button + `NewDealModal` with Partner Org selector
+- `frontend/src/pages/ProgramConfig.jsx` — `AddonCatalogueSection` gains Category filter dropdown + Category and Sort columns + inline edit + add-row support
+- `frontend/src/pages/QuoteForm.jsx` — `groupedAddons` memo groups selector by category with section headers
+
+### API endpoints — Sprint 20 changes
+
+| Method | Path | Change |
+|---|---|---|
+| POST | `/deal-registrations` | Now accepts channel_manager / channel_ops_admin / system_admin with `partner_org_id` in body (FPRM-317). Activation gate skipped for internal-create path. Sets `created_on_behalf_of=True` and logs `deal_registration.created_internal`. Existing partner_admin path unchanged. |
+| POST | `/deal-registrations` (partner_admin) | Body whitelist extended with 35 new Section A + B keys (FPRM-316). `created_on_behalf_of` deliberately excluded. |
+| PATCH | `/deal-registrations/{id}` | Same body whitelist extension (FPRM-316). Date-string coercion via `_coerce_dates`. |
+| GET | `/deal-registrations/{id}` | Returns all 36 new Section A + B columns + `created_on_behalf_of` (via existing `_serialize` which auto-walks `__table__.columns`). |
+| GET | `/internal/config/pricing/addons` | + `?category=` filter (`__null__` for uncategorised). Response now includes `category` and `sort_order`. Ordering: `(category, sort_order, display_name)`. (FPRM-318) |
+| PATCH | `/internal/config/pricing/addons/{id}` | Body now accepts `category` (empty string clears to null) and `sort_order` (negatives clamped, non-int → 422). (FPRM-318) |
+
+No new endpoints — Sprint 20 extends existing ones. Total API surface unchanged at ~127.
+
+### Migrations added
+
+| Revision | File | Purpose |
+|---|---|---|
+| 027 | `027_extend_deal_registrations.py` | 36 new columns on `deal_registrations` (Section A + B SPICED + `created_on_behalf_of`) |
+| 028 | `028_addon_category_sort_order.py` | `category` (nullable) + `sort_order` (NOT NULL default 0) on `addon_catalog_items` |
+
+Alembic head bumps from 026 → **028**.
+
+### Test count
+
+| Source | Count |
+|---|---|
+| Sprint 19 baseline | 579 |
+| Story 1 deal schema model tests | +7 |
+| Story 2 deal API Section A/B tests | +6 |
+| Story 3 internal-create tests | +7 |
+| Story 4 addon category/sort tests | +5 |
+| **Sprint 20 total** | **604** |
+
+### Sprint 20 lessons
+
+1. **The spec's "already exists" notes are not always correct.** The Phase 6 doc claimed `qty_transactional_users` / `qty_limited_tech_users` already lived on `deal_registrations` — they're on `quote_versions`. Cross-check field-location claims against `models.py` before writing form fields that depend on them. Story 2 omitted those two fields rather than violate the user's "two migrations in Sprint 20" constraint.
+2. **SQLite tests catch Postgres/SQLite-divergent ORM behaviour the production runtime hides.** The existing `estimated_close_date` field had been accepting ISO date strings in Postgres for months — when Story 2 added the first API test that POSTed a date string, SQLite errored with "Date type only accepts Python date objects". The `_coerce_dates` helper fixes both the new and the pre-existing field. Lesson: if a column type needs coercion, do it server-side at the boundary regardless of which DB driver currently masks it.
+3. **Whitelist-based POST/PATCH bodies need explicit exclusion notes.** `created_on_behalf_of` was deliberately left out of `CREATABLE_FIELDS` so partners can't toggle it via PATCH. Without a comment, a future hand could "fix" the omission and silently break the FPRM-317 server-only invariant. The lockdown test guards behaviour; the comment in `CREATABLE_FIELDS` explains intent.
+4. **Modal "reuse the full form" is often a 3-point ask hidden in a 2-point subtask.** The spec said embed the partner-side `DealRegistrationForm.jsx` in the internal modal. That 500-line page has page-routing assumptions, save-vs-submit logic, and JWT-bound state — refactoring it into a reusable presentational component is real work. Story 3 chose a focused modal capturing essentials instead, documented the tradeoff in the PR, and added the full-reuse refactor to tech debt. Bounded scope > unbounded fidelity.
+5. **Migrations stay sequential; admin data does not.** Story 4 added migration 028 for `addon_catalog_items` columns but did **not** seed categories — those flow through the pricing admin API per AD-25. The migration is the smallest possible thing that unblocks the UI; the taxonomy itself is admin-maintained data. Empty taxonomies show as "Other" in the quote form, which is acceptable until ops populates them.
 
 ---
