@@ -1106,3 +1106,65 @@ def list_internal_quotes(
         "summary": summary,
     }
 
+
+# ===================== Sprint 18 — Partner quote history =====================
+
+
+@router.get("/partners/{partner_org_id}/quotes")
+def list_partner_quotes(
+    partner_org_id: uuid.UUID,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Partner-only view of every quote across the org's deals.
+
+    Internal users are blocked here — they have the richer cross-org dashboard
+    at GET /internal/quotes.
+    """
+    role = UserRole(current_user.role)
+    if role in WRITE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Internal users must use GET /internal/quotes",
+        )
+    if role not in PARTNER_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_org_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    base = (
+        db.query(Quote, QuoteVersion, DealRegistration)
+        .join(
+            QuoteVersion,
+            and_(
+                QuoteVersion.quote_id == Quote.id,
+                QuoteVersion.version_number == Quote.active_version,
+                QuoteVersion.is_deleted.is_(False),
+            ),
+        )
+        .join(DealRegistration, DealRegistration.id == Quote.deal_id)
+        .filter(Quote.partner_org_id == partner_org_id)
+    )
+    if status:
+        base = base.filter(Quote.status == status)
+
+    rows = base.order_by(Quote.created_at.desc()).all()
+    items = [
+        {
+            "id": str(quote.id),
+            "quote_name": quote.quote_name or "Untitled Quote",
+            "deal_id": str(quote.deal_id),
+            "deal_name": deal.deal_name or "—",
+            "currency_code": quote.currency_code,
+            "feature_plan": version.feature_plan,
+            "grand_total_after_discount": float(version.grand_total_after_discount),
+            "status": quote.status,
+            "active_version": quote.active_version,
+            "active_scenario": quote.active_scenario,
+            "created_at": quote.created_at.isoformat() if quote.created_at else None,
+        }
+        for quote, version, deal in rows
+    ]
+    return {"items": items}
+
