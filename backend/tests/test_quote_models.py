@@ -8,7 +8,7 @@ from decimal import Decimal
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -47,12 +47,27 @@ def engine():
 
 @pytest.fixture()
 def db(engine):
+    """Per-test session. Truncates the quote/pricing tables on teardown so
+    each test starts from a clean slate (matches the pattern used by
+    test_partner_dashboard.py / test_dashboard.py).
+    """
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     s = Session()
     try:
         yield s
     finally:
         s.rollback()
+        # Wipe in dependency order
+        for table in (
+            "quote_line_items", "quote_versions", "quotes",
+            "addon_catalog_items", "volume_discount_tiers", "feature_plan_prices",
+            "deal_registrations", "users", "partner_organizations",
+        ):
+            try:
+                s.execute(text(f"DELETE FROM {table}"))
+            except Exception:
+                pass
+        s.commit()
         s.close()
 
 
@@ -103,7 +118,7 @@ def seed_pricing(db):
         ("advanced_apis",                 "Advanced APIs",                         Decimal("145.00"), True,  True),
         ("custom_request_portal",         "Custom Request Portal",                 Decimal("95.00"),  False, True),
         ("fracttal_hub",                  "FRACTTAL_HUB",                          Decimal("55.00"),  True,  True),
-        ("fracttal_hub_cloud",            "FRACTTAL_HUB_CLOUD",                    Decimal("55.00"),  True,  True),
+        ("fracttal_hub_cloud",            "FRACTTAL_HUB_CLOUD",                   Decimal("55.00"),  True,  True),
         ("automator_pro",                 "Automator Pro",                         Decimal("145.00"), True,  False),
         ("fracttal_bi_corp",              "Fracttal BI Corp",                      Decimal("95.00"),  True,  False),
         ("apis",                          "APIs",                                  Decimal("245.00"), False, True),
@@ -138,7 +153,6 @@ def _make_org(db):
 
 
 def _make_deal(db, org_id):
-    """Create a minimal deal directly via SQL — DealRegistration FK fields covered."""
     from models import DealRegistration
     d = DealRegistration(
         id=uuid.uuid4(),
@@ -201,15 +215,14 @@ def test_quote_requires_deal_id(db):
     org = _make_org(db)
     bad = Quote(
         id=uuid.uuid4(),
-        deal_id=None,                # violates NOT NULL
+        deal_id=None,
         partner_org_id=org.id,
         created_by=user.id,
-        grand_total_after_discount=Decimal("0"),
         active_version=1,
         status="draft",
     )
     db.add(bad)
-    with pytest.raises((IntegrityError, Exception)):
+    with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
 
@@ -219,7 +232,6 @@ def test_quote_version_fk_to_quote(db):
 
     sqlite needs ``PRAGMA foreign_keys = ON`` per connection to enforce FKs.
     """
-    from sqlalchemy import text
     db.execute(text("PRAGMA foreign_keys = ON"))
     ver = QuoteVersion(
         id=uuid.uuid4(),
@@ -240,11 +252,10 @@ def test_quote_version_fk_to_quote(db):
 
 def test_quote_line_item_fk_to_version(db):
     """A QuoteLineItem cannot exist without its parent version."""
-    from sqlalchemy import text
     db.execute(text("PRAGMA foreign_keys = ON"))
     line = QuoteLineItem(
         id=uuid.uuid4(),
-        quote_version_id=uuid.uuid4(),  # nonexistent
+        quote_version_id=uuid.uuid4(),
         line_order=1,
         line_type="feature_pack",
         description="x",
@@ -306,6 +317,6 @@ def test_quote_version_unique_constraint(db):
     db.add(v1)
     db.commit()
     db.add(v2)
-    with pytest.raises((IntegrityError, Exception)):
+    with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
