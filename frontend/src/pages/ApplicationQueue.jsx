@@ -23,6 +23,27 @@ const STATUS_LABELS = {
 }
 
 function StatusBadge({ status }) {
+
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const r = await fetch(`${API}/applications?export=csv`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'applications_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e); setError(e.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <span
       style={{
@@ -52,6 +73,7 @@ export default function ApplicationQueue() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [exporting, setExporting] = useState(false)
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
 
@@ -84,7 +106,13 @@ export default function ApplicationQueue() {
 
   return (
     <div style={{ padding: '24px 32px', fontFamily: 'system-ui, sans-serif' }}>
-      <h1>Partner Applications</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h1 style={{ margin: 0 }}>Partner Applications</h1>
+        <button type="button" onClick={exportCSV} disabled={exporting}
+                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600 }}>
+          {exporting ? 'Exporting...' : 'Export CSV'}
+        </button>
+      </div>
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
         <select

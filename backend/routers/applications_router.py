@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_optional_bearer_user
 from audit import log_audit_event
+from csv_export import csv_response
 from database import get_db
 from models import (
     ApplicationMessageSender,
@@ -143,6 +144,7 @@ def list_applications(
     status: Optional[str] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
+    export: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("partner_application:read_all")),
 ):
@@ -162,6 +164,29 @@ def list_applications(
                     ),
                 )
             query = query.filter(PartnerApplication.status.in_(statuses))
+    if export == "csv":
+        try:
+            order_clause = PartnerApplication.submitted_at.desc().nullslast()
+        except AttributeError:
+            order_clause = PartnerApplication.submitted_at.desc()
+        csv_rows = query.order_by(order_clause).all()
+        return csv_response(
+            "applications_export",
+            ["Company Name", "Contact Email", "Program Type", "Status",
+             "Submitted Date", "Reviewed Date"],
+            [
+                [
+                    getattr(a, "legal_name", None) or "",
+                    getattr(a, "applicant_email", None) or "",
+                    (getattr(a, "requested_categories", None) or [""])[0] if getattr(a, "requested_categories", None) else "",
+                    a.status.value if hasattr(a.status, "value") else (a.status or ""),
+                    a.submitted_at.date().isoformat() if getattr(a, "submitted_at", None) else "",
+                    a.reviewed_at.date().isoformat() if getattr(a, "reviewed_at", None) else "",
+                ]
+                for a in csv_rows
+            ],
+        )
+
     total = query.count()
     items = (
         query.order_by(PartnerApplication.submitted_at.desc().nullslast() if hasattr(PartnerApplication.submitted_at.desc(), "nullslast") else PartnerApplication.submitted_at.desc())

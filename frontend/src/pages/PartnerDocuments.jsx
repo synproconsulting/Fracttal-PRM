@@ -196,6 +196,41 @@ function RejectModal({ doc, onClose, onConfirm, saving }) {
 }
 
 export default function PartnerDocuments() {
+
+  const [exporting, setExporting] = useState(false)
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const token = localStorage.getItem('token')
+      // The partner org id is needed. Read from current user's JWT or props.
+      let orgId = null
+      try {
+        const t = token
+        const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+        orgId = payload.partner_org_id
+      } catch {}
+      if (!orgId) {
+        // Fallback: try to read from URL `:id` param via window.location.pathname
+        const m = window.location.pathname.match(/\/partners\/([0-9a-f-]+)\//i)
+        if (m) orgId = m[1]
+      }
+      if (!orgId) throw new Error('No partner org id available')
+      const r = await fetch(`${API}/partners/${orgId}/documents?export=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'documents_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e)
+    } finally {
+      setExporting(false)
+    }
+  }
   const params = useParams()
   const ctx = useOutletContext() || {}
   const token = ctx.token || localStorage.getItem('token')
@@ -278,6 +313,7 @@ export default function PartnerDocuments() {
     <>
       <div className="fp-page-header">
         <h1 className="fp-page-title">Documents</h1>
+        <button type="button" onClick={exportCSV} disabled={exporting} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600, marginLeft: 12 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
         {!isInternal && (
           <button type="button" className="fp-btn fp-btn--primary" onClick={() => setUploadOpen(true)}>
             Upload document

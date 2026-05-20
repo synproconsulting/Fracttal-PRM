@@ -201,6 +201,28 @@ function ConfirmModal({ title, message, confirmLabel, onConfirm, onClose, danger
 }
 
 export default function PartnerUserManagement() {
+  const [exporting, setExporting] = useState(false)
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const token = localStorage.getItem('token')
+      const r = await fetch(`${API}/internal/partner-users?export=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'partner_users_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const ctx = useOutletContext() || {}
   const { token } = ctx
 
@@ -294,6 +316,7 @@ export default function PartnerUserManagement() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>Partner Users</h1>
+        <button type="button" onClick={exportCSV} disabled={exporting} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600, marginLeft: 12 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
           <p style={{ margin: 0, color: '#5A6478' }}>
             {total} partner user{total === 1 ? '' : 's'} across all organisations.
           </p>

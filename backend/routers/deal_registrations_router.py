@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from audit import log_audit_event
+from csv_export import csv_response
 from conflict_checker import check_deal_conflict
 from database import get_db
 from models import (
@@ -235,6 +236,7 @@ def list_deals(
     partner_org_id: Optional[uuid.UUID] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    export: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -254,6 +256,30 @@ def list_deals(
 
     if status:
         query = query.filter(DealRegistration.status == status)
+
+    if export == "csv":
+        rows_csv = (
+            query.order_by(DealRegistration.created_at.desc()).all()
+        )
+        org_names = _bulk_org_names(db, {d.partner_org_id for d in rows_csv if d.partner_org_id})
+        return csv_response(
+            "deals_export",
+            ["Deal Name", "Customer Domain", "Partner Org", "Deal Value",
+             "Status", "Submitted Date", "Commission Type", "Commission Rate"],
+            [
+                [
+                    d.deal_name or "",
+                    d.customer_domain or "",
+                    org_names.get(str(d.partner_org_id)) if d.partner_org_id else "",
+                    float(d.estimated_deal_value) if d.estimated_deal_value is not None else "",
+                    d.status or "",
+                    d.submitted_at.date().isoformat() if d.submitted_at else "",
+                    d.commission_type or "",
+                    float(d.commission_rate_snapshot) if d.commission_rate_snapshot is not None else "",
+                ]
+                for d in rows_csv
+            ],
+        )
 
     total = query.count()
     items = (
@@ -437,6 +463,7 @@ def list_internal_deals(
     partner_org_id: Optional[uuid.UUID] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    export: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -451,6 +478,31 @@ def list_internal_deals(
         query = query.filter(DealRegistration.status == status)
     if partner_org_id is not None:
         query = query.filter(DealRegistration.partner_org_id == partner_org_id)
+
+    if export == "csv":
+        rows_csv = (
+            query.order_by(DealRegistration.submitted_at.desc().nullslast(),
+                           DealRegistration.created_at.desc()).all()
+        )
+        org_names = _bulk_org_names(db, {d.partner_org_id for d in rows_csv if d.partner_org_id})
+        return csv_response(
+            "deals_export",
+            ["Deal Name", "Customer Domain", "Partner Org", "Deal Value",
+             "Status", "Submitted Date", "Commission Type", "Commission Rate"],
+            [
+                [
+                    d.deal_name or "",
+                    d.customer_domain or "",
+                    org_names.get(str(d.partner_org_id)) if d.partner_org_id else "",
+                    float(d.estimated_deal_value) if d.estimated_deal_value is not None else "",
+                    d.status or "",
+                    d.submitted_at.date().isoformat() if d.submitted_at else "",
+                    d.commission_type or "",
+                    float(d.commission_rate_snapshot) if d.commission_rate_snapshot is not None else "",
+                ]
+                for d in rows_csv
+            ],
+        )
 
     total = query.count()
     items = (
