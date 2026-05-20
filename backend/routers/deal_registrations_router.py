@@ -45,6 +45,7 @@ from models import (
     DealRegistration,
     PartnerActivationChecklist,
     PartnerOrganization,
+    PartnerStatus,
     User,
 )
 from approval_helpers import (
@@ -162,6 +163,57 @@ def _require_partner_admin(user: User) -> None:
         )
 
 
+# FPRM-317 -- internal roles allowed to create deals on behalf of a partner.
+_INTERNAL_CREATE_ROLES = {
+    UserRole.channel_manager, UserRole.channel_ops_admin, UserRole.system_admin,
+}
+
+
+def _resolve_create_partner(user: User, payload: dict, db: Session):
+    """Return (partner_org_id: uuid.UUID, on_behalf_of: bool) for POST.
+
+    - partner_admin: uses ``user.partner_org_id`` (existing behaviour),
+      on_behalf_of=False.
+    - channel_manager / channel_ops_admin / system_admin: must pass
+      ``partner_org_id`` in the request body. The org must exist and be
+      ``PartnerStatus.active``. on_behalf_of=True.
+    - All other roles: 403.
+    """
+    role = UserRole(user.role)
+    if role == UserRole.partner_admin:
+        _require_partner_admin(user)
+        return user.partner_org_id, False
+    if role in _INTERNAL_CREATE_ROLES:
+        raw = payload.get("partner_org_id")
+        if not raw:
+            raise HTTPException(
+                status_code=422,
+                detail="partner_org_id is required when an internal user creates a deal",
+            )
+        try:
+            pid = uuid.UUID(str(raw))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid partner_org_id")
+        org = (
+            db.query(PartnerOrganization)
+            .filter(PartnerOrganization.id == pid)
+            .first()
+        )
+        if org is None:
+            raise HTTPException(status_code=404, detail="Partner organisation not found")
+        org_status = org.status.value if hasattr(org.status, "value") else org.status
+        if org_status != PartnerStatus.active.value:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Partner organisation is not active (status={org_status})",
+            )
+        return pid, True
+    raise HTTPException(
+        status_code=403,
+        detail="Permission denied: partner_admin or channel_manager+ required",
+    )
+
+
 def _enforce_tenant_read(user: User, deal: DealRegistration) -> None:
     role = UserRole(user.role)
     if role in PARTNER_ROLES:
@@ -244,9 +296,22 @@ def create_deal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a new draft deal registration. partner_admin role only; activation gated."""
-    _require_partner_admin(current_user)
-    _check_activation(db, current_user.partner_org_id)
+    """Create a new draft deal registration.
+
+    Authorisation:
+      * ``partner_admin`` -- existing path, activation-gated. ``partner_org_id``
+        is taken from the JWT.
+      * ``channel_manager`` / ``channel_ops_admin`` / ``system_admin`` --
+        FPRM-317. Must supply ``partner_org_id`` in the body. The partner org
+        must exist and be active. The deal is created with
+        ``created_on_behalf_of=True``. The activation gate is **skipped** for
+        internal-created deals -- the channel manager is responsible for the
+        timing decision.
+    """
+    partner_org_id, on_behalf_of = _resolve_create_partner(current_user, payload, db)
+    if not on_behalf_of:
+        # Activation gate applies to partner-created deals only.
+        _check_activation(db, partner_org_id)
 
     if not (payload.get("customer_name") or "").strip():
         raise HTTPException(status_code=422, detail="customer_name is required")
@@ -255,9 +320,10 @@ def create_deal(
 
     deal = DealRegistration(
         id=uuid.uuid4(),
-        partner_org_id=current_user.partner_org_id,
+        partner_org_id=partner_org_id,
         status="draft",
         conflict_status="not_checked",
+        created_on_behalf_of=on_behalf_of,
     )
     payload = _coerce_dates(payload)
     for key, value in payload.items():
@@ -270,10 +336,16 @@ def create_deal(
     log_audit_event(
         db=db,
         actor=current_user,
-        action="deal_registration.created",
+        action=("deal_registration.created_internal" if on_behalf_of
+                else "deal_registration.created"),
         object_type="deal_registration",
         object_id=deal.id,
-        after={"status": deal.status, "deal_name": deal.deal_name},
+        after={
+            "status": deal.status,
+            "deal_name": deal.deal_name,
+            "partner_org_id": str(partner_org_id),
+            "created_on_behalf_of": on_behalf_of,
+        },
         ip_address=_client_ip(request),
     )
     return _serialize(deal)
