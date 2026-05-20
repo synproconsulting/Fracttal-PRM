@@ -1114,23 +1114,36 @@ function VolumeTiersSection({ token, canEdit, canDelete, onUpdate, onError }) {
 function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError }) {
   const [rows, setRows] = useState([])
   const [showInactive, setShowInactive] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState('')  // FPRM-318
   const [editingId, setEditingId] = useState(null)
   const [editValues, setEditValues] = useState({})
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState({
     addon_key: '', display_name: '', monthly_price: '',
     available_starter: false, available_professional: true,
+    category: '', sort_order: 0,  // FPRM-318
   })
 
   const load = useCallback(async () => {
     try {
-      const path = `/internal/config/pricing/addons${showInactive ? '?include_inactive=true' : ''}`
+      const qs = []
+      if (showInactive) qs.push('include_inactive=true')
+      if (categoryFilter) qs.push(`category=${encodeURIComponent(categoryFilter)}`)
+      const path = `/internal/config/pricing/addons${qs.length ? '?' + qs.join('&') : ''}`
       const data = await call(token, 'GET', path)
       setRows(Array.isArray(data) ? data : [])
     } catch (err) { onError(err.message) }
-  }, [token, showInactive, onError])
+  }, [token, showInactive, categoryFilter, onError])
 
   useEffect(() => { load() }, [load])
+
+  // FPRM-318 -- distinct categories across the currently-loaded set (plus
+  // an "Other" sentinel for nulls). Used to populate the filter dropdown.
+  const distinctCategories = useMemo(() => {
+    const set = new Set()
+    for (const r of rows) if (r.category) set.add(r.category)
+    return Array.from(set).sort()
+  }, [rows])
 
   function startEdit(r) {
     setEditingId(r.id)
@@ -1138,6 +1151,7 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
       display_name: r.display_name, monthly_price: r.monthly_price,
       available_starter: r.available_starter,
       available_professional: r.available_professional,
+      category: r.category || '', sort_order: r.sort_order ?? 0,  // FPRM-318
     })
   }
 
@@ -1155,11 +1169,28 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
 
   async function createDraft() {
     try {
-      const body = { ...draft, addon_key: draft.addon_key || autoKey(draft.display_name) }
-      await call(token, 'POST', '/internal/config/pricing/addons', body)
+      // POST does not currently accept category/sort_order in the body
+      // (server hardcodes those to null/0 on create); set them via a follow-up
+      // PATCH so the admin doesn't need two clicks. FPRM-318.
+      const createBody = {
+        addon_key: draft.addon_key || autoKey(draft.display_name),
+        display_name: draft.display_name,
+        monthly_price: draft.monthly_price,
+        available_starter: draft.available_starter,
+        available_professional: draft.available_professional,
+      }
+      const created = await call(token, 'POST', '/internal/config/pricing/addons', createBody)
+      if ((draft.category && draft.category.trim()) || Number(draft.sort_order) > 0) {
+        try {
+          await call(token, 'PATCH', `/internal/config/pricing/addons/${created.id}`, {
+            category: draft.category || '',
+            sort_order: Number(draft.sort_order) || 0,
+          })
+        } catch (e) { /* swallow -- the row was created, just without organisation metadata */ }
+      }
       onUpdate('Add-on added')
       setAdding(false)
-      setDraft({ addon_key: '', display_name: '', monthly_price: '', available_starter: false, available_professional: true })
+      setDraft({ addon_key: '', display_name: '', monthly_price: '', available_starter: false, available_professional: true, category: '', sort_order: 0 })
       load()
     } catch (err) { onError(err.message) }
   }
@@ -1188,6 +1219,17 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
       title="Add-on Catalogue"
       action={
         <>
+          {/* FPRM-318 -- category filter dropdown */}
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            title="Filter by category"
+            style={{ padding: '4px 8px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: 12, background: 'white' }}
+          >
+            <option value="">All categories</option>
+            {distinctCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+            <option value="__null__">— Uncategorised —</option>
+          </select>
           <label style={{ fontSize: 12, color: '#475569', display: 'flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} disabled={!canEdit} />
             Show inactive
@@ -1202,6 +1244,8 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
         <thead>
           <tr>
             <th style={th}>Add-on Name</th>
+            <th style={th}>Category</th>
+            <th style={{ ...th, width: 70 }}>Sort</th>
             <th style={th}>Monthly Price</th>
             <th style={th}>Annual Price</th>
             <th style={th}>Starter</th>
@@ -1214,6 +1258,12 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
           {rows.map((r) => editingId === r.id ? (
             <tr key={r.id} style={{ background: '#F8FAFC' }}>
               <td style={td}><input style={inp} value={editValues.display_name} onChange={(e) => setEditValues({ ...editValues, display_name: e.target.value })} /></td>
+              <td style={td}><input style={inp} list={`fprm318-cats-${r.id}`} placeholder="—" value={editValues.category} onChange={(e) => setEditValues({ ...editValues, category: e.target.value })} />
+                <datalist id={`fprm318-cats-${r.id}`}>
+                  {distinctCategories.map((c) => <option key={c} value={c} />)}
+                </datalist>
+              </td>
+              <td style={td}><input style={{ ...inp, width: 60 }} type="number" min="0" value={editValues.sort_order} onChange={(e) => setEditValues({ ...editValues, sort_order: e.target.value })} /></td>
               <td style={td}><input style={inp} type="number" min="0" step="0.01" value={editValues.monthly_price} onChange={(e) => setEditValues({ ...editValues, monthly_price: e.target.value })} /></td>
               <td style={td}>${fmtMoney(Number(editValues.monthly_price) * 12)}</td>
               <td style={td}><input type="checkbox" checked={!!editValues.available_starter} onChange={(e) => setEditValues({ ...editValues, available_starter: e.target.checked })} /></td>
@@ -1232,6 +1282,8 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
                 <div>{r.display_name}</div>
                 <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: 'monospace' }}>{r.addon_key}</div>
               </td>
+              <td style={td}>{r.category || <span style={{ color: '#94A3B8' }}>—</span>}</td>
+              <td style={td}>{r.sort_order ?? 0}</td>
               <td style={td}>${fmtMoney(r.monthly_price)}</td>
               <td style={td}>${fmtMoney(Number(r.monthly_price) * 12)}</td>
               <td style={td}>{r.available_starter ? '✅' : '❌'}</td>
@@ -1259,6 +1311,13 @@ function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError })
                 <input style={inp} placeholder="Display name" value={draft.display_name} onChange={(e) => setDraft({ ...draft, display_name: e.target.value, addon_key: draft.addon_key || autoKey(e.target.value) })} />
                 <input style={{ ...inp, marginTop: 4, fontSize: 11, fontFamily: 'monospace' }} placeholder="addon_key (auto)" value={draft.addon_key} onChange={(e) => setDraft({ ...draft, addon_key: e.target.value })} />
               </td>
+              <td style={td}>
+                <input style={inp} list="fprm318-cats-new" placeholder="Category (opt.)" value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} />
+                <datalist id="fprm318-cats-new">
+                  {distinctCategories.map((c) => <option key={c} value={c} />)}
+                </datalist>
+              </td>
+              <td style={td}><input style={{ ...inp, width: 60 }} type="number" min="0" value={draft.sort_order} onChange={(e) => setDraft({ ...draft, sort_order: e.target.value })} /></td>
               <td style={td}><input style={inp} type="number" min="0" step="0.01" placeholder="0.00" value={draft.monthly_price} onChange={(e) => setDraft({ ...draft, monthly_price: e.target.value })} /></td>
               <td style={td}>${fmtMoney(Number(draft.monthly_price) * 12)}</td>
               <td style={td}><input type="checkbox" checked={draft.available_starter} onChange={(e) => setDraft({ ...draft, available_starter: e.target.checked })} /></td>
