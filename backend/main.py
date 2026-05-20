@@ -25,6 +25,7 @@ from routers.internal_partners_router import router as internal_partners_router
 from routers.program_config_router import router as program_config_router
 from routers.reports_router import router as reports_router
 from routers.quotes_router import router as quotes_router
+from routers.pricing_admin_router import router as pricing_admin_router
 
 load_dotenv()
 
@@ -63,6 +64,7 @@ app.include_router(internal_partners_router)
 app.include_router(program_config_router)
 app.include_router(reports_router)
 app.include_router(quotes_router)
+app.include_router(pricing_admin_router)
 
 
 @app.get("/")

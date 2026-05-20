@@ -31,7 +31,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -200,19 +200,32 @@ def _persist_version(
 # ===================== Pricing catalogue read endpoints =====================
 
 
+_PRICING_ADMIN_ROLES = {UserRole.channel_ops_admin.value, UserRole.system_admin.value}
+
+
 @router.get("/internal/config/pricing/plans")
 def list_pricing_plans(
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Active FeaturePlanPrice rows. Any authenticated user (needed by the
-    quote form UI to display current prices)."""
-    rows = (
-        db.query(FeaturePlanPrice)
-        .filter(FeaturePlanPrice.is_active.is_(True))
-        .order_by(FeaturePlanPrice.plan_code)
-        .all()
-    )
+    """FeaturePlanPrice rows. Any authenticated user can read active prices
+    (needed by the quote form UI). ``?include_inactive=true`` exposes the full
+    history (active + inactive + scheduled) and is restricted to
+    channel_ops_admin / system_admin so partners cannot see deactivated SKUs.
+    """
+    if include_inactive and current_user.role not in _PRICING_ADMIN_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Only channel_ops_admin or system_admin can view inactive pricing rows",
+        )
+    query = db.query(FeaturePlanPrice)
+    if not include_inactive:
+        query = query.filter(FeaturePlanPrice.is_active.is_(True))
+    rows = query.order_by(
+        FeaturePlanPrice.plan_code,
+        FeaturePlanPrice.effective_from.desc(),
+    ).all()
     return [
         {
             "id": str(r.id),
@@ -221,6 +234,7 @@ def list_pricing_plans(
             "transactional_user_annual": str(r.transactional_user_annual),
             "limited_tech_user_annual": str(r.limited_tech_user_annual),
             "effective_from": r.effective_from.isoformat(),
+            "is_active": r.is_active,
         }
         for r in rows
     ]
@@ -228,16 +242,22 @@ def list_pricing_plans(
 
 @router.get("/internal/config/pricing/addons")
 def list_addon_catalog(
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Active AddonCatalogItem rows."""
-    rows = (
-        db.query(AddonCatalogItem)
-        .filter(AddonCatalogItem.is_active.is_(True))
-        .order_by(AddonCatalogItem.display_name)
-        .all()
-    )
+    """AddonCatalogItem rows. ``?include_inactive=true`` is admin-only and
+    surfaces deactivated add-ons for history / reactivation flows.
+    """
+    if include_inactive and current_user.role not in _PRICING_ADMIN_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Only channel_ops_admin or system_admin can view inactive pricing rows",
+        )
+    query = db.query(AddonCatalogItem)
+    if not include_inactive:
+        query = query.filter(AddonCatalogItem.is_active.is_(True))
+    rows = query.order_by(AddonCatalogItem.display_name).all()
     return [
         {
             "id": str(r.id),
@@ -247,6 +267,7 @@ def list_addon_catalog(
             "available_starter": r.available_starter,
             "available_professional": r.available_professional,
             "included_enterprise": r.included_enterprise,
+            "is_active": r.is_active,
         }
         for r in rows
     ]
