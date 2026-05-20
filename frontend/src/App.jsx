@@ -25,6 +25,7 @@ import InternalPartnerList from './pages/InternalPartnerList.jsx'
 import ProgramConfig from './pages/ProgramConfig.jsx'
 import InternalReports from './pages/InternalReports.jsx'
 import InternalQuotes from './pages/InternalQuotes.jsx'
+import PortalQuotes from './pages/PortalQuotes.jsx'
 import ForgotPassword from './pages/ForgotPassword.jsx'
 import ResetPassword from './pages/ResetPassword.jsx'
 
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="deals/:id" element={<DealDetail />} />
         <Route path="deals/:id/edit" element={<DealRegistrationForm />} />
         <Route path="commissions" element={<CommissionRates />} />
+        <Route path="quotes" element={<PortalQuotes />} />
       </Route>
 
       <Route

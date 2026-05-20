@@ -756,6 +756,8 @@ export default function InternalDealDetail() {
 
             </span>
 
+            <DealHeaderQuoteBadge dealId={deal.id} />
+
           </div>
 
         </div>
@@ -1415,6 +1417,72 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech }) {
         </div>
       )}
     </section>
+  )
+}
+
+
+function DealHeaderQuoteBadge({ dealId }) {
+  const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    || 'https://fracttal-prm-backend-production.up.railway.app'
+  const token = localStorage.getItem('token')
+  const [primary, setPrimary] = useState(null)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!dealId || !token) return
+    fetch(`${API}/deals/${dealId}/quotes`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => (r.ok ? r.json() : []))
+      .then((quotes) => {
+        if (!Array.isArray(quotes) || quotes.length === 0) { setPrimary(null); return }
+        const priority = { accepted: 3, sent: 2, draft: 1, expired: 0 }
+        const sorted = [...quotes].sort((a, b) => (priority[b.status] || 0) - (priority[a.status] || 0))
+        setPrimary(sorted[0])
+      })
+      .catch(() => setPrimary(null))
+      .finally(() => setLoaded(true))
+  }, [dealId, token])
+
+  if (!loaded) return null
+
+  if (!primary) {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '4px 10px', borderRadius: 6,
+        border: '1px dashed #1A6EBB', color: '#1A6EBB',
+        fontSize: 12, fontWeight: 600,
+      }}>
+        No quote yet
+      </span>
+    )
+  }
+
+  const tone = primary.status === 'accepted'
+    ? { bg: '#E6F4EA', fg: '#1B8743', border: '#4CAF50' }
+    : primary.status === 'sent'
+    ? { bg: '#EBF4FF', fg: '#1A6EBB', border: '#1A6EBB' }
+    : { bg: '#F5F7FA', fg: '#475569', border: '#CBD5E1' }
+  const sym = (primary.currency_code && primary.currency_code !== 'USD') ? `${primary.currency_code} ` : '$'
+  const totalNum = Number(primary.grand_total_after_discount)
+  const totalStr = Number.isFinite(totalNum)
+    ? `${sym}${totalNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—'
+
+  return (
+    <span title="Most relevant quote on this deal" style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '4px 10px', borderRadius: 6,
+      background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`,
+      fontSize: 12, fontWeight: 600,
+    }}>
+      <span style={{ textTransform: 'capitalize' }}>
+        {primary.status === 'accepted' ? '✓ ' : ''}Quote: {primary.status}
+      </span>
+      <span style={{ opacity: 0.75 }}>·</span>
+      <span>v{primary.active_version}</span>
+      <span style={{ opacity: 0.75 }}>·</span>
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totalStr}</span>
+    </span>
   )
 }
 

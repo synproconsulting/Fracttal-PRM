@@ -81,6 +81,7 @@ const NAV_ITEMS = [
   { label: 'Register a Deal', to: '/portal/deals/new', icon: IconDeal, enabled: true },
   { label: 'My Pipeline', to: '/portal/deals', icon: IconPipeline, enabled: true },
   { label: 'Commissions', to: '/portal/commissions', icon: IconCash, enabled: true },
+  { label: 'My Quotes', to: '/portal/quotes', icon: IconDoc, enabled: true },
   { label: 'Training', to: '/portal/training', icon: IconBook, enabled: false },
   { label: 'Assets', to: '/portal/assets', icon: IconBox, enabled: false },
   { label: 'Support', to: '/portal/support', icon: IconHelp, enabled: false },
@@ -94,6 +95,7 @@ function breadcrumbFromPath(pathname) {
     '/portal/deals': 'My Pipeline',
     '/portal/deals/new': 'Register a Deal',
     '/portal/commissions': 'Commissions',
+    '/portal/quotes': 'My Quotes',
   }
   if (map[pathname]) return map[pathname]
   if (pathname.startsWith('/portal/deals/') && pathname.endsWith('/edit')) return 'Edit Deal'
