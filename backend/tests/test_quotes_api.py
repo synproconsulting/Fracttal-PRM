@@ -184,7 +184,7 @@ def test_create_quote_from_deal_persists_version_and_lines(client, db_session):
     assert av["version_number"] == 1
     assert len(av["line_items"]) >= 4
     # Grand total matches Story 2 spec example 1
-    assert av["grand_total_after_discount"] == "16608.00"
+    assert float(av["grand_total_after_discount"]) == 16608.00
 
 
 def test_create_quote_with_scenario_label(client, db_session):
