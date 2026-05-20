@@ -624,3 +624,189 @@ def test_approve_partner_admin_blocked(db_session):
         assert r.status_code == 403
     finally:
         clear_overrides()
+
+
+# ------------------ Sprint 20 / FPRM-316 -- Section A + B SPICED API ------------------
+
+
+def test_create_deal_with_full_section_a_persists(db_session):
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "customer_name": "SectionA Co",
+            "deal_name": "Section A Deal",
+            "engagement_date": "2026-05-20",
+            "prospect_phone": "+27 11 555 0123",
+            "compiled_by": "ops@partner.example",
+            "prospect_contact_name": "Alex Smith",
+            "prospect_contact_position": "Maintenance Manager",
+            "prospect_website": "https://example.com",
+            "industry_sector": "Manufacturing",
+            "company_size": "51-200",
+            "feature_plan_preference": "professional",
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["engagement_date"] == "2026-05-20"
+        assert body["prospect_phone"] == "+27 11 555 0123"
+        assert body["compiled_by"] == "ops@partner.example"
+        assert body["prospect_contact_name"] == "Alex Smith"
+        assert body["prospect_contact_position"] == "Maintenance Manager"
+        assert body["prospect_website"] == "https://example.com"
+        assert body["industry_sector"] == "Manufacturing"
+        assert body["company_size"] == "51-200"
+        assert body["feature_plan_preference"] == "professional"
+    finally:
+        clear_overrides()
+
+
+def test_patch_deal_updates_section_b_fields(db_session):
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            # Current systems
+            "current_system": "excel",
+            "monitoring_system": "none",
+            # Features (some True, some False, some left null)
+            "need_asset_depreciation": True,
+            "need_integration": True,
+            "integration_with": "SAP, Power BI",
+            "need_multi_language": True,
+            "languages_required": "English, Spanish",
+            "need_purchasing": False,
+            # SPICED
+            "about_client": "Mid-size manufacturer with 3 plants.",
+            "pain": "Manual coordination across plants.",
+            "critical_event": "Existing CMMS licence renewal 2026-09-30.",
+            "next_steps": "Demo next week.",
+        })
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["current_system"] == "excel"
+        assert body["monitoring_system"] == "none"
+        assert body["need_asset_depreciation"] is True
+        assert body["need_integration"] is True
+        assert body["integration_with"] == "SAP, Power BI"
+        assert body["need_multi_language"] is True
+        assert body["languages_required"] == "English, Spanish"
+        assert body["need_purchasing"] is False
+        assert body["about_client"].startswith("Mid-size")
+        assert "renewal 2026-09-30" in body["critical_event"]
+        assert body["next_steps"] == "Demo next week."
+    finally:
+        clear_overrides()
+
+
+def test_create_deal_without_section_b_no_regression(db_session):
+    """Partners submitting deals without any new Section A/B fields must still
+    succeed -- enforces the no-regression promise from Story 1.
+    """
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "customer_name": "Bare Co",
+            "deal_name": "Bare Deal",
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        # All new Section A/B fields are null on a bare create
+        for k in (
+            "engagement_date", "prospect_phone", "compiled_by",
+            "prospect_contact_name", "company_size", "feature_plan_preference",
+            "current_system", "monitoring_system",
+            "need_asset_depreciation", "need_integration", "integration_with",
+            "about_client", "pain", "next_steps",
+        ):
+            assert body[k] is None, f"expected null on bare create: {k} = {body[k]!r}"
+        # created_on_behalf_of is NOT NULL with server default False
+        assert body["created_on_behalf_of"] is False
+    finally:
+        clear_overrides()
+
+
+def test_feature_plan_preference_returned_on_get(db_session):
+    """GET /deal-registrations/{id} must surface feature_plan_preference so
+    the QuoteForm can pre-populate the plan dropdown (Phase 6 deal -> quote
+    handoff).
+    """
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id)
+    deal.feature_plan_preference = "enterprise"
+    db_session.commit()
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(f"/deal-registrations/{deal.id}")
+        assert r.status_code == 200
+        assert r.json()["feature_plan_preference"] == "enterprise"
+    finally:
+        clear_overrides()
+
+
+def test_section_b_booleans_round_trip_true_false_null(db_session):
+    """The 13 need_* booleans accept True, False, and None distinctly --
+    matches the form's three-state checkbox (checked / explicitly-no / unset).
+    """
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "need_reports": True,
+            "need_tool_management": False,
+            # need_purchasing left unset -> remains null
+            "need_track_labour": True,
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["need_reports"] is True
+        assert body["need_tool_management"] is False
+        assert body["need_purchasing"] is None
+        assert body["need_track_labour"] is True
+    finally:
+        clear_overrides()
+
+
+def test_created_on_behalf_of_not_settable_via_partner_patch(db_session):
+    """FPRM-317 lockdown -- the partner-facing PATCH whitelist must NOT allow
+    a partner to flip created_on_behalf_of. That column is set server-side by
+    the internal-create path only.
+    """
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id)  # default False
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "created_on_behalf_of": True,
+            "about_client": "Sneaky attempt.",  # also a real edit, so the
+            # PATCH does change something legitimate
+        })
+        assert r.status_code == 200
+        body = r.json()
+        # the legitimate field was applied
+        assert body["about_client"] == "Sneaky attempt."
+        # but created_on_behalf_of stayed False (whitelist rejected the override)
+        assert body["created_on_behalf_of"] is False
+    finally:
+        clear_overrides()

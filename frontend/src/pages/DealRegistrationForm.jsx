@@ -50,6 +50,73 @@ const TEXT_FIELDS_DEAL = [
   { key: 'estimated_close_date', label: 'Estimated close date', type: 'date' },
 ]
 
+// Sprint 20 / FPRM-316 -- Section A additional prospect/engagement fields.
+const TEXT_FIELDS_SECTION_A = [
+  { key: 'engagement_date',           label: 'Engagement date',         type: 'date' },
+  { key: 'prospect_contact_name',     label: 'Prospect contact name',   type: 'text' },
+  { key: 'prospect_contact_position', label: 'Contact position / title', type: 'text' },
+  { key: 'prospect_phone',            label: 'Prospect phone',          type: 'tel' },
+  { key: 'prospect_website',          label: 'Website / LinkedIn URL',  type: 'url' },
+  { key: 'industry_sector',           label: 'Industry sector',         type: 'text' },
+]
+
+const COMPANY_SIZE_OPTIONS = ['1-10', '11-50', '51-200', '201-500', '500+']
+
+const FEATURE_PLAN_OPTIONS = [
+  { value: 'starter',      label: 'Starter' },
+  { value: 'professional', label: 'Professional' },
+  { value: 'enterprise',   label: 'Enterprise' },
+]
+
+// Sprint 20 / FPRM-316 -- Section B Current State (Situation) options.
+const CURRENT_SYSTEM_OPTIONS = [
+  { value: 'none',         label: 'None' },
+  { value: 'excel',        label: 'Excel' },
+  { value: 'paper',        label: 'Paper' },
+  { value: 'social_media', label: 'Social Media' },
+  { value: 'cmms',         label: 'CMMS' },
+  { value: 'other',        label: 'Other' },
+]
+
+const SECTION_B_SYSTEM_ROWS = [
+  { key: 'current_system',     label: 'Current System' },
+  { key: 'old_system',         label: 'Old System' },
+  { key: 'inventory_stores',   label: 'Inventory / Stores' },
+  { key: 'work_orders_prs',    label: 'Work Orders & PRs' },
+  { key: 'monitoring_system',  label: 'Monitoring' },
+]
+
+// Section B feature requirement checkboxes. Some items pair a boolean with a
+// free-text follow-up field (need_integration + integration_with).
+const SECTION_B_FEATURES = [
+  { key: 'need_asset_depreciation',     label: 'Asset Depreciation' },
+  { key: 'need_wo_wr',                  label: 'Work Orders / WR' },
+  { key: 'need_reports',                label: 'Reports' },
+  { key: 'need_tool_management',        label: 'Tool Management' },
+  { key: 'need_purchasing',             label: 'Purchasing' },
+  { key: 'need_asset_management',       label: 'Asset Management' },
+  { key: 'need_document_management',    label: 'Document Management' },
+  { key: 'need_cost_tracking',          label: 'Cost Tracking' },
+  { key: 'need_monitoring',             label: 'Monitoring' },
+  { key: 'need_schedule_third_parties', label: 'Schedule Third Parties' },
+  { key: 'need_track_labour',           label: 'Track Labour Activities' },
+]
+
+const SECTION_B_NARRATIVES = [
+  { key: 'about_client',   label: 'About the Client',
+    placeholder: 'Describe the client business, primary objectives, and why they are looking for a solution.' },
+  { key: 'pain',           label: 'Pain (P)',
+    placeholder: 'What is their current pain?' },
+  { key: 'impact',         label: 'Impact (I)',
+    placeholder: 'What is the business impact of that pain?' },
+  { key: 'critical_event', label: 'Critical Event (CE)',
+    placeholder: 'Is there a date-driven trigger (e.g. legacy system renewal date)?' },
+  { key: 'decision',       label: 'Decision (D)',
+    placeholder: 'Who decides and by when?' },
+  { key: 'next_steps',     label: 'Next Steps',
+    placeholder: 'Proposed timeline and actions.' },
+]
+
 function FloatingInput({ id, label, type = 'text', value, onChange, required }) {
   const filled = value !== '' && value !== null && value !== undefined
   return (
@@ -113,7 +180,54 @@ const EMPTY_DRAFT = {
   estimated_close_date: '',
   deal_notes: '',
   commission_type: '',
+  // Sprint 20 / FPRM-316 -- Section A additional prospect/engagement fields
+  engagement_date: '',
+  prospect_phone: '',
+  compiled_by: '',
+  prospect_contact_name: '',
+  prospect_contact_position: '',
+  prospect_website: '',
+  industry_sector: '',
+  company_size: '',
+  feature_plan_preference: '',
+  // Sprint 20 / FPRM-316 -- Section B Current State (Situation)
+  current_system: '',
+  old_system: '',
+  inventory_stores: '',
+  work_orders_prs: '',
+  monitoring_system: '',
+  // Sprint 20 / FPRM-316 -- Section B Feature requirements (Yes/No + free text)
+  need_asset_depreciation: null,
+  need_wo_wr: null,
+  need_reports: null,
+  need_tool_management: null,
+  need_purchasing: null,
+  need_integration: null,
+  integration_with: '',
+  need_multi_language: null,
+  languages_required: '',
+  need_asset_management: null,
+  need_document_management: null,
+  need_cost_tracking: null,
+  need_monitoring: null,
+  need_schedule_third_parties: null,
+  need_track_labour: null,
+  // Sprint 20 / FPRM-316 -- Section B SPICED narrative fields
+  about_client: '',
+  pain: '',
+  impact: '',
+  critical_event: '',
+  decision: '',
+  next_steps: '',
 }
+
+// Field-name sets the buildPayload helper uses to coerce empties correctly.
+const SECTION_B_BOOLEAN_FIELDS = new Set([
+  'need_asset_depreciation', 'need_wo_wr', 'need_reports', 'need_tool_management',
+  'need_purchasing', 'need_integration', 'need_multi_language',
+  'need_asset_management', 'need_document_management', 'need_cost_tracking',
+  'need_monitoring', 'need_schedule_third_parties', 'need_track_labour',
+])
 
 export default function DealRegistrationForm() {
   const { id } = useParams()
@@ -191,6 +305,15 @@ export default function DealRegistrationForm() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [id, token])
+
+  // FPRM-316 -- pre-populate "compiled_by" with the logged-in user's email
+  // on a new draft so the partner doesn't have to retype it. Editable.
+  useEffect(() => {
+    if (id) return  // existing draft: trust whatever is persisted
+    if (deal.compiled_by) return
+    const email = payload?.email
+    if (email) setDeal((d) => ({ ...d, compiled_by: email }))
+  }, [id, payload, deal.compiled_by])
 
   function setField(key, value) {
     setDeal((d) => ({ ...d, [key]: value }))
@@ -350,6 +473,47 @@ export default function DealRegistrationForm() {
         </div>
       </section>
 
+      {/* FPRM-316 -- Section A: additional prospect/engagement fields */}
+      <section className="fp-card" style={{ marginBottom: 24 }}>
+        <h2 className="fp-section-title">Additional prospect details</h2>
+        <p style={{ margin: '0 0 12px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+          Optional. Adds the engagement context your Channel Manager needs to prepare the best quote.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          {TEXT_FIELDS_SECTION_A.map((f) => (
+            <FloatingInput
+              key={f.key}
+              id={`deal-${f.key}`}
+              label={f.label}
+              type={f.type}
+              value={deal[f.key] ?? ''}
+              onChange={(v) => setField(f.key, v)}
+            />
+          ))}
+          <FloatingSelect
+            id="deal-company_size"
+            label="Company size"
+            value={deal.company_size}
+            onChange={(v) => setField('company_size', v)}
+            options={COMPANY_SIZE_OPTIONS}
+          />
+          <FloatingInput
+            id="deal-compiled_by"
+            label="Compiled by"
+            type="text"
+            value={deal.compiled_by ?? ''}
+            onChange={(v) => setField('compiled_by', v)}
+          />
+          <FloatingSelect
+            id="deal-feature_plan_preference"
+            label="Indicative feature plan"
+            value={deal.feature_plan_preference}
+            onChange={(v) => setField('feature_plan_preference', v)}
+            options={FEATURE_PLAN_OPTIONS}
+          />
+        </div>
+      </section>
+
       <section className="fp-card" style={{ marginBottom: 24 }}>
         <h2 className="fp-section-title">Deal information</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -392,6 +556,123 @@ export default function DealRegistrationForm() {
               onChange={(v) => setField('deal_notes', v)}
               rows={4}
             />
+          </div>
+        </div>
+      </section>
+
+      {/* FPRM-316 -- Section B: Current State and Needs Assessment (SPICED) */}
+      <section className="fp-card" style={{ marginBottom: 24 }}>
+        <h2 className="fp-section-title">Current State and Needs Assessment (SPICED)</h2>
+        <p style={{ margin: '0 0 16px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+          Complete this section to help your Channel Manager prepare the best quote. All fields optional.
+        </p>
+
+        {/* About the Client */}
+        <div style={{ marginBottom: 20 }}>
+          <FloatingTextarea
+            id="deal-about_client"
+            label="About the Client"
+            value={deal.about_client}
+            onChange={(v) => setField('about_client', v)}
+            rows={4}
+          />
+        </div>
+
+        {/* Section B - Situation: Current Systems table */}
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>
+            Situation (S) — Current Systems
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {SECTION_B_SYSTEM_ROWS.map((row) => (
+              <FloatingSelect
+                key={row.key}
+                id={`deal-${row.key}`}
+                label={row.label}
+                value={deal[row.key]}
+                onChange={(v) => setField(row.key, v)}
+                options={CURRENT_SYSTEM_OPTIONS}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Section B - Features Required */}
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>
+            Features Required
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 16px', marginBottom: 12 }}>
+            {SECTION_B_FEATURES.map((f) => (
+              <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fp-fs-sm)' }}>
+                <input
+                  type="checkbox"
+                  checked={deal[f.key] === true}
+                  onChange={(e) => setField(f.key, e.target.checked ? true : null)}
+                />
+                {f.label}
+              </label>
+            ))}
+          </div>
+          {/* Paired free-text follow-ups */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fp-fs-sm)', marginBottom: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={deal.need_integration === true}
+                  onChange={(e) => setField('need_integration', e.target.checked ? true : null)}
+                />
+                Require Integration
+              </label>
+              {deal.need_integration === true && (
+                <FloatingInput
+                  id="deal-integration_with"
+                  label="Integrate with?"
+                  type="text"
+                  value={deal.integration_with ?? ''}
+                  onChange={(v) => setField('integration_with', v)}
+                />
+              )}
+            </div>
+            <div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fp-fs-sm)', marginBottom: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={deal.need_multi_language === true}
+                  onChange={(e) => setField('need_multi_language', e.target.checked ? true : null)}
+                />
+                Multi-language
+              </label>
+              {deal.need_multi_language === true && (
+                <FloatingInput
+                  id="deal-languages_required"
+                  label="Which languages?"
+                  type="text"
+                  value={deal.languages_required ?? ''}
+                  onChange={(v) => setField('languages_required', v)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* SPICED Narratives */}
+        <div>
+          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>
+            SPICED Narrative
+          </h3>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {SECTION_B_NARRATIVES.slice(1).map((f) => (
+              <FloatingTextarea
+                key={f.key}
+                id={`deal-${f.key}`}
+                label={f.label}
+                value={deal[f.key]}
+                onChange={(v) => setField(f.key, v)}
+                rows={3}
+              />
+            ))}
           </div>
         </div>
       </section>

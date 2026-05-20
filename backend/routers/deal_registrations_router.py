@@ -26,7 +26,7 @@ The internal review queue endpoints (`/internal/deals/*`) are added in
 Story 5 / FPRM-134 in this same file.
 """
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -60,16 +60,58 @@ router = APIRouter(tags=["deal-registrations"])
 
 
 CREATABLE_FIELDS = {
+    # Phase 3 baseline (Sprint 8 / FPRM-128)
     "customer_name", "customer_domain", "customer_contact_name",
     "customer_contact_email", "customer_contact_phone", "customer_industry",
     "customer_country", "customer_region",
     "deal_name", "estimated_deal_value", "estimated_close_date",
     "deal_notes", "commission_type",
+    # Sprint 20 / FPRM-316 -- Section A additional prospect/engagement fields
+    "engagement_date", "prospect_phone", "compiled_by",
+    "prospect_contact_name", "prospect_contact_position",
+    "prospect_website", "industry_sector", "company_size",
+    "feature_plan_preference",
+    # Sprint 20 / FPRM-316 -- Section B Current State (Situation)
+    "current_system", "old_system", "inventory_stores",
+    "work_orders_prs", "monitoring_system",
+    # Sprint 20 / FPRM-316 -- Section B Feature requirements
+    "need_asset_depreciation", "need_wo_wr", "need_reports",
+    "need_tool_management", "need_purchasing",
+    "need_integration", "integration_with",
+    "need_multi_language", "languages_required",
+    "need_asset_management", "need_document_management",
+    "need_cost_tracking", "need_monitoring",
+    "need_schedule_third_parties", "need_track_labour",
+    # Sprint 20 / FPRM-316 -- Section B SPICED narrative fields
+    "about_client", "pain", "impact",
+    "critical_event", "decision", "next_steps",
+    # NOTE: created_on_behalf_of is deliberately excluded here -- it is set
+    # by the internal-create path (FPRM-317, Story 3) only, never by the
+    # partner-facing POST/PATCH whitelist.
 }
 
 
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+# Date columns on DealRegistration. The frontend sends ISO strings; Postgres
+# coerces them automatically but SQLite (used in tests) does not, so we parse
+# them server-side. Unparseable values become None (no exception bubbled out).
+_DATE_FIELDS = {"estimated_close_date", "engagement_date"}
+
+
+def _coerce_dates(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+    for k in _DATE_FIELDS:
+        v = payload.get(k)
+        if isinstance(v, str) and v:
+            try:
+                payload[k] = date.fromisoformat(v)
+            except ValueError:
+                payload[k] = None
+    return payload
 
 
 def _serialize(deal: DealRegistration) -> dict:
@@ -217,6 +259,7 @@ def create_deal(
         status="draft",
         conflict_status="not_checked",
     )
+    payload = _coerce_dates(payload)
     for key, value in payload.items():
         if key in CREATABLE_FIELDS:
             setattr(deal, key, value)
@@ -342,6 +385,7 @@ def update_deal(
         )
 
     before = _serialize(deal)
+    payload = _coerce_dates(payload)
     for key, value in payload.items():
         if key in CREATABLE_FIELDS:
             setattr(deal, key, value)
