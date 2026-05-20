@@ -1049,6 +1049,52 @@ class DealRegistration(Base):
 
 
 
+    # Sprint 20 / FPRM-315 (Phase 6) -- Section A additional prospect/engagement fields
+    engagement_date = Column(Date, nullable=True)
+    prospect_phone = Column(String, nullable=True)
+    compiled_by = Column(String, nullable=True)
+    prospect_contact_name = Column(String, nullable=True)
+    prospect_contact_position = Column(String, nullable=True)
+    prospect_website = Column(String, nullable=True)
+    industry_sector = Column(String, nullable=True)
+    company_size = Column(String, nullable=True)  # "1-10" | "11-50" | "51-200" | "201-500" | "500+"
+    feature_plan_preference = Column(String, nullable=True)  # "starter" | "professional" | "enterprise"
+
+    # Sprint 20 / FPRM-315 -- Section B Current State (Situation -- what they have)
+    current_system = Column(String, nullable=True)  # none|excel|paper|social_media|cmms|other
+    old_system = Column(String, nullable=True)
+    inventory_stores = Column(String, nullable=True)
+    work_orders_prs = Column(String, nullable=True)
+    monitoring_system = Column(String, nullable=True)
+
+    # Sprint 20 / FPRM-315 -- Section B Feature requirements (Yes/No)
+    need_asset_depreciation = Column(Boolean, nullable=True)
+    need_wo_wr = Column(Boolean, nullable=True)
+    need_reports = Column(Boolean, nullable=True)
+    need_tool_management = Column(Boolean, nullable=True)
+    need_purchasing = Column(Boolean, nullable=True)
+    need_integration = Column(Boolean, nullable=True)
+    integration_with = Column(String, nullable=True)
+    need_multi_language = Column(Boolean, nullable=True)
+    languages_required = Column(String, nullable=True)
+    need_asset_management = Column(Boolean, nullable=True)
+    need_document_management = Column(Boolean, nullable=True)
+    need_cost_tracking = Column(Boolean, nullable=True)
+    need_monitoring = Column(Boolean, nullable=True)
+    need_schedule_third_parties = Column(Boolean, nullable=True)
+    need_track_labour = Column(Boolean, nullable=True)
+
+    # Sprint 20 / FPRM-315 -- Section B SPICED narrative fields
+    about_client = Column(Text, nullable=True)
+    pain = Column(Text, nullable=True)
+    impact = Column(Text, nullable=True)
+    critical_event = Column(Text, nullable=True)
+    decision = Column(Text, nullable=True)
+    next_steps = Column(Text, nullable=True)
+
+    # Sprint 20 / FPRM-317 -- Internal deal creation flag (True when an internal user created the deal on behalf of a partner)
+    created_on_behalf_of = Column(Boolean, default=False, nullable=False)
+
     __table_args__ = (
 
         Index("ix_deal_registrations_partner_status", "partner_org_id", "status"),
