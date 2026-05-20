@@ -1761,3 +1761,120 @@ Alembic head advances **025 → 026**.
 | 17 | Dynamic activation enforcement + Multi-step approval | 3 | 20 | **Done** |
 | 18 | Quote scenarios + Multi-currency display + Phase 5 closeout | 4 | 20 | Pending |
 | **Total** | **Phase 5** | **15 stories** | **82** | **3 of 4 sprints complete** |
+
+## Sprint 18 — Quote Scenarios, Multi-Currency Display & Phase 5 Closeout (Phase 5 Sprint 4 of 4)
+
+**Started:** 2026-05-19
+**Closed:** 2026-05-19 (single-day intensive)
+**Fix Version ID:** `10769`
+**Native Sprint ID:** `742`
+**Phase 5 epic:** FPRM-238 — Quoting Module & Enforcement
+
+### Sprint 18 stories — outcome
+
+| Key | Story | Pts | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-283 | Quote scenario management (Good/Better/Best) | 6 | Done | #115 + #116 | Backend `PATCH /quotes/{id}/active-scenario` + `GET /quotes/{id}/scenarios` (10 tests). Frontend: conditional scenario comparison panel in `QuoteDetail.jsx`, scenario-label hint in `QuoteForm.jsx` new-version mode (greys out already-created labels), recommended-scenario badge + read-only scenario tabs in `DealDetail.jsx` PortalQuoteSection. AD-24 codifies the active_scenario / active_version decoupling. |
+| FPRM-287 | Multi-currency display and internal quote dashboard | 6 | Done | #117 (+ 2 fix commits) | `GET /internal/quotes` with status / partner_org_id / feature_plan / search filters, pagination, system-wide summary (counts + pipeline_total, expired excluded). 6 tests in `test_internal_quotes.py`. New `InternalQuotes.jsx` at `/internal/quotes` linked from the InternalLayout sidebar between Deals and Users. Shared `frontend/src/utils/currency.js` adopted by QuoteForm / QuoteDetail / DealDetail / InternalQuotes / PortalQuotes; PDF generator's existing `CURRENCY_SYMBOL` map already covers the same nine currencies. AD-23 codifies multi-currency display semantics. |
+| FPRM-291 | Partner quote history and deal quote summary | 5 | Done | #118 | `GET /partners/{id}/quotes` (partner own-org only; internal users 403'd with a hint to use `/internal/quotes`). 5 tests in `test_partner_quotes.py`. New `PortalQuotes.jsx` at `/portal/quotes` linked from PartnerPortalLayout between Commissions and the disabled Training item. New `DealHeaderQuoteBadge` in `InternalDealDetail.jsx` page header surfaces the most relevant quote (accepted > sent > draft > expired) with status + version + grand total. |
+| FPRM-294 | Phase 5 docs and closeout | 3 | Done | #<this PR> | This entry + Phase 5 complete marker + PROJECT_CONTEXT.md Section 1 (4 new endpoints) + Section 3 (InternalQuotes/PortalQuotes/QuoteForm/QuoteDetail entries) + Section 6 (AD-23 / AD-24) + CLAUDE.md (current-state paragraph, Sprint 18 IDs, tech-debt refresh) + RUNBOOK.md §16 (Phase 5 validation). |
+
+All 10 sub-tasks (FPRM-284..286, 288..290, 292..293, 295..298) closed Done.
+
+### Sprint 18 bugs — discovered and fixed mid-PR
+
+| Discovery | Fixed in | Notes |
+|---|---|---|
+| `NameError: name 'PartnerOrganization' is not defined` in the `/internal/quotes` endpoint | Push-forward commit on PR #117 | The existing `quotes_router.py` already imported `PartnerOrganization` aliased as `_PartnerOrg` (for the PDF renderer in Sprint 16). My scripted patch conditional checked the wrong thing and skipped the top-level import addition. Fix: add the unaliased import to the top-of-file `from models import (...)` block. |
+| `NameError: name 'and_' is not defined` in the same endpoint | Second push-forward commit on PR #117 | Same root cause — script conditional skipped the sqlalchemy import line addition. Fix: `from sqlalchemy import and_, or_` at the top of `quotes_router.py`. |
+| Anchor mismatch in `InternalDealDetail.jsx` | Story 3 script retry | The file has CRLF line endings (Sprint 16 closure left this on the file). LF-based string anchors fail to match. Updated the apply helper to detect `\r\n` in target content and auto-convert anchor whitespace. Same lesson as Sprint 17 Lesson #2 — promoted to permanent Sprint helper. |
+
+### What landed on `main` during Sprint 18
+
+- `backend/routers/quotes_router.py` — appended four new endpoints (`PATCH /active-scenario`, `GET /scenarios`, `GET /internal/quotes`, `GET /partners/{id}/quotes`). Top-level imports gained `PartnerOrganization` and `from sqlalchemy import and_, or_`. No new dependencies.
+- `backend/tests/test_quote_scenarios.py` (new, 10 tests)
+- `backend/tests/test_internal_quotes.py` (new, 6 tests)
+- `backend/tests/test_partner_quotes.py` (new, 5 tests)
+- `frontend/src/utils/currency.js` (new) — shared `formatCurrency(amount, currencyCode)` + `CURRENCY_SYMBOL` map
+- `frontend/src/pages/QuoteDetail.jsx` — scenario comparison panel + scenario fetch + `handleSelectScenario` (PATCHes /active-scenario then /active-version); migrated to shared currency util
+- `frontend/src/pages/QuoteForm.jsx` — scenario-label dropdown greys out already-created labels in new-version mode; migrated to shared currency util
+- `frontend/src/pages/DealDetail.jsx` (portal `/portal/deals/:id`) — recommended-scenario badge + read-only scenario tabs when multiple exist; migrated to shared currency util
+- `frontend/src/pages/InternalQuotes.jsx` (new) — `/internal/quotes` dashboard
+- `frontend/src/pages/PortalQuotes.jsx` (new) — `/portal/quotes` partner quote history
+- `frontend/src/pages/InternalDealDetail.jsx` — `DealHeaderQuoteBadge` appended at module scope and rendered in the page header next to status/commission chips
+- `frontend/src/App.jsx` — new `/internal/quotes` and `/portal/quotes` routes
+- `frontend/src/layouts/InternalLayout.jsx` — Quotes nav item between Deals and Users (new IconDoc), breadcrumb entry
+- `frontend/src/layouts/PartnerPortalLayout.jsx` — My Quotes nav item between Commissions and Training (using existing IconDoc), breadcrumb entry
+- `PROJECT_CONTEXT.md` — Section 1 (4 new endpoints), Section 3 (4 file entries), Section 6 (AD-23 + AD-24)
+- `CLAUDE.md` — current-state paragraph, Sprint 18 IDs, tech-debt refresh
+- `RUNBOOK.md` — new §16 Phase 5 happy-path validation
+- `CLAUDE_HISTORY.md` — this Sprint 18 entry + Phase 5 complete marker
+
+### API endpoints added (Sprint 18)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| PATCH | `/quotes/{id}/active-scenario` | Internal write roles | Re-point `active_scenario`; 422 if label has no non-deleted version |
+| GET | `/quotes/{id}/scenarios` | tenant-scoped | Latest non-deleted version per scenario_label, canonical order |
+| GET | `/internal/quotes` | Internal write roles | Cross-deal dashboard + system summary |
+| GET | `/partners/{id}/quotes` | partner_admin / partner_user (own org) | Partner-facing quote history; internal 403 |
+
+Total API surface ends Sprint 18 at **~118 endpoints** (Sprint 17 baseline 114 + 4) + 7 endpoints with the `?export=csv` extension.
+
+### Migrations added
+
+None. Alembic head remains **026** (Sprint 17). All Sprint 18 schema requirements were already in place via migrations 023–026 (`active_scenario` / `scenario_label` columns shipped in Sprint 15 / migration 024).
+
+### Test count
+
+| Source | Count |
+|---|---|
+| Sprint 17 baseline | 535 |
+| Story 1 scenario tests | +10 |
+| Story 2 internal quotes tests | +6 |
+| Story 3 partner quotes tests | +5 |
+| **Sprint 18 total** | **~556** |
+
+(A precise post-merge count is asserted in the Phase C closeout report after `pytest backend/tests/ -v` against merged `main`.)
+
+### Sprint 18 lessons
+
+1. **Scripted edits that gate import additions on a substring check can be fooled by aliased imports.** Story 2 had `from models import PartnerOrganization as _PartnerOrg` inside the PDF section, so the `if "PartnerOrganization" not in router:` check returned False and the top-of-file import was never added. Two fix-forward commits caught it. Lesson: gate import additions on the literal *line being added*, not a substring that could already appear in an alias or comment elsewhere in the file.
+2. **CRLF line endings on Windows-authored files break LF-only anchor matching.** Same lesson as Sprint 17 Lesson #2, now permanently codified in the Sprint 18 helper: `apply()` detects `\r\n` in the file content and converts the anchor on the fly. `InternalDealDetail.jsx` was the canonical example — Sprint 16's script left it CRLF-encoded.
+3. **`utils/currency.js` finally exists.** Three pages had been duplicating the same `formatCurrency` + `CURRENCY_SYMBOL` for two sprints. Sprint 18's extraction took a few minutes but removed the maintenance hazard — any new currency only needs to be added once. The PDF generator's own `CURRENCY_SYMBOL` constant stays inside `quotes_router.py` because the PDF renderer is server-side and can't import from `frontend/src/utils/`.
+4. **Closing the Phase 5 epic at sprint close requires manual transition.** Story 4's last sub-task explicitly transitions `FPRM-238` to Done in Jira — the rule-based auto-merger only touches ticket transitions on PR merge, not on the epic at phase close. Captured here so the same step is run for the Phase 6 closeout.
+
+---
+
+## ✅ PHASE 5 COMPLETE — Quoting Module & Enforcement
+
+**Sprints:** 15–18 | **Total points:** 82 | **PR range:** #103–#118
+
+| Sprint | Points | Key Delivery |
+|--------|--------|--------------|
+| Sprint 15 | 21 | Pricing catalogue (migrations 023–024, 30 seeded rows), `quote_engine.py` (AD-18), Quote CRUD API (10 endpoints) |
+| Sprint 16 | 21 | `QuoteForm`/`QuoteDetail` UI, PDF generation (migration 025, reportlab, base64 storage AD-19), CSV export on 7 list views (AD-20) |
+| Sprint 17 | 20 | Dynamic activation enforcement (AD-21), multi-step approval enforcement (migration 026, AD-22) |
+| Sprint 18 | 20 | Scenario management (AD-24), multi-currency display (AD-23), `/internal/quotes` dashboard, `/portal/quotes`, deal-header quote badge |
+
+**Phase 5 API surface added:** ~17 new endpoints (10 in S15 + 2 in S16 + 1 in S17 + 4 in S18) + 7 endpoints extended with `?export=csv`.
+**Migrations added:** 023 (pricing catalogue + seeds), 024 (quotes tables), 025 (PDF columns), 026 (approval_step_records).
+**Test count:** 535 (entering Sprint 17) → ~556 (Phase 5 complete).
+**Phase 4 deferrals retired:** Dynamic activation enforcement ✅ | Multi-step approval enforcement ✅
+**Phase 5 ADs added:** AD-18 (quote engine), AD-19 (PDF base64 storage), AD-20 (fetch+Blob downloads), AD-21 (dynamic activation), AD-22 (multi-step approval), AD-23 (multi-currency display), AD-24 (quote scenario selection).
+
+### Phase 6 readiness
+
+Phase 6 scope (in priority order):
+1. **HubSpot integration (FR-HS).** Detailed design inputs already documented. Likely the largest Phase 6 epic.
+2. **Implementation services pricing quote.** Sister module to the Phase 5 software pricing engine, but services-side (per-day / per-engagement rates).
+3. **Training catalogue (FR-TRN).** First-class training program records linked to partner certification + activation.
+4. **`PartnerTier` enum retirement.** Final FK migration to `partner_tiers` table.
+5. **Sweep deprecation warnings.** `datetime.utcnow()` → `datetime.now(timezone.utc)` before Python 3.14.
+
+Migration head entering Phase 6: **026**
+Last Jira ticket entering Phase 6: **FPRM-298**
+Test baseline entering Phase 6: **~556 passing**
+Phase 5 epic status: **FPRM-238 — Done**
+
+---

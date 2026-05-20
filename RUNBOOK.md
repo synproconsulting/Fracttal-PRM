@@ -841,7 +841,140 @@ Open `https://fracttal-prm-frontend-production.up.railway.app`:
 
 ---
 
+## 16. End-to-End Happy Path Validation — Phase 5 (Quoting Module & Enforcement)
+
+Run after Railway deploys catch up (migrations 023–026 + Sprint 15–18 code). All Phase 5 happy paths exercised end to end.
+
+Use Command Prompt (`cmd`) for curl with `%token%`.
+
+### Step 1 — Confirm migrations + pricing catalogue seed
+
+```
+curl https://fracttal-prm-backend-production.up.railway.app/health
+REM Expect: {"status":"ok","service":"fracttal-prm-backend","database":"connected"}
+
+set token=<system_admin token>
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/config/pricing/plans" -H "Authorization: Bearer %token%"
+REM Expect: 3 rows (starter / professional / enterprise) with feature_pack_annual / transactional_user_annual / limited_tech_user_annual
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/config/pricing/addons" -H "Authorization: Bearer %token%"
+REM Expect: 21 rows from the add-on catalogue
+```
+
+### Step 2 — Create a quote on an existing deal
+
+```
+REM Get a partner_admin token for an org with at least one approved deal (see §3)
+set ptoken=<partner_admin token>
+
+REM Pick a deal id from /deal-registrations
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/deal-registrations" -H "Authorization: Bearer %ptoken%"
+set deal_id=<id from above>
+
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/deals/%deal_id%/quotes" -H "Authorization: Bearer %ptoken%" -H "Content-Type: application/json" -d "{\"feature_plan\":\"enterprise\",\"qty_transactional_users\":5,\"qty_limited_tech_users\":25,\"currency_code\":\"USD\"}"
+REM Expect: 201 + active_version_data with grand_total_after_discount ~ 16608.00 (Sprint 15 spec example 1)
+set quote_id=<id from response>
+```
+
+### Step 3 — Scenario management (Sprint 18 / FPRM-283)
+
+```
+REM Add two more versions labelled good / best
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/versions" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"feature_plan\":\"starter\",\"qty_transactional_users\":5,\"qty_limited_tech_users\":25,\"scenario_label\":\"good\"}"
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/versions" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"feature_plan\":\"professional\",\"qty_transactional_users\":5,\"qty_limited_tech_users\":25,\"scenario_label\":\"better\"}"
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/scenarios" -H "Authorization: Bearer %ptoken%"
+REM Expect: scenarios array length >= 2 in canonical order; active_scenario possibly null until PATCH
+
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/active-scenario" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"scenario_label\":\"better\"}"
+REM Expect: 200 with active_scenario=better
+```
+
+### Step 4 — PDF generation + download (Sprint 16)
+
+```
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/versions/1/generate-pdf" -H "Authorization: Bearer %token%"
+REM Expect: {"pdf_filename":"quote-...","pdf_generated_at":"..."}
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/versions/1/pdf" -H "Authorization: Bearer %token%" -o quote_v1.pdf
+REM Expect: quote_v1.pdf written; open and inspect — header, line-item table, totals, currency symbol
+```
+
+### Step 5 — CSV exports (Sprint 16 / AD-20)
+
+```
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/deals?export=csv" -H "Authorization: Bearer %token%" -o deals_export.csv
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/partners?export=csv" -H "Authorization: Bearer %token%" -o partners_export.csv
+REM Expect: text/csv body with header row in first line for each
+```
+
+### Step 6 — Dynamic activation criteria (Sprint 17 / FPRM-270)
+
+```
+set partner_id=<partner_org_id>
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/partners/%partner_id%/activation/criteria" -H "Authorization: Bearer %token%"
+REM Expect: {required_criteria:[{criterion_key,description,is_met}], activation_complete, config_source}
+REM config_source is "dynamic" if an activation_checklist_config row matches the partner's category/tier, else "fallback"
+```
+
+### Step 7 — Multi-step approval enforcement (Sprint 17 / FPRM-274)
+
+```
+REM Confirm a partner application's approval_progress when at least one approval_workflow_steps row exists for partner_application
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/applications/<app_id>" -H "Authorization: Bearer %token%"
+REM Expect: GET response includes approval_progress {total_steps, completed_steps, current_step_order, current_step_name, current_required_role}
+
+REM A user whose role does NOT match current_required_role should receive 403 on POST /approve
+```
+
+### Step 8 — Internal quote dashboard (Sprint 18 / FPRM-287)
+
+```
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/quotes" -H "Authorization: Bearer %token%"
+REM Expect: {items:[...], total:N, page:1, page_size:20, summary:{total_quotes, draft, sent, accepted, expired, pipeline_total}}
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/quotes?status=sent" -H "Authorization: Bearer %token%"
+REM Expect: items filtered to sent only
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/quotes?search=Acme" -H "Authorization: Bearer %token%"
+REM Expect: items where quote_name OR deal_name contains "Acme"
+```
+
+### Step 9 — Partner quote history (Sprint 18 / FPRM-291)
+
+```
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/partners/%partner_id%/quotes" -H "Authorization: Bearer %ptoken%"
+REM Expect: 200 with items for that partner's quotes
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/partners/%partner_id%/quotes" -H "Authorization: Bearer %token%"
+REM Expect: 403 with detail mentioning /internal/quotes (internal users are blocked here)
+```
+
+### Step 10 — UI browser checklist
+
+Open https://fracttal-prm-frontend-production.up.railway.app:
+
+1. **Internal as system_admin** → sidebar shows new **Quotes** item between Deals and Users; click → `/internal/quotes` renders summary cards + filter row + paginated table. Filters re-fetch on change; row link opens the linked deal.
+2. **Internal deal detail** → header shows the new quote chip (status + version + grand total) next to the Commission/Partner chips, or a dashed "No quote yet" chip when none exists.
+3. **Internal QuoteDetail** → when 2+ versions have scenario labels, the Scenario Comparison panel renders between Versions and Line Items. "Select This Option" PATCHes /active-scenario + /active-version and refreshes; ⭐ marker moves to the selected card.
+4. **Partner portal** → sidebar shows **My Quotes** between Commissions and the disabled Training item; click → `/portal/quotes` renders the filterable table.
+5. **Partner DealDetail** → when the quote has `active_scenario`, the PortalQuoteSection shows the "Your recommended option: …" badge; when 2+ scenarios exist, a read-only scenario-tab row appears.
+6. **Currency formatting** — change quote currency in the form (USD → EUR) for a *new* quote and confirm the symbol changes everywhere it renders (live preview, detail view, portal section).
+
+### Known operational notes (Phase 5)
+
+- **No FX conversion (AD-23).** `currency_code` is a display label; numeric totals do not convert. Partners requesting EUR vs USD comparisons see the same numbers with a different symbol.
+- **Scenario / version are independent (AD-24).** Internal users can move the active version separately from the active scenario; the partner-facing "Select This Option" CTA keeps them in lock-step for the common case.
+- **PDF artefacts stored as base64 on the row (AD-19).** Surviving Railway redeploys does NOT depend on persistent disk. Regenerating overwrites idempotently.
+- **All authenticated downloads use fetch+Blob (AD-20).** Anchor `href` or `window.location.href` would 401 on JWT-only endpoints.
+- **Pricing seeds are migration-time.** Migration 023 inserts 30 rows via `WHERE NOT EXISTS`. Empty pricing means the migration didn't run — first place to check on any "quote engine returns 0" report.
+
+---
+
+*Phase 5 complete: Sprint 18 closeout — May 2026.*
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–14 closeout*
-*Last updated: Sprint 14 closeout / Phase 4 complete — May 2026*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–18 closeout*
+*Last updated: Sprint 18 closeout / Phase 5 complete — 2026-05-19*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

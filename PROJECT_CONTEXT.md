@@ -211,6 +211,10 @@
 | GET | `/internal/config/pricing/plans` | any authenticated user | Sprint 15 / FPRM-246. Active `FeaturePlanPrice` rows — needed by the quote form UI. |
 | GET | `/internal/config/pricing/addons` | any authenticated user | Sprint 15 / FPRM-246. Active `AddonCatalogItem` rows — needed by the quote form UI. |
 | GET | `/partners/{partner_org_id}/activation/criteria` | partner_admin (own org) or any internal role | Sprint 17 / FPRM-270 (AD-21). Returns resolved required criteria for the partner: `{required_criteria: [{criterion_key, description, is_met}], activation_complete, config_source}`. `config_source` is `"dynamic"` when matching `activation_checklist_config` rows exist, `"fallback"` when the legacy four-flag default applies. |
+| PATCH | `/quotes/{quote_id}/active-scenario` | channel_manager / channel_ops_admin / system_admin | Sprint 18 / FPRM-283 (AD-24). Re-point `quotes.active_scenario`. Body `{scenario_label: "good"|"better"|"best"|null}`. 422 if the label has no non-deleted version on the quote. Null clears the selection. Audit `quote.scenario_selected`. |
+| GET | `/quotes/{quote_id}/scenarios` | tenant-scoped | Sprint 18 / FPRM-283 (AD-24). Returns `{scenarios: [{scenario_label, version_number, feature_plan, grand_total_after_discount, is_active}], active_scenario}`. Groups non-deleted versions by `scenario_label`, returns the latest version per label, in canonical good/better/best order. |
+| GET | `/internal/quotes` | channel_manager / channel_ops_admin / system_admin | Sprint 18 / FPRM-287. Cross-deal quote dashboard. Filters: `status` / `partner_org_id` / `feature_plan` / `search` (matches `quote_name` or `deal_name`). Pagination: `page` (>=1) / `page_size` (1–100, default 20). Returns `{items, total, page, page_size, summary}`. `summary` rolls up system-wide totals and pipeline value (expired excluded). Joins Quote → active QuoteVersion → DealRegistration → PartnerOrganization. |
+| GET | `/partners/{partner_org_id}/quotes` | partner_admin / partner_user (own org only) | Sprint 18 / FPRM-291. Partner-facing quote history scoped to the user's own org. Internal users are 403'd (use `/internal/quotes`). Optional `?status=` filter. Returns `{items: [{quote_name, deal_name, feature_plan, currency_code, grand_total_after_discount, status, active_version, active_scenario, ...}]}` with grand totals joined from the active non-deleted version. |
 
 
 
@@ -428,7 +432,12 @@ frontend/src/
 
     ├── ApplicationReview.jsx        # Internal review detail page (Sprint 6) — read-only field view + Approve/Reject/Request-Info action panel + audit-log timeline
 
-    └── ApplicationResume.jsx        # Public applicant resume page (Sprint 6) — loads by ?id=&draft_token=, surfaces reviewer info_request_message, editable form, message thread, Resubmit
+    ├── ApplicationResume.jsx        # Public applicant resume page (Sprint 6) — loads by ?id=&draft_token=, surfaces reviewer info_request_message, editable form, message thread, Resubmit
+    │
+    ├── QuoteForm.jsx                # Sprint 16 / FPRM-254 — quote create + new-version form with sticky live-preview panel; Sprint 18 / FPRM-283 — scenario selector greys out already-created labels in new-version mode and surfaces an "All 3 scenarios created" hint.
+    ├── QuoteDetail.jsx              # Sprint 16 / FPRM-254 — version browser + line-item table + status state machine + PDF generate/download; Sprint 18 / FPRM-283 — scenario comparison panel between Versions and Line Items renders only when /quotes/{id}/scenarios returns at least one entry. "Select This Option" PATCHes /active-scenario then /active-version.
+    ├── InternalQuotes.jsx           # Sprint 18 / FPRM-287 — cross-deal quote dashboard at /internal/quotes. Summary card row (Total / Draft / Sent / Accepted / Pipeline Value), status / plan / search filters, paginated table; row links to /internal/deals/:id. Uses shared `utils/currency.js` for amounts.
+    └── PortalQuotes.jsx             # Sprint 18 / FPRM-291 — partner-facing quote history at /portal/quotes inside PartnerPortalLayout. Read-only table with status filter; row links back to /portal/deals/:id. Internal users redirected by ProtectedRoute (partner roles only).
 
 ```
 
@@ -981,6 +990,30 @@ The shared helpers live in `backend/approval_helpers.py` (`get_approval_step_con
 **Consequence:** Frontend `ApplicationReview.jsx` and `InternalDealDetail.jsx` consume `approval_progress` to render a step indicator and disable the Approve button when the logged-in user's role does not match the current step's `required_role`. The `approval_progress` block has shape `{total_steps, completed_steps, current_step_order, current_step_name, current_required_role}` — `current_*` fields are `null` once all steps are complete. The `step_name` and `required_role` columns on `ApprovalStepRecord` are *snapshotted* at action time so historical records survive future edits to `approval_workflow_steps`. The polymorphic `object_id` column carries no FK (a union-typed FK would require non-portable triggers); the back-reference is served by the `(workflow_type, object_id)` composite index.
 
 **Do not:** Inline step-context logic in either router — both must use the helpers in `approval_helpers.py`. Do not transition object status on intermediate steps — only the final step transitions to `approved`. Do not skip the fallback path — empty `approval_workflow_steps` must NOT block approvals for legacy deployments.
+
+---
+
+### AD-23 — Multi-currency display is render-time formatting; numeric storage is currency-agnostic
+
+**Decision:** `quotes.currency_code` is a display label on the Quote header only. Every monetary column (`feature_pack_annual`, `transactional_user_annual`, `limited_tech_user_annual`, `monthly_price`, `unit_price`, `total_before_discount`, `total_after_discount`, `grand_total_before_discount`, `grand_total_after_discount`) is a `Numeric` value persisted with no currency embedded. The frontend converts to a symbol-prefixed string at render time via `frontend/src/utils/currency.js` `formatCurrency(amount, code)` + `CURRENCY_SYMBOL` map (Sprint 18). The PDF generator uses the equivalent `CURRENCY_SYMBOL` map in `quotes_router.py`. No FX conversion is performed — the same numeric total simply renders with a different prefix when the Quote header is re-keyed to another currency.
+
+**Why:** FX volatility would otherwise leak into the persisted quote totals and historical reporting. Display-only formatting keeps Phase 5 simple: a partner who wants the same software bundle priced in EUR vs USD gets the same numbers with a different symbol, and any future FX policy decision (real-time, daily, contract-locked) is a one-place change inside `formatCurrency` (or a dedicated FX engine) without rewriting any persisted rows.
+
+**Consequence:** The currency picker in `QuoteForm.jsx` is `disabled={isNewVersion}` already — currency stays constant across a quote's lifetime to keep version comparisons meaningful. PDF and frontend share the same nine seeded currency codes (USD/EUR/GBP/AUD/CAD/ZAR/AED/SAR/EGP); adding a new currency is a single-line addition to both `CURRENCY_SYMBOL` maps with no schema change.
+
+**Do not:** Persist currency symbols in any numeric column. Do not bake FX conversion into the quote engine — Phase 5 is explicitly display-only. Do not split `formatCurrency` into per-page helpers; the canonical implementation lives in `utils/currency.js`.
+
+---
+
+### AD-24 — Quote scenario selection is independent of version selection; latest version per label wins
+
+**Decision:** `quotes.active_scenario` (string nullable) and `quotes.active_version` (integer) are independent fields. The two PATCH endpoints (`/active-scenario` and `/active-version`) move them separately; the partner-facing scenario-select action in `QuoteDetail.jsx` issues both calls in sequence so the active version always matches the active scenario, but the API contract does not couple them. `GET /quotes/{id}/scenarios` (Sprint 18 / FPRM-283) groups every non-deleted `QuoteVersion` by `scenario_label`, returns the highest-numbered version per label, and emits the canonical good/better/best ordering. Quotes with no scenario_label on any version return an empty `scenarios` array; the comparison UI conditionally hides the panel entirely in that state.
+
+**Why:** Decoupling lets internal users explore scenarios without committing the active version (read-only mock-ups during a sales conversation), while the partner-facing "Select This Option" CTA keeps them in lock-step for the common case. "Latest version per label wins" means iterating on a scenario (add v4 also labelled "good") naturally supersedes the older v2 "good" without manual cleanup — partners always see the current good/better/best view.
+
+**Consequence:** Internal `QuoteForm.jsx` (new-version mode) greys out scenario labels already present on the quote and disables the dropdown once all three exist — preventing duplicate scenarios from being added without forcing a hard error. The PDF artefact and `PortalQuoteSection` both surface the *active* scenario by name when set; the partner-facing portal is read-only — only internal write roles can PATCH `/active-scenario`.
+
+**Do not:** Re-introduce a non-null FK between `quotes.active_scenario` and a specific `quote_versions.id` — the column is intentionally a free-form label so iteration is cheap. Do not validate that `active_version` matches the latest version of `active_scenario` — the two endpoints are independent by design. Do not extend scenario_label vocabulary without coordinating with the frontend canonical order (good → better → best).
 
 ---
 
