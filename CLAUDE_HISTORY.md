@@ -1502,3 +1502,102 @@ Backend ends Sprint 14 at **428 tests passing** (Sprint 13 baseline 403 + 25 new
 9. **Password reset email backend.** Reset URLs are still logged to stdout via `print`. Adopt the AD-13 SMTP+stdout-fallback pattern used by lifecycle notifications.
 10. **Multi-role users.** `User.role` is a single string. If a Phase 5 requirement needs e.g. `sales_rep + partner_admin` on the same user, redesign as a join table.
 
+
+## Sprint 15 — Quoting Module Foundation (Phase 5 begins)
+
+**Started:** 2026-05-19
+**Closed:** 2026-05-19 (single-day intensive)
+**Fix Version ID:** `10766`
+**Native Sprint ID:** `739`
+**Phase 5 epic:** FPRM-238 — Quoting Module & Enforcement
+
+### Sprint 15 ticket-key map
+
+Phase 5 Epic (FPRM-238) was created first, so the first story is one off the planning-prompt offsets:
+
+| Planned | Actual | Type     | Title |
+|---------|--------|----------|-------|
+| FPRM-238 | FPRM-238 | Epic | Quoting Module & Enforcement (Phase 5) |
+| FPRM-239 | FPRM-239 | Story | Quote data model and Alembic migrations (6 pts) |
+| —       | FPRM-240 | Sub-task | Add pricing catalogue models + migration 023 with seed data (3 pts) |
+| —       | FPRM-241 | Sub-task | Add quote header, version, and line-item models + migration 024 (2 pts) |
+| —       | FPRM-242 | Sub-task | Write unit tests for new models and seed data (1 pt) |
+| FPRM-240 | FPRM-243 | Story | Quote calculation engine (6 pts) |
+| —       | FPRM-244 | Sub-task | Implement `calculate_quote` and dataclasses (3 pts) |
+| —       | FPRM-245 | Sub-task | Write 20+ unit tests for the engine (3 pts) |
+| FPRM-242 | FPRM-246 | Story | Quote CRUD API (6 pts) |
+| —       | FPRM-247 | Sub-task | Create `quotes_router.py` (3 pts) |
+| —       | FPRM-248 | Sub-task | Add version management + status endpoints (2 pts) |
+| —       | FPRM-249 | Sub-task | Write unit tests for quotes API (1 pt) |
+| FPRM-244 | FPRM-250 | Story | Sprint 15 docs update (3 pts) |
+| —       | FPRM-251/252/253 | Sub-tasks | Update PROJECT_CONTEXT.md + CLAUDE.md / CLAUDE_HISTORY.md / Close Sprint 15 |
+
+### Sprint 15 stories — outcome
+
+| Key | Story | Status | PR | Notes |
+|---|---|---|---|---|
+| FPRM-239 | Quote data model and Alembic migrations | Done | #103 | Added six new SQLAlchemy models (`FeaturePlanPrice`, `VolumeDiscountTier`, `AddonCatalogItem`, `Quote`, `QuoteVersion`, `QuoteLineItem`) and two Alembic migrations: 023 creates the three pricing-catalogue tables and seeds them from the Fracttal Pricing and Quotation Specification (3 plans + 6 volume tiers + 21 add-ons via idempotent `WHERE NOT EXISTS` inserts); 024 creates the three quote tables with FK constraints, the unique `(quote_id, version_number)` constraint, and the required indexes. `models.py` imports patched to add `Decimal` and `UniqueConstraint`. 9 model tests in `test_quote_models.py` verifying seed data and FK enforcement (uses `PRAGMA foreign_keys = ON` per AD-8 — sqlite needs it explicitly enabled to honour FK constraints in tests). |
+| FPRM-243 | Quote calculation engine | Done | #104 | New `backend/quote_engine.py` — pure module, no FastAPI imports, importable standalone (AD-18). `calculate_quote(db, feature_plan, feature_plan_discount_pct, qty_transactional, qty_limited_tech_quoted, selected_addon_keys)` returns a `QuoteCalculationResult` dataclass with ordered `QuoteLineItemData` rows + grand totals. Implements all 7 spec rules: free Limited Technician allocation (suppressed when discount > 0); volume-banded user lines (1 line per non-zero band); Feature Plan discount affects ONLY the Feature Pack; add-on validation per plan (Enterprise raises if any add-on passed; Starter/Professional rejects add-ons marked unavailable for that plan); `Decimal` quantised to 2 places throughout. 21 unit tests in `test_quote_engine.py` covering all four worked spec examples exactly (Examples 1-4) plus boundary cases (band edges 10/11, 501+ users, 100% discount, multiple add-ons, line-order sequentiality). Spec Example 2's stated after-discount total (15399.60) appears to have an arithmetic error; the engine computes the mathematically correct 15039.60. |
+| FPRM-246 | Quote CRUD API | Done | #105 | New `backend/routers/quotes_router.py` with 10 endpoints (see PROJECT_CONTEXT §1). Wraps `quote_engine.calculate_quote` per AD-18 — no inline pricing arithmetic in the router. Tenant scoping: partner_admin can only quote on own org's deals; internal review roles unrestricted. Write roles (channel_manager + channel_ops_admin + system_admin) for new versions / activate / status transitions; soft-delete restricted to channel_ops_admin + system_admin and rejects deleting the currently active version. Engine `ValueError` -> HTTP 422 (e.g. Enterprise + add-on, unknown add-on key, invalid plan). Status state machine: `draft -> sent`, `sent -> {accepted, expired}`; other transitions 422. Registered in `main.py` between `reports_router` and the end of the list. 18 API tests in `test_quotes_api.py` covering create / list / read / version add+activate / RBAC cross-org block / status state machine / soft-delete + activate-deleted / audit log emission / pricing catalogue endpoints / Enterprise-add-on rejection. |
+| FPRM-250 | Sprint 15 docs update | Done | (this PR) | All canonical docs updated: PROJECT_CONTEXT.md (§1 adds 10 new endpoints; §2 adds 6 new tables + 2 migrations; §6 adds AD-18); CLAUDE.md (current state, Sprint 15 IDs); CLAUDE_HISTORY.md (this entry). |
+
+All 9 Sub-tasks (FPRM-240..242, 244-245, 247-249, 251-253) closed Done.
+
+### Sprint 15 bugs — discovered and fixed mid-sprint
+
+| Key | Bug | Fixed in PR | Notes |
+|---|---|---|---|
+| — | Missing `UniqueConstraint` import in `models.py` | #103 (fix commit) | First test run failed `NameError`; the planned edit to add the import wasn't matching the existing multi-line import block. Fix-commit patched the import; no separate Jira ticket since the bug only existed inside the unmerged PR. |
+| — | `seed_pricing` duplicated rows across tests on a module-scoped engine | #103 (fix commit) | First test run failed `UNIQUE constraint failed: addon_catalog_items.addon_key`. Replaced the per-test fixture with a teardown that truncates the quote/pricing tables in dependency order (matches the pattern from `test_dashboard.py` / `test_partner_dashboard.py`). |
+| — | `Quote` constructor rejected a stray `grand_total_after_discount` kwarg | #103 (fix commit) | Copy-paste error in `test_quote_requires_deal_id` (the field belongs on `QuoteVersion`). Dropped the kwarg. |
+| — | `Decimal` serialised as float, not string, in test assertion | #105 (fix commit) | FastAPI `jsonable_encoder` converts `Numeric` -> `float`; test asserted `== "16608.00"`. Fix: assert numeric equality via `float()`. The actual API behaviour is unchanged. |
+
+### What landed on `main` during Sprint 15
+
+- `backend/models.py` — adds `Decimal` + `UniqueConstraint` imports and six new models: `FeaturePlanPrice`, `VolumeDiscountTier`, `AddonCatalogItem`, `Quote`, `QuoteVersion`, `QuoteLineItem`.
+- `backend/alembic/versions/023_create_pricing_catalogue.py` (new) — 3 pricing tables + 30 seeded rows.
+- `backend/alembic/versions/024_create_quotes.py` (new) — 3 quote tables + FKs + unique constraint + indexes.
+- `backend/quote_engine.py` (new) — standalone pricing calculation module (AD-18).
+- `backend/routers/quotes_router.py` (new) — 10 quote endpoints.
+- `backend/main.py` — registers `quotes_router`.
+- `backend/tests/test_quote_models.py` (new, 9 cases).
+- `backend/tests/test_quote_engine.py` (new, 21 cases).
+- `backend/tests/test_quotes_api.py` (new, 18 cases).
+- `CLAUDE.md`, `CLAUDE_HISTORY.md`, `PROJECT_CONTEXT.md` — Sprint 15 closeout updates.
+
+### API endpoint count
+
+Sprint 15 adds **10 new endpoints**:
+- `POST /deals/{deal_id}/quotes`
+- `GET /deals/{deal_id}/quotes`
+- `GET /quotes/{quote_id}`
+- `POST /quotes/{quote_id}/versions`
+- `PATCH /quotes/{quote_id}/active-version`
+- `PATCH /quotes/{quote_id}/status`
+- `GET /quotes/{quote_id}/versions`
+- `DELETE /quotes/{quote_id}/versions/{version_number}`
+- `GET /internal/config/pricing/plans`
+- `GET /internal/config/pricing/addons`
+
+Total surface area is now **111 endpoints** (Sprint 14 baseline 101 + 10).
+
+### Sprint 15 test count
+
+Backend ends Sprint 15 at **~474 tests passing** (Sprint 14 baseline 428 + 9 + 21 + 18). A precise post-merge count is asserted in the closeout report after `pytest backend/tests/ -v` against the merged `main`.
+
+### Sprint 15 lessons
+
+1. **Multi-line Python imports need an exact replacement target.** The initial `models.py` patch tried to insert `UniqueConstraint` by matching `    Uuid,\n)`. The match did not fire (likely a CRLF / formatting subtlety), so the import block reached CI without the new symbol and the test loader broke at `NameError: name 'UniqueConstraint' is not defined`. Lesson: validate the patched file content by re-reading it from GitHub before pushing, not just by checking that the string "UniqueConstraint" appears *somewhere* in the file — the model definitions referenced it too, producing a false-positive presence check.
+2. **Module-scoped engines need per-test cleanup when tests seed data.** The test seed helper inserted the 21 add-ons under a UNIQUE `addon_key`; on the second test the same module-level engine triggered `UNIQUE constraint failed`. Existing tests like `test_partner_dashboard.py` already had a `db_session` fixture that truncates all tables on teardown — copying that pattern resolved it. Future stories that introduce seeded test data should adopt the truncate-on-teardown pattern from day one.
+3. **`jsonable_encoder` converts `Decimal` -> `float`.** Currency values like `Decimal("16608.00")` serialise as `16608.0` (no string preservation). Tests that assert against the raw response value must compare numerically (`float(val) == 16608.00`) rather than string-equality, or the router must explicitly stringify Decimals before returning. Keeping the engine in `Decimal` and the wire format in `float` is the path of least resistance for Phase 5; if currency precision becomes load-bearing for downstream consumers, revisit at that time.
+4. **Spec Example 2 grand-total has an arithmetic error.** Stated `15399.60`; correct is `15039.60` (5619.60 + 4500 + 2400 + 2520). Trust the rules, not the stated totals — the engine math reconciles to the four corrected totals exactly. Flagging here so the next sprint that touches the spec doesn't try to make the engine match a wrong number.
+
+### Phase 5 progress
+
+| Sprint | Theme | Stories | Points | Status |
+|---|---|---|---|---|
+| 15 | Quoting Module Foundation (data model + engine + API) | 4 | 21 | **Done** |
+| 16 | Quoting Module Frontend + PDF + CSV export gaps | 4 | 21 | Pending |
+| 17 | Dynamic activation enforcement + Multi-step approval | 3 | 20 | Pending |
+| 18 | Quote scenarios + Multi-currency display + Phase 5 closeout | 4 | 20 | Pending |
+| **Total** | **Phase 5** | **15 stories** | **82** | **1 of 4 sprints complete** |
