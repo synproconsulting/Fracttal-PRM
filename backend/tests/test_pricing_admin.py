@@ -468,5 +468,118 @@ def test_audit_log_on_every_write(client, db_session):
     assert "pricing.addon_updated" in actions
 
 
-# FPRM-308 tests (audit log filter + effective-date semantics + CSV export)
-# are appended to this file in the Sprint 19 Story 3 PR.
+# --------------------------------------------------------------------------
+# FPRM-308 — audit log filter + effective-date semantics + CSV export
+# --------------------------------------------------------------------------
+
+
+def test_audit_log_action_prefix_filter(client, db_session):
+    """The /admin/audit-log endpoint accepts ?action_prefix=pricing and returns
+    only events whose action starts with 'pricing.'."""
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    r = client.post("/internal/config/pricing/addons", json={
+        "addon_key": "prefix_test", "display_name": "Prefix Test",
+        "monthly_price": "5.00",
+    })
+    assert r.status_code == 201
+    from audit import log_audit_event
+    log_audit_event(
+        db=db_session, actor=sa, action="something_else.event",
+        object_type="something_else", object_id=uuid.uuid4(),
+    )
+    r = client.get("/admin/audit-log?action_prefix=pricing&page_size=50")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert items, "expected at least one pricing event"
+    assert all(it["action"].startswith("pricing.") for it in items)
+
+
+def test_scheduled_price_row(client, db_session):
+    """A row with a future effective_from must not displace today's pricing."""
+    _auth(_user(db_session, UserRole.channel_ops_admin.value))
+    future = (date.today() + timedelta(days=60)).isoformat()
+    r = client.post("/internal/config/pricing/plans", json={
+        "plan_code": "starter",
+        "feature_pack_annual": "1500.00",
+        "transactional_user_annual": "600.00",
+        "limited_tech_user_annual": "260.00",
+        "effective_from": future,
+    })
+    assert r.status_code == 201
+    # quote_engine picks the highest effective_from <= today, which should
+    # remain the seeded 2024-01-01 row (1161.00), not the future 1500.00 one.
+    from quote_engine import calculate_quote
+    result = calculate_quote(
+        db=db_session, feature_plan="starter",
+        feature_plan_discount_pct=0,
+        qty_transactional=1, qty_limited_tech_quoted=0,
+        selected_addon_keys=[],
+    )
+    feature_lines = [li for li in result.line_items if li.line_type == "feature_pack"]
+    assert feature_lines and feature_lines[0].unit_price == Decimal("1161.00")
+
+
+def test_engine_uses_most_recent_effective_from(client, db_session):
+    """Two active rows for the same plan with past effective dates: highest wins."""
+    _auth(_user(db_session, UserRole.channel_ops_admin.value))
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    r = client.post("/internal/config/pricing/plans", json={
+        "plan_code": "starter",
+        "feature_pack_annual": "1400.00",
+        "transactional_user_annual": "600.00",
+        "limited_tech_user_annual": "260.00",
+        "effective_from": yesterday,
+    })
+    assert r.status_code == 201
+    from quote_engine import calculate_quote
+    result = calculate_quote(
+        db=db_session, feature_plan="starter",
+        feature_plan_discount_pct=0,
+        qty_transactional=1, qty_limited_tech_quoted=0,
+        selected_addon_keys=[],
+    )
+    feature_lines = [li for li in result.line_items if li.line_type == "feature_pack"]
+    assert feature_lines and feature_lines[0].unit_price == Decimal("1400.00")
+
+
+def test_adding_new_row_does_not_deactivate_old(client, db_session):
+    _auth(_user(db_session, UserRole.channel_ops_admin.value))
+    before = (
+        db_session.query(FeaturePlanPrice)
+        .filter(FeaturePlanPrice.plan_code == "starter")
+        .filter(FeaturePlanPrice.is_active.is_(True))
+        .count()
+    )
+    r = client.post("/internal/config/pricing/plans", json={
+        "plan_code": "starter",
+        "feature_pack_annual": "1700.00",
+        "transactional_user_annual": "620.00",
+        "limited_tech_user_annual": "265.00",
+        "effective_from": "2027-01-01",
+    })
+    assert r.status_code == 201
+    after = (
+        db_session.query(FeaturePlanPrice)
+        .filter(FeaturePlanPrice.plan_code == "starter")
+        .filter(FeaturePlanPrice.is_active.is_(True))
+        .count()
+    )
+    assert after == before + 1
+
+
+def test_audit_log_csv_export(client, db_session):
+    sa = _user(db_session, UserRole.system_admin.value)
+    _auth(sa)
+    client.post("/internal/config/pricing/addons", json={
+        "addon_key": "csv_export_test", "display_name": "CSV Export Test",
+        "monthly_price": "10.00",
+    })
+    r = client.get("/admin/audit-log?action_prefix=pricing&export=csv")
+    assert r.status_code == 200, r.text
+    assert "text/csv" in r.headers.get("content-type", "")
+    body = r.text
+    first_line = body.splitlines()[0]
+    assert "Timestamp" in first_line
+    assert "Action" in first_line
+    assert "pricing.addon_created" in body

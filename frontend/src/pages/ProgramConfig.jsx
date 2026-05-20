@@ -648,6 +648,7 @@ function fmtMoney(n) {
 function PricingTab({ token, role, onUpdate, onError }) {
   const canEdit = PRICING_ADMIN_ROLES.has(role)
   const canDelete = role === SYSTEM_ADMIN
+  const canViewHistory = role === SYSTEM_ADMIN  // /admin/audit-log requires user_management:read_all
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <div style={{
@@ -659,8 +660,100 @@ function PricingTab({ token, role, onUpdate, onError }) {
       <FeaturePlanPricesSection token={token} canEdit={canEdit} canDelete={canDelete} onUpdate={onUpdate} onError={onError} />
       <VolumeTiersSection       token={token} canEdit={canEdit} canDelete={canDelete} onUpdate={onUpdate} onError={onError} />
       <AddonCatalogueSection    token={token} canEdit={canEdit} canDelete={canDelete} onUpdate={onUpdate} onError={onError} />
+      {canViewHistory && <PricingHistoryPanel token={token} onError={onError} />}
     </div>
   )
+}
+
+function PricingHistoryPanel({ token, onError }) {
+  const [expanded, setExpanded] = useState(false)
+  const [items, setItems] = useState([])
+  const [loaded, setLoaded] = useState(false)
+
+  async function load() {
+    try {
+      const data = await call(token, 'GET', '/admin/audit-log?action_prefix=pricing&page_size=50')
+      setItems((data && data.items) || [])
+      setLoaded(true)
+    } catch (err) { onError(err.message) }
+  }
+
+  function toggle() {
+    const next = !expanded
+    setExpanded(next)
+    if (next && !loaded) load()
+  }
+
+  async function exportCsv() {
+    try {
+      const r = await fetch(`${API}/admin/audit-log?action_prefix=pricing&export=csv`, { headers: authHeader(token) })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'pricing_audit_log.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) { onError(err.message) }
+  }
+
+  const groups = useMemo(() => {
+    const buckets = new Map()
+    for (const it of items) {
+      const date = (it.timestamp || '').slice(0, 10)
+      if (!buckets.has(date)) buckets.set(date, [])
+      buckets.get(date).push(it)
+    }
+    return Array.from(buckets.entries())
+  }, [items])
+
+  return (
+    <section className="fp-card" style={{ padding: 20 }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button type="button" onClick={toggle} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#1A6EBB' }}>
+          {expanded ? '▲' : '▼'} Pricing Change History
+        </button>
+        {expanded && (
+          <button type="button" onClick={exportCsv} style={{
+            fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0',
+            borderRadius: 4, backgroundColor: 'white', color: '#718096',
+            cursor: 'pointer', fontWeight: 400,
+          }}>Export CSV</button>
+        )}
+      </header>
+      {expanded && (
+        <div style={{ marginTop: 12 }}>
+          {!loaded && <p style={{ fontSize: 12, color: '#718096' }}>Loading…</p>}
+          {loaded && groups.length === 0 && <p style={{ fontSize: 12, color: '#718096' }}>No pricing changes recorded yet.</p>}
+          {groups.map(([date, events]) => (
+            <div key={date}>
+              <div style={{ fontWeight: 600, color: '#718096', fontSize: 12, margin: '8px 0 4px' }}>{date}</div>
+              {events.map((event) => (
+                <div key={event.id} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
+                  <span style={{ color: '#718096' }}>{(event.timestamp || '').slice(11, 19)}</span>
+                  {' — '}
+                  <strong>{event.actor_role || event.actor_id || 'system'}</strong>
+                  {' — '}
+                  <code>{event.action}</code>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function pricingPreviewTotal({ feature_pack_annual, transactional_user_annual, limited_tech_user_annual }) {
+  const qtyT = 5
+  const qtyL = 5
+  const fp = Number(feature_pack_annual) || 0
+  const trans = (Number(transactional_user_annual) || 0) * qtyT
+  const freeLtd = qtyT
+  const pricedLtd = Math.max(0, qtyL - freeLtd)
+  const ltd = (Number(limited_tech_user_annual) || 0) * pricedLtd
+  return fp + trans + ltd
 }
 
 function SectionShell({ title, action, children }) {
@@ -793,11 +886,35 @@ function FeaturePlanPricesSection({ token, canEdit, canDelete, onUpdate, onError
               <td style={td}><input style={inp} type="date" value={editValues.effective_from} onChange={(e) => setEditValues({ ...editValues, effective_from: e.target.value })} /></td>
               <td style={td}><StatusBadge row={{ ...r, ...editValues }} /></td>
               <td style={td}>
-                {/* preview placeholder — populated in B3 */}
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button type="button" className="fp-btn fp-btn--primary" onClick={() => saveEdit(r.id)} style={{ fontSize: 12, padding: '4px 10px' }}>Save</button>
-                  <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => { setEditingId(null); setEditValues({}) }} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
-                </div>
+                {(() => {
+                  const preview = pricingPreviewTotal(editValues)
+                  const changed = (
+                    String(editValues.feature_pack_annual) !== String(r.feature_pack_annual) ||
+                    String(editValues.transactional_user_annual) !== String(r.transactional_user_annual) ||
+                    String(editValues.limited_tech_user_annual) !== String(r.limited_tech_user_annual)
+                  )
+                  return (
+                    <>
+                      {preview > 0 && (
+                        <div style={{ fontSize: 11, color: '#1A6EBB', marginBottom: 4 }}>
+                          Preview: 5T + 5L → ${preview.toLocaleString('en-US', { minimumFractionDigits: 2 })}/yr
+                        </div>
+                      )}
+                      {changed && (
+                        <div style={{
+                          background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 4,
+                          padding: '4px 8px', fontSize: 11, color: '#92400E', marginBottom: 6,
+                        }}>
+                          Will affect all new quotes after saving. Existing quote versions are not recalculated.
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" className="fp-btn fp-btn--primary" onClick={() => saveEdit(r.id)} style={{ fontSize: 12, padding: '4px 10px' }}>Save</button>
+                        <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => { setEditingId(null); setEditValues({}) }} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                      </div>
+                    </>
+                  )
+                })()}
               </td>
             </tr>
           ) : (
