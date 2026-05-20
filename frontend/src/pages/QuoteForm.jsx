@@ -163,8 +163,9 @@ export default function QuoteForm({
 
   const availableAddons = useMemo(() => {
     if (!addons.length) return []
-    if (featurePlan === 'starter') return addons.filter((a) => a.available_starter)
-    if (featurePlan === 'professional') return addons.filter((a) => a.available_professional)
+    const priced = addons.filter((a) => Number(a.monthly_price) > 0)
+    if (featurePlan === 'starter') return priced.filter((a) => a.available_starter)
+    if (featurePlan === 'professional') return priced.filter((a) => a.available_professional)
     return []
   }, [addons, featurePlan])
 
