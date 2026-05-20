@@ -883,3 +883,111 @@ def download_quote_pdf(
             )
         },
     )
+
+
+# ===================== Sprint 18 — Scenario management =====================
+
+
+@router.patch("/quotes/{quote_id}/active-scenario")
+def set_active_scenario(
+    quote_id: uuid.UUID,
+    payload: dict = Body(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-point ``quotes.active_scenario`` to a scenario label that has an
+    existing (non-deleted) QuoteVersion. ``scenario_label=None`` clears it.
+
+    Internal write roles only.
+    """
+    _check_write_role(current_user)
+    quote = _get_quote_or_404(db, quote_id)
+
+    scenario_label = payload.get("scenario_label")
+    if scenario_label is not None and not isinstance(scenario_label, str):
+        raise HTTPException(status_code=422, detail="scenario_label must be a string or null")
+
+    if scenario_label is not None:
+        match = (
+            db.query(QuoteVersion)
+            .filter(
+                QuoteVersion.quote_id == quote.id,
+                QuoteVersion.scenario_label == scenario_label,
+                QuoteVersion.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if match is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"No active version with scenario_label '{scenario_label}' exists for this quote",
+            )
+
+    before = quote.active_scenario
+    quote.active_scenario = scenario_label
+    quote.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quote)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="quote.scenario_selected",
+        object_type="quote",
+        object_id=quote.id,
+        before={"active_scenario": before},
+        after={"active_scenario": scenario_label},
+        ip_address=_client_ip(request) if request else None,
+    )
+    return _serialize_quote(quote)
+
+
+@router.get("/quotes/{quote_id}/scenarios")
+def get_quote_scenarios(
+    quote_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return one entry per scenario_label (good/better/best) — latest non-deleted
+    version per label. ``is_active=True`` flags the label that matches
+    ``quote.active_scenario``. Always returns in canonical good/better/best order.
+    """
+    quote = _get_quote_or_404(db, quote_id)
+    _check_tenant_read(current_user, quote.partner_org_id)
+
+    versions = (
+        db.query(QuoteVersion)
+        .filter(
+            QuoteVersion.quote_id == quote.id,
+            QuoteVersion.scenario_label.isnot(None),
+            QuoteVersion.is_deleted.is_(False),
+        )
+        .order_by(QuoteVersion.version_number.desc())
+        .all()
+    )
+
+    latest_by_label: dict[str, QuoteVersion] = {}
+    for v in versions:
+        if v.scenario_label not in latest_by_label:
+            latest_by_label[v.scenario_label] = v
+
+    canonical_order = ["good", "better", "best"]
+    extras = [label for label in latest_by_label if label not in canonical_order]
+    order = canonical_order + sorted(extras)
+
+    scenarios = []
+    for label in order:
+        v = latest_by_label.get(label)
+        if v is None:
+            continue
+        scenarios.append({
+            "scenario_label": label,
+            "version_number": v.version_number,
+            "feature_plan": v.feature_plan,
+            "grand_total_after_discount": float(v.grand_total_after_discount),
+            "is_active": quote.active_scenario == label,
+        })
+
+    return {"scenarios": scenarios, "active_scenario": quote.active_scenario}
+
