@@ -25,6 +25,7 @@ from database import get_db
 from sqlalchemy import func
 
 from models import (
+    ActivationChecklistConfig,
     CommissionStructure,
     DealRegistration,
     DocumentStatus,
@@ -211,6 +212,79 @@ def get_activation(
         from activation import recalculate_activation
         checklist = recalculate_activation(db, partner_id)
     return _serialize_checklist(checklist)
+
+
+@router.get("/{partner_id}/activation/criteria")
+def get_activation_criteria(
+    partner_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """FPRM-270 / Sprint 17 — resolved required criteria + per-item met state.
+
+    Returns the criterion set the recalc engine evaluates for this partner
+    so the portal can render a live checklist. ``config_source`` distinguishes
+    ``dynamic`` (from ``activation_checklist_config``) from ``fallback``
+    (the hardcoded four-flag default).
+    """
+    partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    _enforce_activation_read(current_user, partner_id)
+
+    from activation import (
+        CRITERION_KEY_MAP,
+        HARDCODED_REQUIRED_KEYS,
+        recalculate_activation,
+        resolve_required_criteria,
+    )
+
+    checklist = (
+        db.query(PartnerActivationChecklist)
+        .filter(PartnerActivationChecklist.partner_org_id == partner_id)
+        .first()
+    )
+    if checklist is None:
+        checklist = recalculate_activation(db, partner_id)
+
+    config_rows, source = resolve_required_criteria(db, partner)
+
+    if source == "dynamic":
+        criteria_to_evaluate = [
+            {
+                "criterion_key": row.criterion_key,
+                "description": row.description or row.criterion_key.replace("_", " ").title(),
+            }
+            for row in config_rows
+        ]
+    else:
+        criteria_to_evaluate = [
+            {"criterion_key": key, "description": key.replace("_", " ").title()}
+            for key in HARDCODED_REQUIRED_KEYS
+        ]
+
+    required_criteria = []
+    for item in criteria_to_evaluate:
+        key = item["criterion_key"]
+        field_name = CRITERION_KEY_MAP.get(key)
+        if field_name and hasattr(checklist, field_name):
+            is_met = bool(getattr(checklist, field_name))
+        else:
+            # Unknown criterion: mirror recalc behaviour (auto-satisfied).
+            is_met = True
+        required_criteria.append({
+            "criterion_key": key,
+            "description": item["description"],
+            "is_met": is_met,
+        })
+
+    activation_complete = all(c["is_met"] for c in required_criteria) if required_criteria else False
+
+    return {
+        "required_criteria": required_criteria,
+        "activation_complete": activation_complete,
+        "config_source": source,
+    }
 
 
 REVIEW_ROLES = {UserRole.channel_manager, UserRole.channel_ops_admin, UserRole.system_admin}
