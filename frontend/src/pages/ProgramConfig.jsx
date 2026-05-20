@@ -8,6 +8,7 @@ const TABS = [
   { key: 'workflow',   label: 'Approval Workflow' },
   { key: 'tiers',      label: 'Partner Tiers' },
   { key: 'criteria',   label: 'Activation Checklist' },
+  { key: 'pricing',    label: 'Pricing' },
 ]
 
 const ROLE_OPTIONS = [
@@ -633,6 +634,533 @@ function AddCriterionModal({ token, onClose, onSaved, onError }) {
   )
 }
 
+// ---- Tab 4 — Pricing (FPRM-304 / Sprint 19 / AD-25) ------------------------
+
+const PRICING_ADMIN_ROLES = new Set(['channel_ops_admin', 'system_admin'])
+const SYSTEM_ADMIN = 'system_admin'
+
+function fmtMoney(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return '-'
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function PricingTab({ token, role, onUpdate, onError }) {
+  const canEdit = PRICING_ADMIN_ROLES.has(role)
+  const canDelete = role === SYSTEM_ADMIN
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{
+        background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 6,
+        padding: '10px 16px', fontSize: 13, color: '#92400E',
+      }}>
+        ⚠️ Price changes take effect immediately for all new quotes. Existing quote versions are not affected.
+      </div>
+      <FeaturePlanPricesSection token={token} canEdit={canEdit} canDelete={canDelete} onUpdate={onUpdate} onError={onError} />
+      <VolumeTiersSection       token={token} canEdit={canEdit} canDelete={canDelete} onUpdate={onUpdate} onError={onError} />
+      <AddonCatalogueSection    token={token} canEdit={canEdit} canDelete={canDelete} onUpdate={onUpdate} onError={onError} />
+    </div>
+  )
+}
+
+function SectionShell({ title, action, children }) {
+  return (
+    <section className="fp-card" style={{ padding: 20 }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, color: '#1A6EBB' }}>{title}</h2>
+        <div style={{ display: 'flex', gap: 8 }}>{action}</div>
+      </header>
+      {children}
+    </section>
+  )
+}
+
+function StatusBadge({ row }) {
+  if (!row.is_active) return <span style={{ padding: '2px 8px', background: '#F1F5F9', color: '#475569', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>Inactive</span>
+  const today = new Date().toISOString().slice(0, 10)
+  if (row.effective_from && row.effective_from > today) {
+    return <span style={{ padding: '2px 8px', background: '#FFFBEB', color: '#D97706', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>Scheduled</span>
+  }
+  return <span style={{ padding: '2px 8px', background: '#ECFDF5', color: '#059669', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>Active</span>
+}
+
+function FeaturePlanPricesSection({ token, canEdit, canDelete, onUpdate, onError }) {
+  const [rows, setRows] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editValues, setEditValues] = useState({})
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState({
+    plan_code: 'starter', feature_pack_annual: '', transactional_user_annual: '',
+    limited_tech_user_annual: '', effective_from: new Date().toISOString().slice(0, 10),
+  })
+
+  const load = useCallback(async () => {
+    try {
+      const path = `/internal/config/pricing/plans${showHistory ? '?include_inactive=true' : ''}`
+      const data = await call(token, 'GET', path)
+      setRows(Array.isArray(data) ? data : [])
+    } catch (err) { onError(err.message) }
+  }, [token, showHistory, onError])
+
+  useEffect(() => { load() }, [load])
+
+  function startEdit(r) {
+    setEditingId(r.id)
+    setEditValues({
+      feature_pack_annual: r.feature_pack_annual,
+      transactional_user_annual: r.transactional_user_annual,
+      limited_tech_user_annual: r.limited_tech_user_annual,
+      effective_from: r.effective_from,
+      is_active: r.is_active,
+    })
+  }
+
+  async function saveEdit(id) {
+    try {
+      await call(token, 'PATCH', `/internal/config/pricing/plans/${id}`, editValues)
+      onUpdate('Pricing updated — effective immediately for all new quotes')
+      setEditingId(null); setEditValues({}); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function createDraft() {
+    try {
+      await call(token, 'POST', '/internal/config/pricing/plans', draft)
+      onUpdate('Plan price added')
+      setAdding(false)
+      setDraft({
+        plan_code: 'starter', feature_pack_annual: '', transactional_user_annual: '',
+        limited_tech_user_annual: '', effective_from: new Date().toISOString().slice(0, 10),
+      })
+      load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function reactivate(r) {
+    try {
+      await call(token, 'PATCH', `/internal/config/pricing/plans/${r.id}`, { is_active: true })
+      onUpdate('Plan price reactivated'); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function deactivate(r) {
+    if (!window.confirm('Deactivate this plan price row? You cannot remove the last active row for any plan.')) return
+    try {
+      await call(token, 'DELETE', `/internal/config/pricing/plans/${r.id}`)
+      onUpdate('Plan price deactivated'); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  const th = { textAlign: 'left', padding: '8px 10px', fontSize: 12, fontWeight: 600, color: '#475569', borderBottom: '1px solid #E5E7EB' }
+  const td = { padding: '8px 10px', borderBottom: '1px solid #F1F5F9', fontSize: 13, verticalAlign: 'top' }
+  const inp = { padding: '6px 8px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: 13, width: '100%' }
+
+  return (
+    <SectionShell
+      title="Feature Plan Prices"
+      action={
+        <>
+          <label style={{ fontSize: 12, color: '#475569', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={showHistory} onChange={(e) => setShowHistory(e.target.checked)} disabled={!canEdit} />
+            View history
+          </label>
+          {canEdit && !adding && (
+            <button type="button" className="fp-btn fp-btn--ghost" onClick={() => setAdding(true)} style={{ fontSize: 12 }}>+ Add Price Row</button>
+          )}
+        </>
+      }
+    >
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={th}>Plan</th>
+            <th style={th}>Feature Pack ($/yr)</th>
+            <th style={th}>Trans. User ($/yr)</th>
+            <th style={th}>Ltd Tech User ($/yr)</th>
+            <th style={th}>Effective From</th>
+            <th style={th}>Status</th>
+            {canEdit && <th style={th}>Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => editingId === r.id ? (
+            <tr key={r.id} style={{ background: '#F8FAFC' }}>
+              <td style={td}>{humaniseKey(r.plan_code)}</td>
+              <td style={td}><input style={inp} value={editValues.feature_pack_annual} onChange={(e) => setEditValues({ ...editValues, feature_pack_annual: e.target.value })} /></td>
+              <td style={td}><input style={inp} value={editValues.transactional_user_annual} onChange={(e) => setEditValues({ ...editValues, transactional_user_annual: e.target.value })} /></td>
+              <td style={td}><input style={inp} value={editValues.limited_tech_user_annual} onChange={(e) => setEditValues({ ...editValues, limited_tech_user_annual: e.target.value })} /></td>
+              <td style={td}><input style={inp} type="date" value={editValues.effective_from} onChange={(e) => setEditValues({ ...editValues, effective_from: e.target.value })} /></td>
+              <td style={td}><StatusBadge row={{ ...r, ...editValues }} /></td>
+              <td style={td}>
+                {/* preview placeholder — populated in B3 */}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={() => saveEdit(r.id)} style={{ fontSize: 12, padding: '4px 10px' }}>Save</button>
+                  <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => { setEditingId(null); setEditValues({}) }} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                </div>
+              </td>
+            </tr>
+          ) : (
+            <tr key={r.id} style={{ opacity: r.is_active ? 1 : 0.6 }}>
+              <td style={td}>{humaniseKey(r.plan_code)}</td>
+              <td style={td}>${fmtMoney(r.feature_pack_annual)}</td>
+              <td style={td}>${fmtMoney(r.transactional_user_annual)}</td>
+              <td style={td}>${fmtMoney(r.limited_tech_user_annual)}</td>
+              <td style={td}>{r.effective_from}</td>
+              <td style={td}><StatusBadge row={r} /></td>
+              {canEdit && (
+                <td style={td}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {r.is_active ? (
+                      <button type="button" className="fp-btn fp-btn--ghost" onClick={() => startEdit(r)} style={{ fontSize: 12, padding: '4px 10px' }}>Edit</button>
+                    ) : (
+                      <button type="button" className="fp-btn fp-btn--ghost" onClick={() => reactivate(r)} style={{ fontSize: 12, padding: '4px 10px' }}>Reactivate</button>
+                    )}
+                    {canDelete && r.is_active && (
+                      <button type="button" className="fp-btn fp-btn--ghost" onClick={() => deactivate(r)} style={{ fontSize: 12, padding: '4px 10px', color: '#B91C1C' }}>Deactivate</button>
+                    )}
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
+          {adding && (
+            <tr style={{ background: '#F0F9FF' }}>
+              <td style={td}>
+                <select style={inp} value={draft.plan_code} onChange={(e) => setDraft({ ...draft, plan_code: e.target.value })}>
+                  <option value="starter">Starter</option>
+                  <option value="professional">Professional</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </td>
+              <td style={td}><input style={inp} placeholder="0.00" value={draft.feature_pack_annual} onChange={(e) => setDraft({ ...draft, feature_pack_annual: e.target.value })} /></td>
+              <td style={td}><input style={inp} placeholder="0.00" value={draft.transactional_user_annual} onChange={(e) => setDraft({ ...draft, transactional_user_annual: e.target.value })} /></td>
+              <td style={td}><input style={inp} placeholder="0.00" value={draft.limited_tech_user_annual} onChange={(e) => setDraft({ ...draft, limited_tech_user_annual: e.target.value })} /></td>
+              <td style={td}><input style={inp} type="date" value={draft.effective_from} onChange={(e) => setDraft({ ...draft, effective_from: e.target.value })} /></td>
+              <td style={td}></td>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={createDraft} style={{ fontSize: 12, padding: '4px 10px' }}>Add</button>
+                  <button type="button" className="fp-btn fp-btn--ghost" onClick={() => setAdding(false)} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                </div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </SectionShell>
+  )
+}
+
+function VolumeTiersSection({ token, canEdit, canDelete, onUpdate, onError }) {
+  const [rows, setRows] = useState([])
+  const [editingId, setEditingId] = useState(null)
+  const [editValues, setEditValues] = useState({})
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState({ min_users: '', max_users: '', transactional_user_discount_pct: '', limited_tech_user_discount_pct: '' })
+
+  const load = useCallback(async () => {
+    try {
+      const data = await call(token, 'GET', '/internal/config/pricing/volume-tiers')
+      setRows(Array.isArray(data) ? data : [])
+    } catch (err) { onError(err.message) }
+  }, [token, onError])
+
+  useEffect(() => { load() }, [load])
+
+  function startEdit(r) {
+    setEditingId(r.id)
+    setEditValues({
+      min_users: r.min_users, max_users: r.max_users === null ? '' : r.max_users,
+      transactional_user_discount_pct: r.transactional_user_discount_pct,
+      limited_tech_user_discount_pct: r.limited_tech_user_discount_pct,
+    })
+  }
+
+  async function saveEdit(id) {
+    try {
+      const body = {
+        min_users: Number(editValues.min_users),
+        max_users: editValues.max_users === '' ? null : Number(editValues.max_users),
+        transactional_user_discount_pct: editValues.transactional_user_discount_pct,
+        limited_tech_user_discount_pct: editValues.limited_tech_user_discount_pct,
+      }
+      await call(token, 'PATCH', `/internal/config/pricing/volume-tiers/${id}`, body)
+      onUpdate('Volume tier updated')
+      setEditingId(null); setEditValues({}); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function createDraft() {
+    try {
+      const body = {
+        min_users: Number(draft.min_users),
+        max_users: draft.max_users === '' ? null : Number(draft.max_users),
+        transactional_user_discount_pct: draft.transactional_user_discount_pct,
+        limited_tech_user_discount_pct: draft.limited_tech_user_discount_pct,
+      }
+      await call(token, 'POST', '/internal/config/pricing/volume-tiers', body)
+      onUpdate('Volume tier added')
+      setAdding(false)
+      setDraft({ min_users: '', max_users: '', transactional_user_discount_pct: '', limited_tech_user_discount_pct: '' })
+      load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function deactivate(r) {
+    if (!window.confirm('Are you sure? This will remove this band from volume discount calculations.')) return
+    try {
+      await call(token, 'DELETE', `/internal/config/pricing/volume-tiers/${r.id}?force=true`)
+      onUpdate('Volume tier deactivated'); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  const th = { textAlign: 'left', padding: '8px 10px', fontSize: 12, fontWeight: 600, color: '#475569', borderBottom: '1px solid #E5E7EB' }
+  const td = { padding: '8px 10px', borderBottom: '1px solid #F1F5F9', fontSize: 13, verticalAlign: 'top' }
+  const inp = { padding: '6px 8px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: 13, width: '100%' }
+
+  return (
+    <SectionShell
+      title="Volume Discount Tiers"
+      action={canEdit && !adding && (
+        <button type="button" className="fp-btn fp-btn--ghost" onClick={() => setAdding(true)} style={{ fontSize: 12 }}>+ Add Tier</button>
+      )}
+    >
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={th}>User Band</th>
+            <th style={th}>Trans. Discount %</th>
+            <th style={th}>Ltd Tech Discount %</th>
+            {canEdit && <th style={th}>Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => editingId === r.id ? (
+            <tr key={r.id} style={{ background: '#F8FAFC' }}>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <input style={{ ...inp, width: 70 }} type="number" min="1" value={editValues.min_users} onChange={(e) => setEditValues({ ...editValues, min_users: e.target.value })} />
+                  <span>–</span>
+                  <input style={{ ...inp, width: 70 }} type="number" placeholder="No limit" value={editValues.max_users} onChange={(e) => setEditValues({ ...editValues, max_users: e.target.value })} />
+                </div>
+              </td>
+              <td style={td}><input style={inp} type="number" min="0" max="100" value={editValues.transactional_user_discount_pct} onChange={(e) => setEditValues({ ...editValues, transactional_user_discount_pct: e.target.value })} /></td>
+              <td style={td}><input style={inp} type="number" min="0" max="100" value={editValues.limited_tech_user_discount_pct} onChange={(e) => setEditValues({ ...editValues, limited_tech_user_discount_pct: e.target.value })} /></td>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={() => saveEdit(r.id)} style={{ fontSize: 12, padding: '4px 10px' }}>Save</button>
+                  <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => { setEditingId(null); setEditValues({}) }} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                </div>
+              </td>
+            </tr>
+          ) : (
+            <tr key={r.id}>
+              <td style={td}>{r.max_users === null ? `${r.min_users}+` : `${r.min_users} – ${r.max_users}`}</td>
+              <td style={td}>{r.transactional_user_discount_pct}%</td>
+              <td style={td}>{r.limited_tech_user_discount_pct}%</td>
+              {canEdit && (
+                <td style={td}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="fp-btn fp-btn--ghost" onClick={() => startEdit(r)} style={{ fontSize: 12, padding: '4px 10px' }}>Edit</button>
+                    {canDelete && <button type="button" className="fp-btn fp-btn--ghost" onClick={() => deactivate(r)} style={{ fontSize: 12, padding: '4px 10px', color: '#B91C1C' }}>Deactivate</button>}
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
+          {adding && (
+            <tr style={{ background: '#F0F9FF' }}>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <input style={{ ...inp, width: 70 }} type="number" min="1" placeholder="Min" value={draft.min_users} onChange={(e) => setDraft({ ...draft, min_users: e.target.value })} />
+                  <span>–</span>
+                  <input style={{ ...inp, width: 70 }} type="number" placeholder="No limit" value={draft.max_users} onChange={(e) => setDraft({ ...draft, max_users: e.target.value })} />
+                </div>
+              </td>
+              <td style={td}><input style={inp} type="number" min="0" max="100" value={draft.transactional_user_discount_pct} onChange={(e) => setDraft({ ...draft, transactional_user_discount_pct: e.target.value })} /></td>
+              <td style={td}><input style={inp} type="number" min="0" max="100" value={draft.limited_tech_user_discount_pct} onChange={(e) => setDraft({ ...draft, limited_tech_user_discount_pct: e.target.value })} /></td>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={createDraft} style={{ fontSize: 12, padding: '4px 10px' }}>Add</button>
+                  <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => setAdding(false)} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                </div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </SectionShell>
+  )
+}
+
+function AddonCatalogueSection({ token, canEdit, canDelete, onUpdate, onError }) {
+  const [rows, setRows] = useState([])
+  const [showInactive, setShowInactive] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editValues, setEditValues] = useState({})
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState({
+    addon_key: '', display_name: '', monthly_price: '',
+    available_starter: false, available_professional: true,
+  })
+
+  const load = useCallback(async () => {
+    try {
+      const path = `/internal/config/pricing/addons${showInactive ? '?include_inactive=true' : ''}`
+      const data = await call(token, 'GET', path)
+      setRows(Array.isArray(data) ? data : [])
+    } catch (err) { onError(err.message) }
+  }, [token, showInactive, onError])
+
+  useEffect(() => { load() }, [load])
+
+  function startEdit(r) {
+    setEditingId(r.id)
+    setEditValues({
+      display_name: r.display_name, monthly_price: r.monthly_price,
+      available_starter: r.available_starter,
+      available_professional: r.available_professional,
+    })
+  }
+
+  async function saveEdit(id) {
+    try {
+      await call(token, 'PATCH', `/internal/config/pricing/addons/${id}`, editValues)
+      onUpdate('Add-on updated')
+      setEditingId(null); setEditValues({}); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  function autoKey(s) {
+    return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+  }
+
+  async function createDraft() {
+    try {
+      const body = { ...draft, addon_key: draft.addon_key || autoKey(draft.display_name) }
+      await call(token, 'POST', '/internal/config/pricing/addons', body)
+      onUpdate('Add-on added')
+      setAdding(false)
+      setDraft({ addon_key: '', display_name: '', monthly_price: '', available_starter: false, available_professional: true })
+      load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function deactivate(r) {
+    if (!window.confirm('Deactivate this add-on? It will no longer appear in new quotes.')) return
+    try {
+      await call(token, 'DELETE', `/internal/config/pricing/addons/${r.id}`)
+      onUpdate('Add-on deactivated'); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  async function reactivate(r) {
+    try {
+      await call(token, 'PATCH', `/internal/config/pricing/addons/${r.id}`, { is_active: true })
+      onUpdate('Add-on reactivated'); load()
+    } catch (err) { onError(err.message) }
+  }
+
+  const th = { textAlign: 'left', padding: '8px 10px', fontSize: 12, fontWeight: 600, color: '#475569', borderBottom: '1px solid #E5E7EB' }
+  const td = { padding: '8px 10px', borderBottom: '1px solid #F1F5F9', fontSize: 13, verticalAlign: 'top' }
+  const inp = { padding: '6px 8px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: 13, width: '100%' }
+
+  return (
+    <SectionShell
+      title="Add-on Catalogue"
+      action={
+        <>
+          <label style={{ fontSize: 12, color: '#475569', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} disabled={!canEdit} />
+            Show inactive
+          </label>
+          {canEdit && !adding && (
+            <button type="button" className="fp-btn fp-btn--ghost" onClick={() => setAdding(true)} style={{ fontSize: 12 }}>+ Add Add-on</button>
+          )}
+        </>
+      }
+    >
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={th}>Add-on Name</th>
+            <th style={th}>Monthly Price</th>
+            <th style={th}>Annual Price</th>
+            <th style={th}>Starter</th>
+            <th style={th}>Professional</th>
+            <th style={th}>Active</th>
+            {canEdit && <th style={th}>Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => editingId === r.id ? (
+            <tr key={r.id} style={{ background: '#F8FAFC' }}>
+              <td style={td}><input style={inp} value={editValues.display_name} onChange={(e) => setEditValues({ ...editValues, display_name: e.target.value })} /></td>
+              <td style={td}><input style={inp} type="number" min="0" step="0.01" value={editValues.monthly_price} onChange={(e) => setEditValues({ ...editValues, monthly_price: e.target.value })} /></td>
+              <td style={td}>${fmtMoney(Number(editValues.monthly_price) * 12)}</td>
+              <td style={td}><input type="checkbox" checked={!!editValues.available_starter} onChange={(e) => setEditValues({ ...editValues, available_starter: e.target.checked })} /></td>
+              <td style={td}><input type="checkbox" checked={!!editValues.available_professional} onChange={(e) => setEditValues({ ...editValues, available_professional: e.target.checked })} /></td>
+              <td style={td}>{r.is_active ? '🟢' : '⚫'}</td>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={() => saveEdit(r.id)} style={{ fontSize: 12, padding: '4px 10px' }}>Save</button>
+                  <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => { setEditingId(null); setEditValues({}) }} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                </div>
+              </td>
+            </tr>
+          ) : (
+            <tr key={r.id} style={{ opacity: r.is_active ? 1 : 0.55 }}>
+              <td style={td}>
+                <div>{r.display_name}</div>
+                <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: 'monospace' }}>{r.addon_key}</div>
+              </td>
+              <td style={td}>${fmtMoney(r.monthly_price)}</td>
+              <td style={td}>${fmtMoney(Number(r.monthly_price) * 12)}</td>
+              <td style={td}>{r.available_starter ? '✅' : '❌'}</td>
+              <td style={td}>{r.available_professional ? '✅' : '❌'}</td>
+              <td style={td}>{r.is_active ? '🟢' : '⚫'}</td>
+              {canEdit && (
+                <td style={td}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {r.is_active ? (
+                      <button type="button" className="fp-btn fp-btn--ghost" onClick={() => startEdit(r)} style={{ fontSize: 12, padding: '4px 10px' }}>Edit</button>
+                    ) : (
+                      <button type="button" className="fp-btn fp-btn--ghost" onClick={() => reactivate(r)} style={{ fontSize: 12, padding: '4px 10px' }}>Reactivate</button>
+                    )}
+                    {canDelete && r.is_active && (
+                      <button type="button" className="fp-btn fp-btn--ghost" onClick={() => deactivate(r)} style={{ fontSize: 12, padding: '4px 10px', color: '#B91C1C' }}>Deactivate</button>
+                    )}
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
+          {adding && (
+            <tr style={{ background: '#F0F9FF' }}>
+              <td style={td}>
+                <input style={inp} placeholder="Display name" value={draft.display_name} onChange={(e) => setDraft({ ...draft, display_name: e.target.value, addon_key: draft.addon_key || autoKey(e.target.value) })} />
+                <input style={{ ...inp, marginTop: 4, fontSize: 11, fontFamily: 'monospace' }} placeholder="addon_key (auto)" value={draft.addon_key} onChange={(e) => setDraft({ ...draft, addon_key: e.target.value })} />
+              </td>
+              <td style={td}><input style={inp} type="number" min="0" step="0.01" placeholder="0.00" value={draft.monthly_price} onChange={(e) => setDraft({ ...draft, monthly_price: e.target.value })} /></td>
+              <td style={td}>${fmtMoney(Number(draft.monthly_price) * 12)}</td>
+              <td style={td}><input type="checkbox" checked={draft.available_starter} onChange={(e) => setDraft({ ...draft, available_starter: e.target.checked })} /></td>
+              <td style={td}><input type="checkbox" checked={draft.available_professional} onChange={(e) => setDraft({ ...draft, available_professional: e.target.checked })} /></td>
+              <td style={td}></td>
+              <td style={td}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={createDraft} style={{ fontSize: 12, padding: '4px 10px' }}>Add</button>
+                  <button type="button" className="fp-btn fp-btn--ghost"  onClick={() => setAdding(false)} style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+                </div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </SectionShell>
+  )
+}
+
 // ---- Root page -------------------------------------------------------------
 
 export default function ProgramConfig() {
@@ -690,6 +1218,7 @@ export default function ProgramConfig() {
         {active === 'workflow' && <ApprovalWorkflowTab token={token} onUpdate={onUpdate} onError={onError} />}
         {active === 'tiers'    && <TiersTab            token={token} onUpdate={onUpdate} onError={onError} />}
         {active === 'criteria' && <ActivationTab       token={token} onUpdate={onUpdate} onError={onError} />}
+        {active === 'pricing'  && <PricingTab          token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
       </div>
 
       <Toast message={toast} />
