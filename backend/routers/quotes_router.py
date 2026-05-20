@@ -33,6 +33,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from audit import log_audit_event
