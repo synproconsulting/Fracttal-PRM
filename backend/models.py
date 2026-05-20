@@ -1156,6 +1156,44 @@ class ApprovalWorkflowStep(Base):
 
 
 
+class ApprovalStepRecord(Base):
+    """FPRM-274 / Sprint 17 - audit trail of per-step approval actions.
+
+    One row per approve/reject action taken on a workflow object. The
+    ``object_id`` is polymorphic - it points at ``partner_applications.id``
+    or ``deal_registrations.id`` depending on ``workflow_type``. There is no
+    FK constraint on it (a union-typed FK would require non-portable
+    triggers); the index is the access path for back-references. The
+    ``step_name`` and ``required_role`` columns snapshot the configured
+    workflow at the time of action so historical records survive future
+    edits to ``approval_workflow_steps``.
+    """
+
+    __tablename__ = "approval_step_records"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_type = Column(String, nullable=False)
+    object_id = Column(Uuid(as_uuid=True), nullable=False)
+    step_order = Column(Integer, nullable=False)
+    step_name = Column(String, nullable=False)
+    required_role = Column(String, nullable=False)
+    actor_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    action = Column(String, nullable=False)
+    notes = Column(Text, nullable=True)
+    actioned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_approval_step_records_object_id", "object_id"),
+        Index(
+            "ix_approval_step_records_workflow_object",
+            "workflow_type",
+            "object_id",
+        ),
+    )
+
+
+
+
 
 class PartnerTierConfig(Base):
 

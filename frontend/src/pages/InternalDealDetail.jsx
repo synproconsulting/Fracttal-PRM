@@ -396,6 +396,18 @@ export default function InternalDealDetail() {
 
   const [toast, setToast] = useState(null)
 
+  // FPRM-274 / Sprint 17 — role of the logged-in reviewer, used to gate the
+  // Approve button when multi-step workflow has a role-specific step.
+  const [currentUserRole, setCurrentUserRole] = useState(null)
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => { if (me?.role) setCurrentUserRole(me.role) })
+      .catch(() => {})
+  }, [token])
+
 
 
   async function fetchDeal() {
@@ -1012,9 +1024,43 @@ export default function InternalDealDetail() {
 
             )}
 
-            {deal.status === 'under_review' && (
-
+            {deal.status === 'under_review' && (() => {
+              const ap = deal.approval_progress
+              const roleMismatch = (
+                ap && ap.current_required_role && currentUserRole &&
+                currentUserRole !== ap.current_required_role
+              )
+              const approveTitle = roleMismatch
+                ? `This step requires role: ${ap.current_required_role}`
+                : undefined
+              return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+                {ap && (
+                  <div style={{
+                    padding: 10, borderRadius: 6, background: 'var(--fp-bg, #f5f7fa)',
+                    fontSize: 'var(--fp-fs-sm)',
+                  }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {ap.current_step_order
+                        ? `Step ${ap.current_step_order} of ${ap.total_steps} — ${ap.current_step_name}`
+                        : `All ${ap.total_steps} steps complete`}
+                    </div>
+                    {ap.current_required_role && (
+                      <div style={{ color: 'var(--fp-text-secondary)', marginTop: 2 }}>
+                        Requires role: <code>{ap.current_required_role}</code>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                      {Array.from({ length: ap.total_steps }, (_, i) => (
+                        <span key={i} style={{
+                          width: 18, height: 6, borderRadius: 3,
+                          background: i < ap.completed_steps ? '#22c55e' : '#cbd5e1',
+                        }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <button type="button" className="fp-btn fp-btn--ghost"
 
@@ -1026,9 +1072,11 @@ export default function InternalDealDetail() {
 
                 <button type="button" className="fp-btn fp-btn--success"
 
-                        onClick={() => setActionMode('approve')} disabled={actionSaving}>
+                        onClick={() => setActionMode('approve')}
+                        disabled={actionSaving || roleMismatch}
+                        title={approveTitle}>
 
-                  Approve
+                  {roleMismatch ? `Approve (requires ${ap.current_required_role})` : 'Approve'}
 
                 </button>
 
@@ -1041,8 +1089,8 @@ export default function InternalDealDetail() {
                 </button>
 
               </div>
-
-            )}
+              )
+            })()}
 
             {deal.status === 'info_required' && (
 

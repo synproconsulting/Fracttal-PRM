@@ -47,6 +47,12 @@ from models import (
     PartnerOrganization,
     User,
 )
+from approval_helpers import (
+    WORKFLOW_DEAL_REGISTRATION,
+    build_approval_progress,
+    get_approval_step_context,
+    record_step_action,
+)
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 
 
@@ -306,7 +312,14 @@ def get_deal(
     _enforce_tenant_read(current_user, deal)
     # Include partner_legal_name for the internal detail page (FPRM-143).
     # Partner users see their own org so the field is still useful & not leaky.
-    return _serialize_with_org(deal, db)
+    data = _serialize_with_org(deal, db)
+    # FPRM-274 / Sprint 17 — surface multi-step approval state (None when no
+    # workflow steps are configured for deal_registration).
+    steps, _current, completed = get_approval_step_context(
+        db, WORKFLOW_DEAL_REGISTRATION, deal.id,
+    )
+    data["approval_progress"] = build_approval_progress(steps, completed)
+    return data
 
 
 @router.patch("/deal-registrations/{deal_id}")
@@ -569,7 +582,15 @@ def approve_deal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """under_review -> approved. Requires review_notes."""
+    """under_review -> approved. Requires review_notes.
+
+    FPRM-274 / Sprint 17 — when ``approval_workflow_steps`` defines multiple
+    steps for ``deal_registration``, each step must be approved by a user
+    whose role matches the step's ``required_role``. Intermediate-step
+    approvals stamp an ``ApprovalStepRecord`` and return ``approval_progress``
+    without changing the deal status. If no steps are configured, single-step
+    legacy behaviour is preserved.
+    """
     _require_review_role(current_user)
     review_notes = (payload.get("review_notes") or "").strip() if payload else ""
     if not review_notes:
@@ -581,6 +602,61 @@ def approve_deal(
             status_code=400,
             detail=f"Cannot approve deal in status '{deal.status}'",
         )
+
+    steps, current_step, completed_count = get_approval_step_context(
+        db, WORKFLOW_DEAL_REGISTRATION, deal.id,
+    )
+
+    if steps:
+        if current_step is None:
+            raise HTTPException(
+                status_code=422,
+                detail="All approval steps are already completed",
+            )
+        if current_user.role != current_step.required_role:
+            raise HTTPException(
+                status_code=403,
+                detail=f"This step requires role: {current_step.required_role}",
+            )
+
+        record_step_action(
+            db,
+            workflow_type=WORKFLOW_DEAL_REGISTRATION,
+            object_id=deal.id,
+            step=current_step,
+            actor_id=current_user.id,
+            action="approved",
+            notes=review_notes,
+        )
+
+        is_final_step = (completed_count + 1) >= len(steps)
+
+        if not is_final_step:
+            db.commit()
+            db.refresh(deal)
+            log_audit_event(
+                db=db,
+                actor=current_user,
+                action="deal_registration.step_approved",
+                object_type="deal_registration",
+                object_id=deal.id,
+                before={"status": deal.status},
+                after={
+                    "step_order": current_step.step_order,
+                    "step_name": current_step.step_name,
+                    "completed_steps": completed_count + 1,
+                    "total_steps": len(steps),
+                },
+                ip_address=_client_ip(request),
+            )
+            data = _serialize(deal)
+            data["approval_progress"] = build_approval_progress(steps, completed_count + 1)
+            data["message"] = (
+                f"Step {current_step.step_order} of {len(steps)} approved. "
+                "Awaiting next step."
+            )
+            return data
+        # Final step — fall through to the existing approval flow.
 
     before_status = deal.status
     deal.status = "approved"
@@ -623,6 +699,22 @@ def reject_deal(
         raise HTTPException(
             status_code=400,
             detail=f"Cannot reject deal in status '{deal.status}'",
+        )
+
+    # FPRM-274 / Sprint 17 — snapshot the current step so the audit trail
+    # shows which step terminated the workflow.
+    steps, current_step, _completed = get_approval_step_context(
+        db, WORKFLOW_DEAL_REGISTRATION, deal.id,
+    )
+    if steps and current_step is not None:
+        record_step_action(
+            db,
+            workflow_type=WORKFLOW_DEAL_REGISTRATION,
+            object_id=deal.id,
+            step=current_step,
+            actor_id=current_user.id,
+            action="rejected",
+            notes=review_notes,
         )
 
     before_status = deal.status
