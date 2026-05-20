@@ -932,6 +932,28 @@ Partner-side routes (`/portal/*`) sit nested under `PartnerPortalLayout` which a
 
 **Do not:** Inline pricing calculations in `quotes_router.py` or in any other router. Don't cache results across requests — pricing is read live so an admin price-table update takes effect immediately.
 
+### AD-19 — PDF artefacts are stored as base64-encoded text on the DB row, not on the Railway filesystem
+
+**Decision:** Generated quote PDFs (Sprint 16 / FPRM-258) are stored as base64-encoded strings in `quote_versions.pdf_artifact_data` (Text). The `POST /quotes/{{id}}/versions/{{n}}/generate-pdf` endpoint renders the PDF in-memory with reportlab and persists the bytes to the DB. The `GET /quotes/{{id}}/versions/{{n}}/pdf` endpoint reads the column, decodes, and streams it back as `application/pdf` with `Content-Disposition: attachment`.
+
+**Why:** Railway services do not have persistent local storage across deploys. Anything written to `/tmp` or the working directory is gone the next deploy, which would silently invalidate every previously-generated PDF. Storing the artefact on the row keeps it durable, atomically tied to its `QuoteVersion`, and free for any internal/partner user with read access to download. There is no need (yet) for an S3 / object-store integration at quote-PDF sizes.
+
+**Consequence:** Quote PDFs typically render at ~30-200 KB. At a few hundred thousand quote versions this remains well within Postgres budget. The endpoint regenerates and overwrites idempotently — calling generate-pdf again produces a fresh artefact with the current quote state. AD-19 explicitly does NOT extend to larger binaries (uploaded partner documents, application attachments, etc.) — those should use a dedicated blob store when they arrive.
+
+**Do not:** Write generated artefacts to local disk. Do not skip the base64 round-trip and store raw bytes — the column is portable Text across SQLite (test) and Postgres (prod) only because it stays text-safe.
+
+---
+
+### AD-20 — Authenticated file downloads use fetch + Blob + `URL.createObjectURL`, never `window.location.href`
+
+**Decision:** Every authenticated file download (CSV exports from Story 3, PDF downloads from Story 2) goes through the same browser-side pattern: `fetch(url, { headers: { Authorization: \`Bearer ${token}\` } })` -> `await response.blob()` -> `URL.createObjectURL(blob)` -> `<a href=url download=name>` programmatic click -> `URL.revokeObjectURL`. The pattern is implemented inline in every list page that has an Export CSV button and in `QuoteDetail.jsx` for PDF download.
+
+**Why:** `window.location.href = '/path?token=...'` and direct anchor `href` cannot carry an `Authorization` header. Bearer tokens in the URL leak through referrer headers, browser history, and access logs. The fetch+Blob pattern sends the token correctly in the header, lets the server enforce the same auth checks as every other API call, and then materialises the binary response back into a browser download.
+
+**Consequence:** Frontend bundles a few extra lines per page (or imports a tiny helper). The download flow shows the user the same loading/disabled-button affordances as any other fetch, which is the right UX. AD-20 supersedes any older code that used `window.location.href` for downloads — Sprint 14's reports CSV export already used fetch+Blob, AD-20 just codifies the pattern as the standard.
+
+**Do not:** Pass the JWT as a query parameter to a download endpoint. Do not bypass the standard fetch pipeline for downloads — the auth header check matters as much for a CSV as for a JSON payload.
+
 ---
 
 ## Appendix — Environment Variables

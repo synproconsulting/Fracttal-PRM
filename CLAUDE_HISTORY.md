@@ -1601,3 +1601,72 @@ Backend ends Sprint 15 at **~474 tests passing** (Sprint 14 baseline 428 + 9 + 2
 | 17 | Dynamic activation enforcement + Multi-step approval | 3 | 20 | Pending |
 | 18 | Quote scenarios + Multi-currency display + Phase 5 closeout | 4 | 20 | Pending |
 | **Total** | **Phase 5** | **15 stories** | **82** | **1 of 4 sprints complete** |
+
+
+## Sprint 16 — Quoting UX, PDF Generation, CSV Export (Phase 5 Sprint 2 of 4)
+
+**Started:** 2026-05-19
+**Closed:** 2026-05-19 (single-day intensive)
+**Fix Version ID:** `10767`
+**Native Sprint ID:** `740`
+**Phase 5 epic:** FPRM-238 — Quoting Module & Enforcement
+
+### Sprint 16 stories — outcome
+
+| Key | Story | Pts | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-254 | Quote form and list UI (internal + portal) | 7 | Done | #107 | QuoteForm.jsx (3-section form with live preview), QuoteDetail.jsx (version browser + line items + status), Quotes tab on InternalDealDetail, read-only PortalQuoteSection on DealDetail.jsx |
+| FPRM-258 | PDF quote generation and storage | 7 | Done | #108 | Migration 025 adds 3 columns; reportlab==4.2.2; POST generate-pdf + GET /pdf endpoints; 11 unit tests; frontend buttons already wired in Story 1 |
+| FPRM-262 | CSV export on list views (gap closure) | 4 | Done | #109 | New backend/csv_export.py helper; 7 endpoints get `?export=csv`; 7 frontend pages get Export CSV button (fetch+Blob, AD-20) |
+| FPRM-265 | Sprint 16 docs update | 3 | Done | #<this PR> | This entry + CLAUDE.md + PROJECT_CONTEXT.md (AD-19, AD-20, migration 025) |
+
+All 11 sub-tasks closed Done.
+
+### What landed on `main` during Sprint 16
+
+- `frontend/src/pages/QuoteForm.jsx` (new) — quote create + new-version form with sticky live-preview panel
+- `frontend/src/pages/QuoteDetail.jsx` (new) — version browser, line-item table, status management, PDF generate/download
+- `frontend/src/pages/InternalDealDetail.jsx` (extended) — new `QuotesSection` with list table + New Quote / View / Add Version modals
+- `frontend/src/pages/DealDetail.jsx` (extended) — read-only `PortalQuoteSection` on the partner portal deal detail (serves `/portal/deals/:id`)
+- `backend/alembic/versions/025_add_pdf_to_quote_versions.py` (new) — `pdf_artifact_data` Text, `pdf_generated_at`, `pdf_filename` on quote_versions
+- `backend/requirements.txt` — appended `reportlab==4.2.2` (universal py3-none-any wheel; runs on Python 3.13)
+- `backend/models.py` (extended) — three new columns on `QuoteVersion`
+- `backend/routers/quotes_router.py` (extended) — `POST /quotes/{id}/versions/{n}/generate-pdf`, `GET /quotes/{id}/versions/{n}/pdf`, with the inline `generate_quote_pdf` reportlab renderer
+- `backend/tests/test_quote_pdf.py` (new) — 11 tests
+- `backend/csv_export.py` (new) — shared `csv_response(filename_base, header, rows)` helper
+- `backend/routers/deal_registrations_router.py`, `documents_router.py`, `internal_partners_router.py`, `internal_partner_users_router.py`, `applications_router.py`, `internal_users_router.py` (extended) — each list endpoint gets `?export=csv` branch
+- `backend/tests/test_csv_exports.py` (new) — 7 smoke tests, one per endpoint
+- 7 frontend list pages get an Export CSV button using fetch + Blob (DealList.jsx portal, DealQueue.jsx, PartnerDocuments.jsx, InternalPartnerList.jsx, PartnerUserManagement.jsx, ApplicationQueue.jsx, InternalUsers.jsx)
+- PROJECT_CONTEXT.md — AD-19 (PDF base64 storage) + AD-20 (fetch+Blob for authenticated downloads); migration 025 noted in Section 2
+
+### API endpoints added
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/quotes/{id}/versions/{n}/generate-pdf` | Internal write roles | Renders + stores PDF base64 |
+| GET  | `/quotes/{id}/versions/{n}/pdf`          | partner_admin own + internal | Streams application/pdf |
+
+7 endpoints extended with optional `?export=csv` query parameter (no surface count change).
+
+Total API surface ends Sprint 16 at ~113 endpoints + 7 endpoints with CSV extension.
+
+### Test count
+
+| Source | Count |
+|---|---|
+| Sprint 15 baseline | 476 |
+| Story 2 PDF tests | +11 |
+| Story 3 CSV tests | +7 |
+| **Sprint 16 total** | **~494** |
+
+### Sprint 16 lessons
+
+1. **GitHub Contents API returns CRLF line endings for files originally stored with them on Windows.** When generating modified files programmatically via Python on Windows, `read_text` + `write_text` round-trips translate `\r\n` -> `\n` -> `\r\n` -> `\n\n` (each step duplicates), producing files with extra blank lines. Fix: explicitly normalize `\r\n` -> `\n` after reading and write with `newline=""`. Discovered mid-Sprint while building Story 3 string replacements; Story 1 files were pushed with the doubled blank lines (cosmetic-only, valid JSX).
+2. **Story 1 already wired the PDF buttons.** Writing the QuoteDetail.jsx component to include both Generate and Download buttons up-front meant Sprint 16's Subtask 3 of Story 2 (frontend wiring) collapsed into a no-op once Story 2's backend merged. Recorded by transitioning the subtasks to Done without a separate PR.
+3. **reportlab==4.2.2** is a universal `py3-none-any` wheel — no Python 3.13 wheel needed, the universal wheel works fine. PyPI metadata says `<4,>=3.7` which the universal wheel honours on 3.13.
+
+### Known follow-ups for Sprint 17
+
+1. Dynamic activation enforcement — wire `recalculate_activation` to read from the `activation_checklist_config` table.
+2. Multi-step approval enforcement — enforce `approval_workflow_steps` sequence for applications and deal registrations.
+3. PartnerTier enum vs PartnerTierConfig table — migrate FK and retire enum.
