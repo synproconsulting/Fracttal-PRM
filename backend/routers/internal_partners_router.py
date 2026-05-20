@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from audit import log_audit_event
 from auth import get_current_user
+from csv_export import csv_response
 from database import get_db
 from models import (
     PartnerActivationChecklist,
@@ -64,6 +65,7 @@ def list_partners_for_internal(
     category: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
+    export: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_partner_list_role),
 ):
@@ -97,6 +99,31 @@ def list_partners_for_internal(
         query = query.filter(PartnerOrganization.tier == tier)
     if category:
         query = query.filter(PartnerOrganization.partner_category == category)
+
+    if export == "csv":
+        csv_rows = query.order_by(PartnerOrganization.created_at.desc()).all()
+        csv_org_ids = [p.id for p in csv_rows]
+        csv_activation: dict = {}
+        if csv_org_ids:
+            for c in db.query(PartnerActivationChecklist).filter(PartnerActivationChecklist.partner_org_id.in_(csv_org_ids)).all():
+                csv_activation[c.partner_org_id] = bool(c.activation_complete)
+        return csv_response(
+            "partners_export",
+            ["Legal Name", "Program Type", "Category", "Tier", "Status",
+             "Activation Complete", "Created Date"],
+            [
+                [
+                    p.legal_name or "",
+                    _enum_value(p.program_type),
+                    _enum_value(p.partner_category),
+                    _enum_value(p.tier) if p.tier is not None else "",
+                    _enum_value(p.status),
+                    "Yes" if csv_activation.get(p.id, False) else "No",
+                    p.created_at.date().isoformat() if p.created_at else "",
+                ]
+                for p in csv_rows
+            ],
+        )
 
     total = query.count()
     rows = (

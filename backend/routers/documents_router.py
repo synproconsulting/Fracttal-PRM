@@ -14,12 +14,15 @@ once both required types (fiscal_id + id_legal_representative) are approved.
 import uuid
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from audit import log_audit_event
+from csv_export import csv_response
 from database import get_db
 from models import (
     DocumentType,
@@ -55,6 +58,7 @@ def _ensure_partner_exists_and_tenant(db: Session, partner_id: uuid.UUID, curren
 @router.get("/{partner_id}/documents")
 def list_documents(
     partner_id: uuid.UUID,
+    export: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -65,6 +69,34 @@ def list_documents(
         .order_by(PartnerDocument.uploaded_at.desc())
         .all()
     )
+    if export == "csv":
+        partner = (
+            db.query(PartnerOrganization)
+            .filter(PartnerOrganization.id == partner_id)
+            .first()
+        )
+        partner_name = partner.legal_name if partner else ""
+        reviewer_ids = {d.reviewed_by for d in docs if getattr(d, "reviewed_by", None)}
+        reviewer_map = {}
+        if reviewer_ids:
+            for u in db.query(User).filter(User.id.in_(reviewer_ids)).all():
+                reviewer_map[u.id] = u.email
+        return csv_response(
+            "documents_export",
+            ["Partner Org", "Document Type", "Status", "Uploaded Date",
+             "Reviewed Date", "Reviewer"],
+            [
+                [
+                    partner_name,
+                    getattr(d, "document_type", None).value if hasattr(getattr(d, "document_type", None), "value") else (d.document_type or ""),
+                    getattr(d, "status", None).value if hasattr(getattr(d, "status", None), "value") else (d.status or ""),
+                    d.uploaded_at.date().isoformat() if getattr(d, "uploaded_at", None) else "",
+                    d.reviewed_at.date().isoformat() if getattr(d, "reviewed_at", None) else "",
+                    reviewer_map.get(getattr(d, "reviewed_by", None), ""),
+                ]
+                for d in docs
+            ],
+        )
     return {"items": [_serialize(d) for d in docs]}
 
 

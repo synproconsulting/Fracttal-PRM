@@ -45,6 +45,27 @@ function decodeJwt(token) {
 }
 
 function StatusBadge({ status }) {
+
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const r = await fetch(`${API}/deal-registrations?export=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'deals_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e); setError(e.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <span className={`fp-badge ${STATUS_TONE[status] || 'fp-badge--neutral'}`}>
       {STATUS_LABEL[status] || status}
@@ -84,6 +105,7 @@ export default function DealList() {
   const [loadingList, setLoadingList] = useState(false)
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
+  const [exporting, setExporting] = useState(false)
 
   // URL sync (no navigation — just replace state).
   useEffect(() => {
@@ -186,6 +208,7 @@ export default function DealList() {
               }}
             >Pipeline ⬛</button>
           </div>
+          <button type="button" onClick={exportCSV} disabled={exporting} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
           <Link to="/portal/deals/new" className="fp-btn fp-btn--primary">Register a deal</Link>
         </div>
       </div>

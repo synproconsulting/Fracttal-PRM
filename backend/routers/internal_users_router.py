@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from audit import log_audit_event
 from auth import get_current_user, hash_password
+from csv_export import csv_response
 from database import get_db
 from models import PasswordResetToken, User
 from notifications import send_email
@@ -99,6 +100,7 @@ def list_internal_users(
     is_active: Optional[bool] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
+    export: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_system_admin),
 ):
@@ -113,6 +115,24 @@ def list_internal_users(
         query = query.filter(User.role == role)
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
+
+    if export == "csv":
+        csv_rows = query.order_by(User.created_at.desc()).all()
+        return csv_response(
+            "users_export",
+            ["Email", "Full Name", "Role", "Is Active", "Last Login", "Created Date"],
+            [
+                [
+                    u.email or "",
+                    u.full_name or "",
+                    u.role or "",
+                    "Yes" if u.is_active else "No",
+                    u.last_login_at.isoformat() if u.last_login_at else "",
+                    u.created_at.date().isoformat() if u.created_at else "",
+                ]
+                for u in csv_rows
+            ],
+        )
 
     total = query.count()
     rows = (

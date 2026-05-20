@@ -33,6 +33,27 @@ const TABS = [
 ]
 
 function StatusBadge({ status }) {
+
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const r = await fetch(`${API}/internal/deals?export=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'deals_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e); setError(e.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <span className={`fp-badge ${STATUS_TONE[status] || 'fp-badge--neutral'}`}>
       {STATUS_LABEL[status] || status}
@@ -59,6 +80,7 @@ export default function DealQueue() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [actionSaving, setActionSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const activeFilter = useMemo(() => TABS.find((t) => t.key === tab)?.filter, [tab])
 
@@ -105,8 +127,12 @@ export default function DealQueue() {
 
   return (
     <div className="fp-page">
-      <div className="fp-page-header">
+      <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1 className="fp-page-title">Deal Queue</h1>
+        <button type="button" onClick={exportCSV} disabled={exporting}
+                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #1A6EBB', background: '#fff', color: '#1A6EBB', cursor: 'pointer', fontWeight: 600 }}>
+          {exporting ? 'Exporting...' : 'Export CSV'}
+        </button>
       </div>
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--fp-border)' }}>
