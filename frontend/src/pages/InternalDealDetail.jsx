@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
+import QuoteForm from './QuoteForm.jsx'
+import QuoteDetail from './QuoteDetail.jsx'
+
 
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
