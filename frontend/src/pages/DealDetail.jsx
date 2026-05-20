@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
+import { formatCurrency as fmtMoney } from '../utils/currency.js'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -358,12 +359,7 @@ function PortalQuoteSection({ dealId }) {
       .finally(() => setLoading(false))
   }, [dealId, token])
 
-  function fmtMoney(v, currency) {
-    if (v === null || v === undefined || v === '') return '—'
-    const n = Number(v); if (!Number.isFinite(n)) return '—'
-    const sym = currency === 'USD' ? '$' : `${currency} `
-    return `${sym}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
+  // formatCurrency imported from ../utils/currency.js as fmtMoney
 
   async function handleDownloadPdf() {
     if (!quote?.active_version_data?.pdf_generated_at) return

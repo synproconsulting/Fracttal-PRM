@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { formatCurrency as fmtMoney } from '../utils/currency.js'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -13,19 +14,6 @@ const VOLUME_BANDS = [
 ]
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'ZAR', 'AED', 'SAR', 'EGP']
-const CURRENCY_SYMBOL = {
-  USD: '$', EUR: '€', GBP: '£',
-  AUD: 'A$', CAD: 'CA$', ZAR: 'R',
-  AED: 'AED ', SAR: 'SAR ', EGP: 'EGP ',
-}
-
-function fmtMoney(value, currency = 'USD') {
-  if (value === null || value === undefined || value === '') return '—'
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '—'
-  const sym = CURRENCY_SYMBOL[currency] || '$'
-  return `${sym}${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 function applyBands(qty, unitPrice, lineType, description) {
   const lines = []

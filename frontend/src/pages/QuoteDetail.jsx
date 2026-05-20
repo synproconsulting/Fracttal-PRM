@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { formatCurrency as fmtMoney, CURRENCY_SYMBOL } from '../utils/currency.js'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -8,20 +9,6 @@ const STATUS_TONE = {
   sent: 'fp-badge--info',
   accepted: 'fp-badge--success',
   expired: 'fp-badge--danger',
-}
-
-const CURRENCY_SYMBOL = {
-  USD: '$', EUR: '€', GBP: '£',
-  AUD: 'A$', CAD: 'CA$', ZAR: 'R',
-  AED: 'AED ', SAR: 'SAR ', EGP: 'EGP ',
-}
-
-function fmtMoney(value, currency = 'USD') {
-  if (value === null || value === undefined || value === '') return '—'
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '—'
-  const sym = CURRENCY_SYMBOL[currency] || '$'
-  return `${sym}${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {

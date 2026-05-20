@@ -33,6 +33,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from audit import log_audit_event
@@ -42,6 +43,7 @@ from models import (
     AddonCatalogItem,
     DealRegistration,
     FeaturePlanPrice,
+    PartnerOrganization,
     Quote,
     QuoteLineItem,
     QuoteVersion,
@@ -990,4 +992,117 @@ def get_quote_scenarios(
         })
 
     return {"scenarios": scenarios, "active_scenario": quote.active_scenario}
+
+
+# ===================== Sprint 18 — Internal quote dashboard =====================
+
+
+@router.get("/internal/quotes")
+def list_internal_quotes(
+    status: Optional[str] = None,
+    partner_org_id: Optional[uuid.UUID] = None,
+    feature_plan: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cross-deal quote dashboard for internal review/ops roles."""
+    if UserRole(current_user.role) not in WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 1
+    elif page_size > 100:
+        page_size = 100
+
+    base = (
+        db.query(Quote, QuoteVersion, DealRegistration, PartnerOrganization)
+        .join(
+            QuoteVersion,
+            and_(
+                QuoteVersion.quote_id == Quote.id,
+                QuoteVersion.version_number == Quote.active_version,
+                QuoteVersion.is_deleted.is_(False),
+            ),
+        )
+        .join(DealRegistration, DealRegistration.id == Quote.deal_id)
+        .join(PartnerOrganization, PartnerOrganization.id == Quote.partner_org_id)
+    )
+    if status:
+        base = base.filter(Quote.status == status)
+    if partner_org_id:
+        base = base.filter(Quote.partner_org_id == partner_org_id)
+    if feature_plan:
+        base = base.filter(QuoteVersion.feature_plan == feature_plan)
+    if search:
+        like = f"%{search}%"
+        base = base.filter(or_(Quote.quote_name.ilike(like), DealRegistration.deal_name.ilike(like)))
+
+    total = base.count()
+    rows = (
+        base.order_by(Quote.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    items = []
+    for quote, version, deal, partner in rows:
+        items.append(
+            {
+                "id": str(quote.id),
+                "quote_name": quote.quote_name or "Untitled Quote",
+                "deal_id": str(quote.deal_id),
+                "deal_name": deal.deal_name or "—",
+                "partner_org_id": str(quote.partner_org_id),
+                "partner_org_name": partner.legal_name,
+                "currency_code": quote.currency_code,
+                "feature_plan": version.feature_plan,
+                "active_version": quote.active_version,
+                "active_scenario": quote.active_scenario,
+                "grand_total_after_discount": float(version.grand_total_after_discount),
+                "status": quote.status,
+                "created_at": quote.created_at.isoformat() if quote.created_at else None,
+            }
+        )
+
+    # Summary across all quotes (not filtered) — small enough at current volumes
+    all_quotes = db.query(Quote).all()
+    pipeline_total = 0.0
+    for q in all_quotes:
+        if q.status == "expired":
+            continue
+        av = (
+            db.query(QuoteVersion)
+            .filter(
+                QuoteVersion.quote_id == q.id,
+                QuoteVersion.version_number == q.active_version,
+                QuoteVersion.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if av is None:
+            continue
+        pipeline_total += float(av.grand_total_after_discount or 0)
+
+    summary = {
+        "total_quotes": len(all_quotes),
+        "draft": sum(1 for q in all_quotes if q.status == "draft"),
+        "sent": sum(1 for q in all_quotes if q.status == "sent"),
+        "accepted": sum(1 for q in all_quotes if q.status == "accepted"),
+        "expired": sum(1 for q in all_quotes if q.status == "expired"),
+        "pipeline_total": round(pipeline_total, 2),
+    }
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "summary": summary,
+    }
 

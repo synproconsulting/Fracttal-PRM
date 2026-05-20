@@ -24,6 +24,7 @@ import PartnerUserManagement from './pages/PartnerUserManagement.jsx'
 import InternalPartnerList from './pages/InternalPartnerList.jsx'
 import ProgramConfig from './pages/ProgramConfig.jsx'
 import InternalReports from './pages/InternalReports.jsx'
+import InternalQuotes from './pages/InternalQuotes.jsx'
 import ForgotPassword from './pages/ForgotPassword.jsx'
 import ResetPassword from './pages/ResetPassword.jsx'
 
@@ -104,6 +105,14 @@ export default function App() {
         <Route path="partners/:id/documents" element={<PartnerDocuments />} />
         <Route path="deals" element={<DealQueue />} />
         <Route path="deals/:id" element={<InternalDealDetail />} />
+        <Route
+          path="quotes"
+          element={
+            <ProtectedRoute roles={["system_admin", "channel_ops_admin", "channel_manager"]}>
+              <InternalQuotes />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="users"
           element={

@@ -76,6 +76,14 @@ const IconBarChart = () => (
     <line x1="6" y1="20" x2="6" y2="16" />
   </svg>
 )
+const IconDoc = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="9" y1="13" x2="15" y2="13" />
+    <line x1="9" y1="17" x2="15" y2="17" />
+  </svg>
+)
 
 // Nav-item visibility per role and per-item "enabled" flag (disabled items
 // render as greyed "Coming soon" placeholders until the target page lands in
@@ -124,6 +132,14 @@ const NAV_ITEMS = [
     roles: ['system_admin', 'channel_ops_admin', 'channel_manager', 'sales_rep', 'sales_ops', 'finance_approver'],
   },
   {
+    key: 'quotes',
+    label: 'Quotes',
+    to: '/internal/quotes',
+    icon: IconDoc,
+    enabled: true,
+    roles: ['system_admin', 'channel_ops_admin', 'channel_manager'],
+  },
+  {
     key: 'users',
     label: 'Users',
     to: '/internal/users',
@@ -154,6 +170,7 @@ const BREADCRUMB_MAP = {
   '/internal/applications': 'Applications',
   '/internal/partners': 'Partners',
   '/internal/deals': 'Deals',
+  '/internal/quotes': 'Quotes',
   '/internal/users': 'Users',
   '/internal/partner-users': 'Partner Users',
   '/internal/config': 'Program Config',
