@@ -29,6 +29,7 @@ so admins can adjust pricing without redeploying.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -160,11 +161,15 @@ def calculate_quote(
     plan_display = PLAN_DISPLAY_NAMES[feature_plan]
     discount_pct = Decimal(str(feature_plan_discount_pct))
 
+    # Sprint 19 / FPRM-308: respect scheduled future-dated rows -- a row with
+    # ``effective_from`` after today is stored but not used by the engine until
+    # its date comes. This keeps the admin UI's "Scheduled" badge meaningful.
     plan_price: FeaturePlanPrice | None = (
         db.query(FeaturePlanPrice)
         .filter(
             FeaturePlanPrice.plan_code == feature_plan,
             FeaturePlanPrice.is_active.is_(True),
+            FeaturePlanPrice.effective_from <= date.today(),
         )
         .order_by(FeaturePlanPrice.effective_from.desc())
         .first()
