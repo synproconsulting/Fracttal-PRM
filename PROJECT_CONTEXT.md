@@ -210,6 +210,7 @@
 | DELETE | `/quotes/{quote_id}/versions/{version_number}` | channel_ops_admin / system_admin | Sprint 15 / FPRM-246. Soft-delete (`is_deleted = True`). Cannot delete the currently active version (422). Audit `quote.version_deleted`. |
 | GET | `/internal/config/pricing/plans` | any authenticated user | Sprint 15 / FPRM-246. Active `FeaturePlanPrice` rows — needed by the quote form UI. |
 | GET | `/internal/config/pricing/addons` | any authenticated user | Sprint 15 / FPRM-246. Active `AddonCatalogItem` rows — needed by the quote form UI. |
+| GET | `/partners/{partner_org_id}/activation/criteria` | partner_admin (own org) or any internal role | Sprint 17 / FPRM-270 (AD-21). Returns resolved required criteria for the partner: `{required_criteria: [{criterion_key, description, is_met}], activation_complete, config_source}`. `config_source` is `"dynamic"` when matching `activation_checklist_config` rows exist, `"fallback"` when the legacy four-flag default applies. |
 
 
 
@@ -289,6 +290,7 @@
 | `quotes` | `024_create_quotes` | Sprint 15 / FPRM-239. Quote header bound to a deal_registration. Columns: `id` (UUID PK), `deal_id` (UUID FK to `deal_registrations.id`, not null), `partner_org_id` (FK), `created_by` (FK users), `quote_name` (nullable), `currency_code` (String(3) default `USD` — display only, no FX conversion in Phase 5), `active_version` (Integer default 1), `active_scenario` (nullable), `status` (`draft`/`sent`/`accepted`/`expired` default `draft`), `created_at`, `updated_at`. Index on `deal_id`. |
 | `quote_versions` | `024_create_quotes` | Sprint 15 / FPRM-239. Versioned pricing snapshot. Columns: `id` (UUID PK), `quote_id` (FK), `version_number` (Integer), `scenario_label` (nullable: `good`/`better`/`best`/null), `feature_plan` (string), `feature_plan_discount_pct` (Numeric(5,2) default 0), `qty_transactional_users`/`qty_limited_tech_users` (Integer), `selected_addons` (JSON list of addon_key strings), `grand_total_before_discount`/`grand_total_after_discount` (Numeric(12,2)), `pdf_artifact_path` (nullable — Sprint 16), `created_at`, `is_deleted` (bool default false — soft-delete). Unique constraint `(quote_id, version_number)`; index on `quote_id`. |
 | `quote_line_items` | `024_create_quotes` | Sprint 15 / FPRM-239. Individual line items computed by `quote_engine.calculate_quote`. Columns: `id` (UUID PK), `quote_version_id` (FK), `line_order` (Integer), `line_type` (`feature_pack`/`transactional_user`/`limited_tech_user`/`addon`/`free_allocation`), `description`, `quantity`, `unit_price` (Numeric(10,2)), `discount_pct` (Numeric(5,2) default 0), `total_before_discount`/`total_after_discount` (Numeric(12,2)), `addon_key` (nullable — set when `line_type == 'addon'`). Index on `quote_version_id`. |
+| `approval_step_records` | `026_create_approval_step_records` | Sprint 17 / FPRM-274 (AD-22). Per-step audit trail for the multi-step approval workflow. Columns: `id` (UUID PK), `workflow_type` (`partner_application` / `deal_registration`), `object_id` (UUID — polymorphic; no FK since it can reference either parent table), `step_order` (Integer), `step_name` (String — snapshotted at action time), `required_role` (String — snapshotted), `actor_id` (FK `users.id`), `action` (`approved` / `rejected` / `info_required`), `notes` (Text nullable), `actioned_at` (DateTime). Indexes on `object_id` and `(workflow_type, object_id)` for back-reference reads. |
 
 
 
@@ -953,6 +955,32 @@ Partner-side routes (`/portal/*`) sit nested under `PartnerPortalLayout` which a
 **Consequence:** Frontend bundles a few extra lines per page (or imports a tiny helper). The download flow shows the user the same loading/disabled-button affordances as any other fetch, which is the right UX. AD-20 supersedes any older code that used `window.location.href` for downloads — Sprint 14's reports CSV export already used fetch+Blob, AD-20 just codifies the pattern as the standard.
 
 **Do not:** Pass the JWT as a query parameter to a download endpoint. Do not bypass the standard fetch pipeline for downloads — the auth header check matters as much for a CSV as for a JSON payload.
+
+---
+
+### AD-21 — Dynamic activation criteria are resolved at runtime from `activation_checklist_config`, with a hardcoded fallback
+
+**Decision:** `backend/activation.py` `recalculate_activation` (signature frozen since Sprint 7 / AD-14) now derives the *set of required activation criteria* by querying `activation_checklist_config` for rows that match the partner's `partner_category` and `tier` (with NULL-as-wildcard for either column). The per-flag sub-computations (`profile_complete`, `documents_uploaded`, `terms_signed`, `baseline_training_complete`) are unchanged — only the gate that decides `activation_complete` is now dynamic. If no config rows match, the function falls back to the legacy four-flag rule (`HARDCODED_REQUIRED_KEYS`). A `CRITERION_KEY_MAP` translates each configured `criterion_key` to the boolean field on `PartnerActivationChecklist` that backs it; criterion keys without a model field are skipped gracefully (auto-satisfied) so admins can pre-seed criterion vocabulary that doesn't yet have model backing. The new endpoint `GET /partners/{id}/activation/criteria` surfaces the resolved criterion list + per-item met state + `config_source` so the portal can render a live, criteria-aware checklist.
+
+**Why:** The Sprint 13 `activation_checklist_config` table existed since FPRM-213 but was never read by the enforcement function — admins could configure criteria but the enforcement function ignored them. Wiring it up was Phase 5's last enforcement gap (alongside AD-22). Backwards-compatibility was the load-bearing constraint: every existing production partner activated under the hardcoded rule, and we cannot silently lock them out. The fallback path preserves that exact behaviour when no admin-configured rows match.
+
+**Consequence:** Adding a new criterion is now a config write, not a code change. The `CRITERION_KEY_MAP` only needs an entry when a *new model field* is introduced; alias keys (e.g. `contract_signed` → `terms_signed`) map to existing fields. The portal will surface any admin-added criterion automatically via the `/criteria` endpoint, with sensible defaults for the description and a generic "ask your channel manager" hint when no `KEY_ACTIONS` entry exists.
+
+**Do not:** Reintroduce hardcoded criterion lists in router handlers or in the recalc engine. Do not change `recalculate_activation`'s signature — every caller passes `(db, partner_org_id)` and gets back the persisted checklist. Do not skip the fallback path — empty config rows must NOT activate every partner.
+
+---
+
+### AD-22 — Multi-step approval enforcement reads `approval_workflow_steps` at runtime; single-step fallback preserved
+
+**Decision:** `POST /applications/{id}/approve` (FPRM-90 / Sprint 6) and `POST /internal/deals/{id}/approve` (FPRM-134 / Sprint 8) are now step-gated by the `approval_workflow_steps` table (migration 021, configured via `/internal/config/approval-steps` since Sprint 13). For each workflow object, the router looks up the active steps in `step_order`, finds the first step that does not yet have an `approved` `ApprovalStepRecord`, and requires the caller's role to match that step's `required_role`. Each successful step approval inserts an `ApprovalStepRecord`. **Intermediate-step approvals do not transition the object's status** — the status only flips to `approved` (and provisioning runs for applications) on the final step. Rejections at any step write an `action="rejected"` step record before flipping status to `rejected`. When no steps are configured for a workflow type, single-step legacy behaviour is preserved: any review-role user can approve directly, no step records are created, and `approval_progress` is `null` on GET responses.
+
+The shared helpers live in `backend/approval_helpers.py` (`get_approval_step_context`, `build_approval_progress`, `record_step_action`) to avoid duplicating the logic in both routers and to keep the import graph acyclic.
+
+**Why:** The Sprint 13 `approval_workflow_steps` table existed since FPRM-209 but was never enforced. Wiring it up closes the last Phase 4 deferral and gives admins real control over multi-stakeholder approval flows (e.g. Channel Ops Review → Channel Manager Review for high-value deals). The same backwards-compatibility constraint as AD-21 applies: existing production data assumes single-step approval; the fallback preserves it.
+
+**Consequence:** Frontend `ApplicationReview.jsx` and `InternalDealDetail.jsx` consume `approval_progress` to render a step indicator and disable the Approve button when the logged-in user's role does not match the current step's `required_role`. The `approval_progress` block has shape `{total_steps, completed_steps, current_step_order, current_step_name, current_required_role}` — `current_*` fields are `null` once all steps are complete. The `step_name` and `required_role` columns on `ApprovalStepRecord` are *snapshotted* at action time so historical records survive future edits to `approval_workflow_steps`. The polymorphic `object_id` column carries no FK (a union-typed FK would require non-portable triggers); the back-reference is served by the `(workflow_type, object_id)` composite index.
+
+**Do not:** Inline step-context logic in either router — both must use the helpers in `approval_helpers.py`. Do not transition object status on intermediate steps — only the final step transitions to `approved`. Do not skip the fallback path — empty `approval_workflow_steps` must NOT block approvals for legacy deployments.
 
 ---
 

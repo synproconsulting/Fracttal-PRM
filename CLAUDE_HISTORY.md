@@ -1670,3 +1670,94 @@ Total API surface ends Sprint 16 at ~113 endpoints + 7 endpoints with CSV extens
 1. Dynamic activation enforcement — wire `recalculate_activation` to read from the `activation_checklist_config` table.
 2. Multi-step approval enforcement — enforce `approval_workflow_steps` sequence for applications and deal registrations.
 3. PartnerTier enum vs PartnerTierConfig table — migrate FK and retire enum.
+
+
+## Sprint 17 — Dynamic Activation & Multi-Step Approval Enforcement (Phase 5 Sprint 3 of 4)
+
+**Started:** 2026-05-20
+**Closed:** 2026-05-20 (single-day intensive)
+**Fix Version ID:** `10768`
+**Native Sprint ID:** `741`
+**Phase 5 epic:** FPRM-238 — Quoting Module & Enforcement
+
+### Sprint 17 stories — outcome
+
+| Key | Story | Pts | Status | PR | Notes |
+|---|---|---|---|---|---|
+| FPRM-270 | Dynamic activation enforcement | 8 | Done | #112 | `backend/activation.py` rewritten — `recalculate_activation` (signature frozen) now reads required criteria from `activation_checklist_config` with NULL-as-wildcard for category/tier scoping; falls back to the hardcoded four-flag rule when no rows match. New `CRITERION_KEY_MAP` translates criterion keys to checklist fields; unknown keys auto-satisfied (forward-compat). New endpoint `GET /partners/{id}/activation/criteria` returns `{required_criteria, activation_complete, config_source}`. `ActivationChecklist.jsx` + `PartnerHome.jsx` switched to the new endpoint. 22 new tests (15 engine + 7 endpoint) all green; 17 existing `test_activation.py` tests still green (regression guard). |
+| FPRM-274 | Multi-step approval enforcement | 8 | Done | #113 | New `ApprovalStepRecord` model (polymorphic `object_id`, indexes on `object_id` and `(workflow_type, object_id)`) + migration 026. New `backend/approval_helpers.py` (`get_approval_step_context`, `build_approval_progress`, `record_step_action`) shared between `applications_router` and `deal_registrations_router` to avoid duplication. Step-gating in both approve endpoints — caller role must match the current step's `required_role`, intermediate-step approvals stamp a step record without changing status, final step runs the existing approval flow. Reject endpoints stamp a `rejected` step record before flipping status. `approval_progress` added to `GET /applications/{id}` and `GET /deal-registrations/{id}`. Frontend: `ApplicationReview.jsx` + `InternalDealDetail.jsx` show the step indicator and disable the Approve button on role mismatch. 18 new tests covering fallback (no-steps), single-step correct/wrong role, two-step intermediate/final, can't-skip-step, audit-log ordering, deal flow parity. |
+| FPRM-279 | Sprint 17 docs update | 4 | Done | #<this PR> | This entry + CLAUDE.md (current state, Sprint 17 IDs, removed deferred items) + PROJECT_CONTEXT.md (new endpoint, migration 026, AD-21 + AD-22). |
+
+All 10 sub-tasks (FPRM-271..273, 275..278, 280..282) closed Done.
+
+### What landed on `main` during Sprint 17
+
+- `backend/activation.py` — rewritten for dynamic enforcement with fallback; `CRITERION_KEY_MAP`, `HARDCODED_REQUIRED_KEYS`, `resolve_required_criteria` exposed for the router to reuse
+- `backend/routers/partners_router.py` — new `GET /partners/{id}/activation/criteria` endpoint
+- `backend/tests/test_activation_dynamic.py` (new, 22 tests) — fallback path, dynamic path, category/tier scoping (match/mismatch/null-wildcard), partial criteria, alias handling, endpoint RBAC
+- `frontend/src/components/ActivationChecklist.jsx` — fetches `/activation/criteria`, renders dynamic items with a `KEY_ACTIONS` map for per-criterion CTA/hint
+- `frontend/src/pages/PartnerHome.jsx` — progress widget sourced from criteria endpoint (falls back to dashboard summary)
+- `backend/models.py` — adds `ApprovalStepRecord`
+- `backend/alembic/versions/026_create_approval_step_records.py` (new)
+- `backend/approval_helpers.py` (new) — shared multi-step helpers
+- `backend/routers/applications_router.py` — step-gating on approve, step record on reject, `approval_progress` on GET
+- `backend/routers/deal_registrations_router.py` — same pattern on deal approve/reject + GET
+- `backend/tests/test_approval_enforcement.py` (new, 18 tests)
+- `frontend/src/pages/ApplicationReview.jsx` — Approval Workflow card + role-gated Approve button
+- `frontend/src/pages/InternalDealDetail.jsx` — same indicator + role-gated Approve in the under_review action panel
+- `PROJECT_CONTEXT.md` — Section 1 adds the criteria endpoint; Section 2 adds `approval_step_records` migration row; Section 6 adds AD-21 (dynamic activation) and AD-22 (multi-step approval)
+- `CLAUDE.md` — Sprint 17 IDs (native 741, fix version 10768), updated current-state paragraph, two deferred items removed from Known Issues
+
+### API endpoints added
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/partners/{partner_org_id}/activation/criteria` | partner_admin (own) / internal | Returns resolved criteria + per-item met state + `config_source` |
+
+`approval_progress` field added to existing `GET /applications/{id}` and `GET /deal-registrations/{id}` responses — does not change the endpoint surface count.
+
+Total API surface ends Sprint 17 at **~114 endpoints** (Sprint 16 baseline 113 + 1) + 7 endpoints with the `?export=csv` extension.
+
+### Migrations added
+
+- `026_create_approval_step_records` — creates the `approval_step_records` table, FK on `actor_id` → `users.id`, indexes on `object_id` and `(workflow_type, object_id)`. Idempotent (checks for existing table before creating).
+
+Alembic head advances **025 → 026**.
+
+### Test count
+
+| Source | Count |
+|---|---|
+| Sprint 16 baseline | ~494 |
+| Story 1 activation tests | +22 |
+| Story 2 approval tests | +18 |
+| **Sprint 17 total** | **535** |
+
+(A precise post-merge count is asserted in the Phase C closeout report after `pytest backend/tests/ -v` against merged `main`.)
+
+### Sprint 17 lessons
+
+1. **`recalculate_activation`'s return type is "checklist row" not "bool", and every caller relies on it.** The prompt's pseudocode returned `bool`, but the function in the codebase (since Sprint 7 / AD-14) has always returned the persisted `PartnerActivationChecklist`. Several callers reassign `checklist = recalculate_activation(...)` — changing the return type would have been a silent breakage. Preserving it kept zero churn on `partner_profiles_router`, `documents_router`, `partners_router`, `provisioning.py`. Reading every caller before touching a "frozen signature" function is the only way to confirm what "frozen" actually means.
+2. **CRLF line endings on Windows break naive `Edit` calls on multi-line anchors.** When `models.py` was written with `\r\n` line endings, the harness's `Edit` tool refused to match an anchor that included blank lines because the byte representation differed from the Read view. The reliable workaround was a one-shot Python script that reads the file as bytes, locates the anchor with explicit `\r\n` sequences, and writes the result back as bytes. Applies whenever inserting whole classes/blocks into a CRLF-encoded file.
+3. **Multi-step approval and dynamic activation are *enabled by config*, not by code.** The fallback paths are not "future-proofing" — they are the production-correct behaviour for every existing partner and every existing deal. Tests must explicitly cover both the dynamic path AND the fallback path; one is not the other's degenerate case.
+4. **Tests that call dual-auth endpoints (`get_optional_bearer_user`) need a separate override.** The `_override` helper only overrode `get_current_user`, which is what `approve`/`reject` use — but `GET /applications/{id}` uses `get_optional_bearer_user`. The first test fixture cut produced a 401 on the GET test. Overriding both dependencies in the helper made the rest of the suite green and is the right pattern for any future test that touches both endpoint flavours.
+5. **Polymorphic `object_id` without a FK constraint is the simplest portable cross-workflow audit pattern.** `ApprovalStepRecord.object_id` references either `partner_applications.id` or `deal_registrations.id`. A union-typed FK would require PostgreSQL-specific check constraints or triggers; a separate table per workflow type would force shared logic into two places. Plain UUID column + composite index `(workflow_type, object_id)` is what `audit_log` already uses for the same reason.
+
+### Known follow-ups for Sprint 18
+
+1. **Quote scenario management** — Good/Better/Best comparison UI on top of the existing `scenario_label` field on `QuoteVersion`.
+2. **Multi-currency display** — `quotes.currency_code` exists; surface it in the quote UI and on PDFs (no FX conversion in Phase 5).
+3. **Internal quote dashboard** — `/internal/quotes` cross-deal quote list with filters and CSV export.
+4. **Partner quote history** — `/portal/quotes` for partner-facing visibility into all quote versions across their deals.
+5. **PartnerTier enum vs PartnerTierConfig table** — Phase 5 still has this last legacy enum to retire; will land before Phase 5 closeout.
+6. **Phase 5 docs + closeout** — Sprint 18 closes Phase 5; CLAUDE_HISTORY Phase 5 complete marker, RUNBOOK validation.
+
+### Phase 5 progress (updated)
+
+| Sprint | Theme | Stories | Points | Status |
+|---|---|---|---|---|
+| 15 | Quoting Module Foundation (data model + engine + API) | 4 | 21 | Done |
+| 16 | Quoting Module Frontend + PDF + CSV export gaps | 4 | 21 | Done |
+| 17 | Dynamic activation enforcement + Multi-step approval | 3 | 20 | **Done** |
+| 18 | Quote scenarios + Multi-currency display + Phase 5 closeout | 4 | 20 | Pending |
+| **Total** | **Phase 5** | **15 stories** | **82** | **3 of 4 sprints complete** |
