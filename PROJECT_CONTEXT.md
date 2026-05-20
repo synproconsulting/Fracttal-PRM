@@ -934,7 +934,7 @@ Partner-side routes (`/portal/*`) sit nested under `PartnerPortalLayout` which a
 
 ### AD-19 — PDF artefacts are stored as base64-encoded text on the DB row, not on the Railway filesystem
 
-**Decision:** Generated quote PDFs (Sprint 16 / FPRM-258) are stored as base64-encoded strings in `quote_versions.pdf_artifact_data` (Text). The `POST /quotes/{{id}}/versions/{{n}}/generate-pdf` endpoint renders the PDF in-memory with reportlab and persists the bytes to the DB. The `GET /quotes/{{id}}/versions/{{n}}/pdf` endpoint reads the column, decodes, and streams it back as `application/pdf` with `Content-Disposition: attachment`.
+**Decision:** Generated quote PDFs (Sprint 16 / FPRM-258) are stored as base64-encoded strings in `quote_versions.pdf_artifact_data` (Text). The `POST /quotes/{id}/versions/{n}/generate-pdf` endpoint renders the PDF in-memory with reportlab and persists the bytes to the DB. The `GET /quotes/{id}/versions/{n}/pdf` endpoint reads the column, decodes, and streams it back as `application/pdf` with `Content-Disposition: attachment`.
 
 **Why:** Railway services do not have persistent local storage across deploys. Anything written to `/tmp` or the working directory is gone the next deploy, which would silently invalidate every previously-generated PDF. Storing the artefact on the row keeps it durable, atomically tied to its `QuoteVersion`, and free for any internal/partner user with read access to download. There is no need (yet) for an S3 / object-store integration at quote-PDF sizes.
 
