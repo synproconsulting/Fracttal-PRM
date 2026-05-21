@@ -38,6 +38,7 @@ from audit import log_audit_event
 from csv_export import csv_response
 from conflict_checker import check_deal_conflict
 from database import get_db
+from sorting import apply_sort
 from models import (
     AuditLog,
     CommissionStructure,
@@ -365,6 +366,16 @@ def create_deal(
     return _serialize(deal)
 
 
+# Sortable column allowlist for the partner-facing /deal-registrations list.
+# Per spec only three are exposed -- the partner deal list table is narrower
+# than the internal queue.
+_PORTAL_DEAL_SORT = {
+    "deal_name": DealRegistration.deal_name,
+    "status": DealRegistration.status,
+    "created_at": DealRegistration.created_at,
+}
+
+
 @router.get("/deal-registrations")
 def list_deals(
     status: Optional[str] = Query(default=None),
@@ -372,6 +383,8 @@ def list_deals(
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -416,13 +429,16 @@ def list_deals(
             ],
         )
 
-    total = query.count()
-    items = (
-        query.order_by(DealRegistration.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_PORTAL_DEAL_SORT,
+        default_col=DealRegistration.created_at,
+        tiebreaker=DealRegistration.id,
     )
+    total = query.count()
+    items = query.offset(offset).limit(limit).all()
     return {
         "total": total,
         "limit": limit,
@@ -707,6 +723,20 @@ def _require_review_role(user: User) -> None:
         )
 
 
+# Sortable column allowlist for the internal deal queue. ``partner_org``
+# resolves through an outer join to PartnerOrganization.legal_name so the
+# user can sort by partner name even when partner_org_id is null.
+_INTERNAL_DEAL_SORT = {
+    "deal_name": DealRegistration.deal_name,
+    "customer_name": DealRegistration.customer_name,
+    "partner_org": PartnerOrganization.legal_name,
+    "deal_value": DealRegistration.estimated_deal_value,
+    "status": DealRegistration.status,
+    "submitted_at": DealRegistration.submitted_at,
+    "created_at": DealRegistration.created_at,
+}
+
+
 @router.get("/internal/deals")
 def list_internal_deals(
     status: Optional[str] = Query(default=None),
@@ -714,6 +744,8 @@ def list_internal_deals(
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -723,7 +755,15 @@ def list_internal_deals(
     statuses; the frontend filter tabs constrain to submitted / under_review.
     """
     _require_review_role(current_user)
-    query = db.query(DealRegistration)
+    # Outer-join PartnerOrganization so the allowlisted ``partner_org`` key
+    # can sort on legal_name without an explicit subquery.
+    query = (
+        db.query(DealRegistration)
+        .outerjoin(
+            PartnerOrganization,
+            PartnerOrganization.id == DealRegistration.partner_org_id,
+        )
+    )
     if status:
         query = query.filter(DealRegistration.status == status)
     if partner_org_id is not None:
@@ -754,13 +794,16 @@ def list_internal_deals(
             ],
         )
 
-    total = query.count()
-    items = (
-        query.order_by(DealRegistration.submitted_at.desc().nullslast(), DealRegistration.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_INTERNAL_DEAL_SORT,
+        default_col=DealRegistration.created_at,
+        tiebreaker=DealRegistration.id,
     )
+    total = query.count()
+    items = query.offset(offset).limit(limit).all()
     # FPRM-143: include partner_legal_name on each row (bulk lookup, single query).
     name_map = _bulk_org_names(db, {d.partner_org_id for d in items if d.partner_org_id})
     rows = []

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from audit import log_audit_event
 from auth import get_current_user, hash_password
 from csv_export import csv_response
+from sorting import apply_sort
 from database import get_db
 from models import PasswordResetToken, User
 from notifications import send_email
@@ -94,6 +95,15 @@ class RoleChangeRequest(BaseModel):
 # --------------------------------------------------------------- routes
 
 
+_INTERNAL_USER_SORT = {
+    "email": User.email,
+    "full_name": User.full_name,
+    "role": User.role,
+    "is_active": User.is_active,
+    "created_at": User.created_at,
+}
+
+
 @router.get("")
 def list_internal_users(
     role: Optional[str] = Query(default=None),
@@ -101,6 +111,8 @@ def list_internal_users(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     _: User = Depends(require_system_admin),
 ):
@@ -134,10 +146,17 @@ def list_internal_users(
             ],
         )
 
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_INTERNAL_USER_SORT,
+        default_col=User.created_at,
+        tiebreaker=User.id,
+    )
     total = query.count()
     rows = (
-        query.order_by(User.created_at.desc())
-        .offset((page - 1) * page_size)
+        query.offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { SortableTh } from '../components/SortableTh.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -53,14 +54,23 @@ export default function ApplicationQueue() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
+
+  function toggleSort(field) {
+    setSort((s) => s.field === field
+      ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { field, dir: 'asc' })
+  }
 
   useEffect(() => {
     setLoading(true)
     setError(null)
     const params = new URLSearchParams()
     if (statusFilter) params.set('status', statusFilter)
+    params.set('sort_by', sort.field)
+    params.set('sort_dir', sort.dir)
     fetch(`${API}/applications?${params.toString()}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
@@ -71,7 +81,7 @@ export default function ApplicationQueue() {
       .then((data) => setApplications(Array.isArray(data) ? data : data.items || []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [statusFilter, token])
+  }, [statusFilter, token, sort])
 
   const filtered = applications.filter((a) => {
     if (!search) return true
@@ -145,12 +155,12 @@ export default function ApplicationQueue() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
           <thead>
             <tr style={{ background: '#f5f5f5', textAlign: 'left' }}>
-              <th style={{ padding: 10 }}>Company</th>
+              <SortableTh field="company_name" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Company</SortableTh>
               <th style={{ padding: 10 }}>Applicant</th>
-              <th style={{ padding: 10 }}>Email</th>
+              <SortableTh field="contact_email" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Email</SortableTh>
               <th style={{ padding: 10 }}>Categories</th>
-              <th style={{ padding: 10 }}>Submitted</th>
-              <th style={{ padding: 10 }}>Status</th>
+              <SortableTh field="submitted_at" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Submitted</SortableTh>
+              <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Status</SortableTh>
               <th style={{ padding: 10 }}>Days</th>
             </tr>
           </thead>

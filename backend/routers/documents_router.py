@@ -24,6 +24,7 @@ from auth import get_current_user
 from audit import log_audit_event
 from csv_export import csv_response
 from database import get_db
+from sorting import apply_sort
 from models import (
     DocumentType,
     DocumentTypeConfig,
@@ -55,20 +56,38 @@ def _ensure_partner_exists_and_tenant(db: Session, partner_id: uuid.UUID, curren
             raise HTTPException(status_code=403, detail="Access denied")
 
 
+# PartnerDocument has ``uploaded_at`` rather than ``created_at`` -- the spec's
+# ``created_at`` sort key maps to it for the documents list.
+_DOCUMENT_SORT = {
+    "document_type": PartnerDocument.document_type,
+    "status": PartnerDocument.status,
+    "created_at": PartnerDocument.uploaded_at,
+}
+
+
 @router.get("/{partner_id}/documents")
 def list_documents(
     partner_id: uuid.UUID,
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     _ensure_partner_exists_and_tenant(db, partner_id, current_user)
-    docs = (
+    query = (
         db.query(PartnerDocument)
         .filter(PartnerDocument.partner_org_id == partner_id)
-        .order_by(PartnerDocument.uploaded_at.desc())
-        .all()
     )
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_DOCUMENT_SORT,
+        default_col=PartnerDocument.uploaded_at,
+        tiebreaker=PartnerDocument.id,
+    )
+    docs = query.all()
     if export == "csv":
         partner = (
             db.query(PartnerOrganization)

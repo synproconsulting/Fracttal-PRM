@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { formatCurrency } from '../utils/currency.js'
+import { SortableTh } from '../components/SortableTh.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -45,12 +46,24 @@ export default function InternalQuotes() {
   const [pageSize] = useState(20)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+
+  function toggleSort(field) {
+    setSort((s) => s.field === field
+      ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { field, dir: 'asc' })
+  }
 
   const fetchData = useCallback(async () => {
     if (!token) return
     setLoading(true); setError(null)
     try {
-      const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+      const qs = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+        sort_by: sort.field,
+        sort_dir: sort.dir,
+      })
       if (filters.status) qs.set('status', filters.status)
       if (filters.feature_plan) qs.set('feature_plan', filters.feature_plan)
       if (filters.search) qs.set('search', filters.search)
@@ -67,7 +80,7 @@ export default function InternalQuotes() {
     } finally {
       setLoading(false)
     }
-  }, [token, page, pageSize, filters])
+  }, [token, page, pageSize, filters, sort])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -121,14 +134,14 @@ export default function InternalQuotes() {
           <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#F5F7FA', textAlign: 'left' }}>
-                <th style={{ padding: 10 }}>Quote</th>
-                <th style={{ padding: 10 }}>Deal</th>
-                <th style={{ padding: 10 }}>Partner</th>
-                <th style={{ padding: 10 }}>Plan</th>
+                <SortableTh field="quote_name" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Quote</SortableTh>
+                <SortableTh field="deal_name" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Deal</SortableTh>
+                <SortableTh field="partner_org" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Partner</SortableTh>
+                <SortableTh field="feature_plan" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Plan</SortableTh>
                 <th style={{ padding: 10 }}>Currency</th>
-                <th style={{ padding: 10, textAlign: 'right' }}>Grand Total</th>
-                <th style={{ padding: 10 }}>Status</th>
-                <th style={{ padding: 10 }}>Created</th>
+                <SortableTh field="grand_total_after_discount" sort={sort} onSort={toggleSort} style={{ padding: 10 }} align="right">Grand Total</SortableTh>
+                <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Status</SortableTh>
+                <SortableTh field="created_at" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Created</SortableTh>
               </tr>
             </thead>
             <tbody>

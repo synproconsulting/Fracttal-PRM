@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useOutletContext, useParams } from 'react-router-dom'
+import { SortableTh } from '../components/SortableTh.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -245,13 +246,21 @@ export default function PartnerDocuments() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [actionDoc, setActionDoc] = useState(null)
   const [actionSaving, setActionSaving] = useState(false)
+  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+
+  function toggleSort(field) {
+    setSort((s) => s.field === field
+      ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { field, dir: 'asc' })
+  }
 
   const reload = useMemo(() => {
     return () => {
       if (!partnerOrgId || !token) return
       setLoading(true)
       setError(null)
-      fetch(`${API}/partners/${partnerOrgId}/documents`, {
+      const qs = new URLSearchParams({ sort_by: sort.field, sort_dir: sort.dir })
+      fetch(`${API}/partners/${partnerOrgId}/documents?${qs.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then((r) => {
@@ -262,7 +271,7 @@ export default function PartnerDocuments() {
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false))
     }
-  }, [partnerOrgId, token])
+  }, [partnerOrgId, token, sort])
 
   useEffect(() => {
     reload()
@@ -347,10 +356,10 @@ export default function PartnerDocuments() {
         <table className="fp-table">
           <thead>
             <tr>
-              <th>Type</th>
+              <SortableTh field="document_type" sort={sort} onSort={toggleSort}>Type</SortableTh>
               <th>Name</th>
-              <th>Status</th>
-              <th>Uploaded</th>
+              <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
+              <SortableTh field="created_at" sort={sort} onSort={toggleSort}>Uploaded</SortableTh>
               <th>Expires</th>
               {isInternal && <th>Actions</th>}
             </tr>

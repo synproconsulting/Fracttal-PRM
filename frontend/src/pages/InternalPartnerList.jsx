@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
+import { SortableTh } from '../components/SortableTh.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -114,7 +115,14 @@ export default function InternalPartnerList() {
   const [category, setCategory] = useState('')
   const [tier, setTier] = useState('')
   const [page, setPage] = useState(1)
+  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
   const pageSize = 20
+
+  function toggleSort(field) {
+    setSort((s) => s.field === field
+      ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { field, dir: 'asc' })
+  }
 
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -173,6 +181,8 @@ export default function InternalPartnerList() {
     if (tier) params.set('tier', tier)
     params.set('page', String(page))
     params.set('page_size', String(pageSize))
+    params.set('sort_by', sort.field)
+    params.set('sort_dir', sort.dir)
     fetch(`${API}/internal/partners?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -184,7 +194,7 @@ export default function InternalPartnerList() {
       .then((b) => { setRows(b.items || []); setTotal(b.total || 0) })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
-  }, [token, debouncedSearch, status, category, tier, page])
+  }, [token, debouncedSearch, status, category, tier, page, sort])
 
   useEffect(() => { load() }, [load])
 
@@ -253,12 +263,12 @@ export default function InternalPartnerList() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr style={{ background: '#F8FAFC' }}>
-                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Legal Name</th>
-                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Category</th>
-                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Tier</th>
-                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Status</th>
+                  <SortableTh field="legal_name" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Legal Name</SortableTh>
+                  <SortableTh field="partner_category" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Category</SortableTh>
+                  <SortableTh field="tier" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Tier</SortableTh>
+                  <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Status</SortableTh>
                   <th style={{ textAlign: 'left', padding: '10px 12px' }}>Activation</th>
-                  <th style={{ textAlign: 'left', padding: '10px 12px' }}>Created</th>
+                  <SortableTh field="created_at" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Created</SortableTh>
                   <th style={{ textAlign: 'right', padding: '10px 12px' }}>Docs</th>
                   {canManageStatus && (
                     <th style={{ textAlign: 'right', padding: '10px 12px' }}>Actions</th>

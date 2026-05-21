@@ -29,6 +29,7 @@ from auth import get_optional_bearer_user
 from audit import log_audit_event
 from csv_export import csv_response
 from database import get_db
+from sorting import apply_sort
 from models import (
     ApplicationMessageSender,
     ApplicationStatus,
@@ -145,12 +146,27 @@ def create_draft(payload: dict, db: Session = Depends(get_db)):
     return {"id": str(app_record.id), "draft_token": app_record.draft_token}
 
 
+# Sortable column allowlist. ``program_type`` is intentionally excluded:
+# the displayed "Categories" cell is derived from the JSON requested_categories
+# array, which is not portably sortable across SQLite + Postgres. Falls back
+# silently to default per the apply_sort helper contract.
+_APPLICATION_SORT = {
+    "company_name": PartnerApplication.legal_name,
+    "contact_email": PartnerApplication.applicant_email,
+    "status": PartnerApplication.status,
+    "submitted_at": PartnerApplication.submitted_at,
+    "created_at": PartnerApplication.created_at,
+}
+
+
 @router.get("")
 def list_applications(
     status: Optional[str] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("partner_application:read_all")),
 ):
@@ -193,13 +209,16 @@ def list_applications(
             ],
         )
 
-    total = query.count()
-    items = (
-        query.order_by(PartnerApplication.submitted_at.desc().nullslast() if hasattr(PartnerApplication.submitted_at.desc(), "nullslast") else PartnerApplication.submitted_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_APPLICATION_SORT,
+        default_col=PartnerApplication.created_at,
+        tiebreaker=PartnerApplication.id,
     )
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
     return {
         "total": total,
         "skip": skip,
