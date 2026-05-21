@@ -1095,6 +1095,12 @@ class DealRegistration(Base):
     # Sprint 20 / FPRM-317 -- Internal deal creation flag (True when an internal user created the deal on behalf of a partner)
     created_on_behalf_of = Column(Boolean, default=False, nullable=False)
 
+    # Post-Sprint 20 (Phase 6) deal form fix -- partners capture requested
+    # license counts on the deal. Migration 029. Nullable for backward
+    # compatibility with deals registered before the column existed.
+    qty_transactional_users = Column(Integer, nullable=True)
+    qty_limited_tech_users = Column(Integer, nullable=True)
+
     __table_args__ = (
 
         Index("ix_deal_registrations_partner_status", "partner_org_id", "status"),

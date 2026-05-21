@@ -785,6 +785,52 @@ def test_section_b_booleans_round_trip_true_false_null(db_session):
         clear_overrides()
 
 
+def test_license_qty_fields_round_trip(db_session):
+    """Post-Sprint 20 deal form fix -- partners capture requested license
+    counts on the deal (migration 029). Both columns are nullable so legacy
+    deals stay valid; null payload values come back as null.
+    """
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        # Create with explicit license counts
+        r = client.post("/deal-registrations", json={
+            "customer_name": "License Co",
+            "deal_name": "License Deal",
+            "qty_transactional_users": 25,
+            "qty_limited_tech_users": 10,
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        deal_id = body["id"]
+        assert body["qty_transactional_users"] == 25
+        assert body["qty_limited_tech_users"] == 10
+
+        # PATCH can update both fields independently
+        r = client.patch(f"/deal-registrations/{deal_id}", json={
+            "qty_transactional_users": 30,
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["qty_transactional_users"] == 30
+        assert body["qty_limited_tech_users"] == 10
+
+        # Bare create (no qty fields) leaves both null -- no regression
+        r = client.post("/deal-registrations", json={
+            "customer_name": "Bare License Co",
+            "deal_name": "Bare License Deal",
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["qty_transactional_users"] is None
+        assert body["qty_limited_tech_users"] is None
+    finally:
+        clear_overrides()
+
+
 def test_created_on_behalf_of_not_settable_via_partner_patch(db_session):
     """FPRM-317 lockdown -- the partner-facing PATCH whitelist must NOT allow
     a partner to flip created_on_behalf_of. That column is set server-side by

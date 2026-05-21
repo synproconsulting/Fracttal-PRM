@@ -86,6 +86,8 @@ CREATABLE_FIELDS = {
     # Sprint 20 / FPRM-316 -- Section B SPICED narrative fields
     "about_client", "pain", "impact",
     "critical_event", "decision", "next_steps",
+    # Post-Sprint 20 deal form fix -- requested license counts (migration 029)
+    "qty_transactional_users", "qty_limited_tech_users",
     # NOTE: created_on_behalf_of is deliberately excluded here -- it is set
     # by the internal-create path (FPRM-317, Story 3) only, never by the
     # partner-facing POST/PATCH whitelist.

@@ -35,31 +35,6 @@ const COMMISSION_FALLBACK_OPTIONS = Object.entries(COMMISSION_LABEL_MAP).map(
   ([value, label]) => ({ value, label }),
 )
 
-const TEXT_FIELDS_CUSTOMER = [
-  { key: 'customer_name', label: 'Customer name', required: true, type: 'text' },
-  { key: 'customer_domain', label: 'Customer domain (e.g. acme.com)', type: 'text' },
-  { key: 'customer_contact_name', label: 'Contact name', type: 'text' },
-  { key: 'customer_contact_email', label: 'Contact email', type: 'email' },
-  { key: 'customer_contact_phone', label: 'Contact phone', type: 'tel' },
-  { key: 'customer_region', label: 'Region / state', type: 'text' },
-]
-
-const TEXT_FIELDS_DEAL = [
-  { key: 'deal_name', label: 'Deal name', required: true, type: 'text' },
-  { key: 'estimated_deal_value', label: 'Estimated deal value (USD)', type: 'number' },
-  { key: 'estimated_close_date', label: 'Estimated close date', type: 'date' },
-]
-
-// Sprint 20 / FPRM-316 -- Section A additional prospect/engagement fields.
-const TEXT_FIELDS_SECTION_A = [
-  { key: 'engagement_date',           label: 'Engagement date',         type: 'date' },
-  { key: 'prospect_contact_name',     label: 'Prospect contact name',   type: 'text' },
-  { key: 'prospect_contact_position', label: 'Contact position / title', type: 'text' },
-  { key: 'prospect_phone',            label: 'Prospect phone',          type: 'tel' },
-  { key: 'prospect_website',          label: 'Website / LinkedIn URL',  type: 'url' },
-  { key: 'industry_sector',           label: 'Industry sector',         type: 'text' },
-]
-
 const COMPANY_SIZE_OPTIONS = ['1-10', '11-50', '51-200', '201-500', '500+']
 
 const FEATURE_PLAN_OPTIONS = [
@@ -68,15 +43,9 @@ const FEATURE_PLAN_OPTIONS = [
   { value: 'enterprise',   label: 'Enterprise' },
 ]
 
-// Sprint 20 / FPRM-316 -- Section B Current State (Situation) options.
-const CURRENT_SYSTEM_OPTIONS = [
-  { value: 'none',         label: 'None' },
-  { value: 'excel',        label: 'Excel' },
-  { value: 'paper',        label: 'Paper' },
-  { value: 'social_media', label: 'Social Media' },
-  { value: 'cmms',         label: 'CMMS' },
-  { value: 'other',        label: 'Other' },
-]
+// Current Systems combobox preset values (datalist-backed -- the user can
+// type a custom value that overrides the preset list).
+const CURRENT_SYSTEM_PRESETS = ['None', 'Excel', 'Paper', 'Social Media', 'CMMS']
 
 const SECTION_B_SYSTEM_ROWS = [
   { key: 'current_system',     label: 'Current System' },
@@ -86,8 +55,9 @@ const SECTION_B_SYSTEM_ROWS = [
   { key: 'monitoring_system',  label: 'Monitoring' },
 ]
 
-// Section B feature requirement checkboxes. Some items pair a boolean with a
-// free-text follow-up field (need_integration + integration_with).
+// Section B feature requirement checkboxes. Split into two equal columns
+// (column 1 first, then column 2) -- the form lays them out in a two-column
+// grid by row, so flattening interleaves the columns visually.
 const SECTION_B_FEATURES = [
   { key: 'need_asset_depreciation',     label: 'Asset Depreciation' },
   { key: 'need_wo_wr',                  label: 'Work Orders / WR' },
@@ -117,7 +87,7 @@ const SECTION_B_NARRATIVES = [
     placeholder: 'Proposed timeline and actions.' },
 ]
 
-function FloatingInput({ id, label, type = 'text', value, onChange, required }) {
+function FloatingInput({ id, label, type = 'text', value, onChange, required, min }) {
   const filled = value !== '' && value !== null && value !== undefined
   return (
     <div className={`fp-field${filled ? ' fp-field--filled' : ''}`}>
@@ -126,6 +96,7 @@ function FloatingInput({ id, label, type = 'text', value, onChange, required }) 
         type={type}
         placeholder=" "
         required={required}
+        min={min}
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -150,6 +121,30 @@ function FloatingSelect({ id, label, value, onChange, options, required }) {
   )
 }
 
+// Combobox input -- presents a dropdown of preset values via the native
+// <datalist> element while still accepting free-text. The user can type
+// anything; the preset list is a convenience, not a constraint.
+function FloatingCombobox({ id, label, value, onChange, options }) {
+  const filled = value !== '' && value !== null && value !== undefined
+  const listId = `${id}-options`
+  return (
+    <div className={`fp-field${filled ? ' fp-field--filled' : ''}`}>
+      <input
+        id={id}
+        type="text"
+        list={listId}
+        placeholder=" "
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <datalist id={listId}>
+        {options.map((opt) => <option key={opt} value={opt} />)}
+      </datalist>
+      <label htmlFor={id}>{label}</label>
+    </div>
+  )
+}
+
 function FloatingTextarea({ id, label, value, onChange, rows = 4 }) {
   const filled = value !== '' && value !== null && value !== undefined
   return (
@@ -170,6 +165,7 @@ const EMPTY_DRAFT = {
   customer_name: '',
   customer_domain: '',
   customer_contact_name: '',
+  customer_contact_position: '',
   customer_contact_email: '',
   customer_contact_phone: '',
   customer_industry: '',
@@ -180,7 +176,7 @@ const EMPTY_DRAFT = {
   estimated_close_date: '',
   deal_notes: '',
   commission_type: '',
-  // Sprint 20 / FPRM-316 -- Section A additional prospect/engagement fields
+  // Section A additional prospect/engagement fields
   engagement_date: '',
   prospect_phone: '',
   compiled_by: '',
@@ -190,13 +186,13 @@ const EMPTY_DRAFT = {
   industry_sector: '',
   company_size: '',
   feature_plan_preference: '',
-  // Sprint 20 / FPRM-316 -- Section B Current State (Situation)
+  // Section B Current State (Situation)
   current_system: '',
   old_system: '',
   inventory_stores: '',
   work_orders_prs: '',
   monitoring_system: '',
-  // Sprint 20 / FPRM-316 -- Section B Feature requirements (Yes/No + free text)
+  // Section B Feature requirements (Yes/No + free text)
   need_asset_depreciation: null,
   need_wo_wr: null,
   need_reports: null,
@@ -212,22 +208,17 @@ const EMPTY_DRAFT = {
   need_monitoring: null,
   need_schedule_third_parties: null,
   need_track_labour: null,
-  // Sprint 20 / FPRM-316 -- Section B SPICED narrative fields
+  // Section B SPICED narrative fields
   about_client: '',
   pain: '',
   impact: '',
   critical_event: '',
   decision: '',
   next_steps: '',
+  // Post-Sprint 20 license qty fields (migration 029)
+  qty_transactional_users: '',
+  qty_limited_tech_users: '',
 }
-
-// Field-name sets the buildPayload helper uses to coerce empties correctly.
-const SECTION_B_BOOLEAN_FIELDS = new Set([
-  'need_asset_depreciation', 'need_wo_wr', 'need_reports', 'need_tool_management',
-  'need_purchasing', 'need_integration', 'need_multi_language',
-  'need_asset_management', 'need_document_management', 'need_cost_tracking',
-  'need_monitoring', 'need_schedule_third_parties', 'need_track_labour',
-])
 
 export default function DealRegistrationForm() {
   const { id } = useParams()
@@ -244,6 +235,17 @@ export default function DealRegistrationForm() {
   const [error, setError] = useState(null)
   const [activationBanner, setActivationBanner] = useState(false)
   const [commissionRates, setCommissionRates] = useState(null)
+  // Logged-in user's full_name is fetched from /auth/me so we can pre-populate
+  // the Partner contact name on a new draft. Editable -- the user can override.
+  const [me, setMe] = useState(null)
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setMe(d) })
+      .catch(() => {})
+  }, [token])
 
   // FPRM-158: fetch the partner's commission rates so we can preview the
   // applicable percentage once the user picks a commission_type. Fetch
@@ -306,14 +308,18 @@ export default function DealRegistrationForm() {
       .finally(() => setLoading(false))
   }, [id, token])
 
-  // FPRM-316 -- pre-populate "compiled_by" with the logged-in user's email
-  // on a new draft so the partner doesn't have to retype it. Editable.
+  // Pre-populate Partner contact name + email (compiled_by) from the logged-in
+  // user on a NEW draft only. Existing drafts keep whatever was persisted.
+  // All pre-populated fields stay editable.
   useEffect(() => {
-    if (id) return  // existing draft: trust whatever is persisted
-    if (deal.compiled_by) return
-    const email = payload?.email
-    if (email) setDeal((d) => ({ ...d, compiled_by: email }))
-  }, [id, payload, deal.compiled_by])
+    if (id) return
+    setDeal((d) => {
+      const next = { ...d }
+      if (!next.compiled_by && payload?.email) next.compiled_by = payload.email
+      if (!next.prospect_contact_name && me?.full_name) next.prospect_contact_name = me.full_name
+      return next
+    })
+  }, [id, payload, me])
 
   function setField(key, value) {
     setDeal((d) => ({ ...d, [key]: value }))
@@ -326,13 +332,16 @@ export default function DealRegistrationForm() {
 
   function buildPayload() {
     const payload = {}
+    const numericKeys = new Set([
+      'estimated_deal_value', 'qty_transactional_users', 'qty_limited_tech_users',
+    ])
     for (const key of Object.keys(EMPTY_DRAFT)) {
       const v = deal[key]
       if (v === '' || v === null || v === undefined) {
         payload[key] = null
         continue
       }
-      if (key === 'estimated_deal_value') {
+      if (numericKeys.has(key)) {
         const num = Number(v)
         payload[key] = Number.isFinite(num) ? num : null
         continue
@@ -410,6 +419,18 @@ export default function DealRegistrationForm() {
 
   const isExistingSubmittable = !deal.id || deal.status === 'draft' || deal.status === 'info_required'
 
+  // Split the feature checkboxes into two equal columns. CSS grid lays out
+  // children row-by-row, so to get column-by-column visual order we
+  // interleave the two halves.
+  const halfPoint = Math.ceil(SECTION_B_FEATURES.length / 2)
+  const featuresLeftCol = SECTION_B_FEATURES.slice(0, halfPoint)
+  const featuresRightCol = SECTION_B_FEATURES.slice(halfPoint)
+  const featuresInterleaved = []
+  for (let i = 0; i < halfPoint; i++) {
+    if (featuresLeftCol[i]) featuresInterleaved.push(featuresLeftCol[i])
+    if (featuresRightCol[i]) featuresInterleaved.push(featuresRightCol[i])
+  }
+
   return (
     <div>
       <div className="fp-page-header">
@@ -445,17 +466,56 @@ export default function DealRegistrationForm() {
       <section className="fp-card" style={{ marginBottom: 24 }}>
         <h2 className="fp-section-title">Customer information</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          {TEXT_FIELDS_CUSTOMER.map((f) => (
-            <FloatingInput
-              key={f.key}
-              id={`deal-${f.key}`}
-              label={f.label}
-              type={f.type}
-              required={f.required}
-              value={deal[f.key] ?? ''}
-              onChange={(v) => setField(f.key, v)}
-            />
-          ))}
+          <FloatingInput
+            id="deal-customer_name"
+            label="Company name"
+            type="text"
+            required
+            value={deal.customer_name ?? ''}
+            onChange={(v) => setField('customer_name', v)}
+          />
+          <FloatingInput
+            id="deal-customer_domain"
+            label="Customer domain (e.g. acme.com)"
+            type="text"
+            value={deal.customer_domain ?? ''}
+            onChange={(v) => setField('customer_domain', v)}
+          />
+          <FloatingInput
+            id="deal-customer_contact_name"
+            label="Contact name"
+            type="text"
+            value={deal.customer_contact_name ?? ''}
+            onChange={(v) => setField('customer_contact_name', v)}
+          />
+          <FloatingInput
+            id="deal-customer_contact_position"
+            label="Contact title"
+            type="text"
+            value={deal.customer_contact_position ?? ''}
+            onChange={(v) => setField('customer_contact_position', v)}
+          />
+          <FloatingInput
+            id="deal-customer_contact_email"
+            label="Contact email"
+            type="email"
+            value={deal.customer_contact_email ?? ''}
+            onChange={(v) => setField('customer_contact_email', v)}
+          />
+          <FloatingInput
+            id="deal-customer_contact_phone"
+            label="Contact phone"
+            type="tel"
+            value={deal.customer_contact_phone ?? ''}
+            onChange={(v) => setField('customer_contact_phone', v)}
+          />
+          <FloatingInput
+            id="deal-customer_region"
+            label="Region / state"
+            type="text"
+            value={deal.customer_region ?? ''}
+            onChange={(v) => setField('customer_region', v)}
+          />
           <FloatingSelect
             id="deal-customer_industry"
             label="Industry"
@@ -470,32 +530,49 @@ export default function DealRegistrationForm() {
             onChange={(v) => setField('customer_country', v)}
             options={COUNTRY_OPTIONS}
           />
-        </div>
-      </section>
-
-      {/* FPRM-316 -- Section A: additional prospect/engagement fields */}
-      <section className="fp-card" style={{ marginBottom: 24 }}>
-        <h2 className="fp-section-title">Additional prospect details</h2>
-        <p style={{ margin: '0 0 12px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
-          Optional. Adds the engagement context your Channel Manager needs to prepare the best quote.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          {TEXT_FIELDS_SECTION_A.map((f) => (
-            <FloatingInput
-              key={f.key}
-              id={`deal-${f.key}`}
-              label={f.label}
-              type={f.type}
-              value={deal[f.key] ?? ''}
-              onChange={(v) => setField(f.key, v)}
-            />
-          ))}
           <FloatingSelect
             id="deal-company_size"
             label="Company size"
             value={deal.company_size}
             onChange={(v) => setField('company_size', v)}
             options={COMPANY_SIZE_OPTIONS}
+          />
+        </div>
+      </section>
+
+      {/* Partner contact information -- the person at the partner org who is
+          driving this opportunity. Pre-populated from the logged-in user
+          where possible; every field stays editable. */}
+      <section className="fp-card" style={{ marginBottom: 24 }}>
+        <h2 className="fp-section-title">Partner contact information</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <FloatingInput
+            id="deal-prospect_contact_name"
+            label="Partner contact name"
+            type="text"
+            value={deal.prospect_contact_name ?? ''}
+            onChange={(v) => setField('prospect_contact_name', v)}
+          />
+          <FloatingInput
+            id="deal-prospect_contact_position"
+            label="Partner contact title"
+            type="text"
+            value={deal.prospect_contact_position ?? ''}
+            onChange={(v) => setField('prospect_contact_position', v)}
+          />
+          <FloatingInput
+            id="deal-prospect_phone"
+            label="Partner contact phone"
+            type="tel"
+            value={deal.prospect_phone ?? ''}
+            onChange={(v) => setField('prospect_phone', v)}
+          />
+          <FloatingInput
+            id="deal-prospect_website"
+            label="Partner website / LinkedIn URL"
+            type="url"
+            value={deal.prospect_website ?? ''}
+            onChange={(v) => setField('prospect_website', v)}
           />
           <FloatingInput
             id="deal-compiled_by"
@@ -504,6 +581,57 @@ export default function DealRegistrationForm() {
             value={deal.compiled_by ?? ''}
             onChange={(v) => setField('compiled_by', v)}
           />
+        </div>
+      </section>
+
+      <section className="fp-card" style={{ marginBottom: 24 }}>
+        <h2 className="fp-section-title">Deal information</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <FloatingInput
+            id="deal-deal_name"
+            label="Deal name"
+            type="text"
+            required
+            value={deal.deal_name ?? ''}
+            onChange={(v) => setField('deal_name', v)}
+          />
+          <FloatingInput
+            id="deal-estimated_deal_value"
+            label="Estimated deal value (USD)"
+            type="number"
+            value={deal.estimated_deal_value ?? ''}
+            onChange={(v) => setField('estimated_deal_value', v)}
+          />
+          <FloatingInput
+            id="deal-estimated_close_date"
+            label="Estimated close date"
+            type="date"
+            value={deal.estimated_close_date ?? ''}
+            onChange={(v) => setField('estimated_close_date', v)}
+          />
+          <FloatingInput
+            id="deal-engagement_date"
+            label="Engagement date"
+            type="date"
+            value={deal.engagement_date ?? ''}
+            onChange={(v) => setField('engagement_date', v)}
+          />
+          <FloatingInput
+            id="deal-qty_transactional_users"
+            label="Requested Qty Transactional User Licenses"
+            type="number"
+            min={0}
+            value={deal.qty_transactional_users ?? ''}
+            onChange={(v) => setField('qty_transactional_users', v)}
+          />
+          <FloatingInput
+            id="deal-qty_limited_tech_users"
+            label="Requested Qty Limited Technician User Licenses"
+            type="number"
+            min={0}
+            value={deal.qty_limited_tech_users ?? ''}
+            onChange={(v) => setField('qty_limited_tech_users', v)}
+          />
           <FloatingSelect
             id="deal-feature_plan_preference"
             label="Indicative feature plan"
@@ -511,23 +639,6 @@ export default function DealRegistrationForm() {
             onChange={(v) => setField('feature_plan_preference', v)}
             options={FEATURE_PLAN_OPTIONS}
           />
-        </div>
-      </section>
-
-      <section className="fp-card" style={{ marginBottom: 24 }}>
-        <h2 className="fp-section-title">Deal information</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          {TEXT_FIELDS_DEAL.map((f) => (
-            <FloatingInput
-              key={f.key}
-              id={`deal-${f.key}`}
-              label={f.label}
-              type={f.type}
-              required={f.required}
-              value={deal[f.key] ?? ''}
-              onChange={(v) => setField(f.key, v)}
-            />
-          ))}
           <div>
             <FloatingSelect
               id="deal-commission_type"
@@ -560,9 +671,8 @@ export default function DealRegistrationForm() {
         </div>
       </section>
 
-      {/* FPRM-316 -- Section B: Current State and Needs Assessment (SPICED) */}
       <section className="fp-card" style={{ marginBottom: 24 }}>
-        <h2 className="fp-section-title">Current State and Needs Assessment (SPICED)</h2>
+        <h2 className="fp-section-title">Current State and Needs Assessment</h2>
         <p style={{ margin: '0 0 16px', fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
           Complete this section to help your Channel Manager prepare the best quote. All fields optional.
         </p>
@@ -578,32 +688,32 @@ export default function DealRegistrationForm() {
           />
         </div>
 
-        {/* Section B - Situation: Current Systems table */}
+        {/* Section B - Situation: Current Systems -- combobox (preset + free text) */}
         <div style={{ marginBottom: 20 }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>
             Situation (S) — Current Systems
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {SECTION_B_SYSTEM_ROWS.map((row) => (
-              <FloatingSelect
+              <FloatingCombobox
                 key={row.key}
                 id={`deal-${row.key}`}
                 label={row.label}
                 value={deal[row.key]}
                 onChange={(v) => setField(row.key, v)}
-                options={CURRENT_SYSTEM_OPTIONS}
+                options={CURRENT_SYSTEM_PRESETS}
               />
             ))}
           </div>
         </div>
 
-        {/* Section B - Features Required */}
+        {/* Section B - Features Required (split evenly across two columns) */}
         <div style={{ marginBottom: 20 }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>
             Features Required
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 16px', marginBottom: 12 }}>
-            {SECTION_B_FEATURES.map((f) => (
+            {featuresInterleaved.map((f) => (
               <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fp-fs-sm)' }}>
                 <input
                   type="checkbox"

@@ -1035,11 +1035,13 @@ export default function InternalDealDetail() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
 
-              <DisplayField label="Customer name" value={deal.customer_name} />
+              <DisplayField label="Company name" value={deal.customer_name} />
 
               <DisplayField label="Customer domain" value={deal.customer_domain} />
 
               <DisplayField label="Contact name" value={deal.customer_contact_name} />
+
+              <DisplayField label="Contact title" value={deal.customer_contact_position} />
 
               <DisplayField label="Contact email" value={deal.customer_contact_email} />
 
@@ -1050,6 +1052,8 @@ export default function InternalDealDetail() {
               <DisplayField label="Country" value={deal.customer_country} />
 
               <DisplayField label="Region / state" value={deal.customer_region} />
+
+              <DisplayField label="Company size" value={deal.company_size} />
 
             </div>
 
@@ -1068,6 +1072,14 @@ export default function InternalDealDetail() {
               <DisplayField label="Estimated value (USD)" value={formatMoney(deal.estimated_deal_value)} />
 
               <DisplayField label="Estimated close date" value={formatDate(deal.estimated_close_date)} />
+
+              <DisplayField label="Engagement date" value={formatDate(deal.engagement_date)} />
+
+              <DisplayField label="Requested Qty Transactional User Licenses" value={deal.qty_transactional_users} />
+
+              <DisplayField label="Requested Qty Limited Technician User Licenses" value={deal.qty_limited_tech_users} />
+
+              <DisplayField label="Indicative feature plan" value={deal.feature_plan_preference} />
 
               <DisplayField label="Commission type" value={deal.commission_type} />
 
@@ -1491,8 +1503,8 @@ export default function InternalDealDetail() {
 
       <QuotesSection
         dealId={deal.id}
-        dealQtyTransactional={1}
-        dealQtyLimitedTech={0}
+        dealQtyTransactional={deal.qty_transactional_users ?? 1}
+        dealQtyLimitedTech={deal.qty_limited_tech_users ?? 0}
       />
 
       {toast && (
