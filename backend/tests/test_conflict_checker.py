@@ -329,3 +329,150 @@ def test_submit_records_conflict_detected_when_other_partner_active(db_session):
     body = r.json()
     assert body["conflict_status"] == "conflict_detected"
     assert "hotdomain.com" in (body["conflict_notes"] or "")
+
+
+# ---- /internal/deals/{id}/conflict-check rerun endpoint ----
+
+
+def test_rerun_conflict_check_returns_clear_when_no_other_deals(db_session):
+    partner = _make_partner(db_session)
+    deal = _make_deal(db_session, partner.id, status="under_review")
+    cm = _make_user(db_session, UserRole.channel_manager)
+    _override(db_session, cm)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{deal.id}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["conflict_status"] == "clear"
+    assert body["conflict_checked_at"] is not None
+    assert body["conflicts"] == []
+
+
+def test_rerun_conflict_check_detects_new_conflict(db_session):
+    """A clean deal can become conflicted if a competing partner submits a
+    deal on the same domain after the initial check. The rerun endpoint
+    must surface that."""
+    partner_a = _make_partner(db_session, "A")
+    partner_b = _make_partner(db_session, "B")
+    deal_a = _make_deal(db_session, partner_a.id, status="under_review")
+    deal_a.conflict_status = "clear"
+    db_session.commit()
+    # Competitor lands on the same domain
+    _make_deal(db_session, partner_b.id, status="submitted", name="B's deal")
+
+    cm = _make_user(db_session, UserRole.channel_manager)
+    _override(db_session, cm)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{deal_a.id}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["conflict_status"] == "conflict_detected"
+    assert len(body["conflicts"]) == 1
+    assert "acme.com" in (body["conflict_notes"] or "")
+
+    # Deal row was actually persisted
+    db_session.expire_all()
+    refreshed = db_session.query(DealRegistration).filter_by(id=deal_a.id).first()
+    assert refreshed.conflict_status == "conflict_detected"
+    assert refreshed.conflict_checked_at is not None
+
+
+def test_rerun_conflict_check_returns_not_checked_when_domain_missing(db_session):
+    partner = _make_partner(db_session)
+    deal = DealRegistration(
+        id=uuid.uuid4(),
+        partner_org_id=partner.id,
+        status="under_review",
+        customer_name="Acme",
+        customer_domain=None,
+        deal_name="No domain",
+        conflict_status="not_checked",
+    )
+    db_session.add(deal)
+    db_session.commit()
+    db_session.refresh(deal)
+    sa = _make_user(db_session, UserRole.system_admin)
+    _override(db_session, sa)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{deal.id}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["conflict_status"] == "not_checked"
+    assert "No customer domain" in (body["conflict_notes"] or "")
+
+
+def test_rerun_conflict_check_writes_audit_event(db_session):
+    """deal.conflict_check_rerun is the contracted action string for the
+    audit log; both partner-side and Change Log consumers depend on it."""
+    from models import AuditLog
+    partner = _make_partner(db_session)
+    deal = _make_deal(db_session, partner.id, status="under_review")
+    cm = _make_user(db_session, UserRole.channel_manager)
+    _override(db_session, cm)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{deal.id}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+    events = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.object_type == "deal_registration",
+            AuditLog.object_id == deal.id,
+            AuditLog.action == "deal.conflict_check_rerun",
+        )
+        .all()
+    )
+    assert len(events) == 1
+    e = events[0]
+    assert e.actor_id == cm.id
+    assert e.after_state["conflict_status"] == "clear"
+
+
+def test_rerun_conflict_check_allowed_for_channel_ops_admin(db_session):
+    """channel_ops_admin can rerun even though they can't override.
+    Override is a write-with-rationale; rerun just re-reads truth."""
+    partner = _make_partner(db_session)
+    deal = _make_deal(db_session, partner.id, status="under_review")
+    ops = _make_user(db_session, UserRole.channel_ops_admin)
+    _override(db_session, ops)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{deal.id}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+
+
+def test_rerun_conflict_check_forbidden_for_partner(db_session):
+    partner = _make_partner(db_session)
+    deal = _make_deal(db_session, partner.id, status="under_review")
+    pa = _make_user(db_session, UserRole.partner_admin, partner_org_id=partner.id)
+    _override(db_session, pa)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{deal.id}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 403
+
+
+def test_rerun_conflict_check_404_for_unknown_deal(db_session):
+    sa = _make_user(db_session, UserRole.system_admin)
+    _override(db_session, sa)
+    try:
+        client = TestClient(app)
+        r = client.post(f"/internal/deals/{uuid.uuid4()}/conflict-check")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 404

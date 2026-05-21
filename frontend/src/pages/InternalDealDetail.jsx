@@ -484,6 +484,12 @@ export default function InternalDealDetail() {
   // Approve button when multi-step workflow has a role-specific step.
   const [currentUserRole, setCurrentUserRole] = useState(null)
   const canEditDeal = currentUserRole === 'system_admin' || currentUserRole === 'channel_ops_admin'
+  const canRerunConflict = (
+    currentUserRole === 'system_admin'
+    || currentUserRole === 'channel_ops_admin'
+    || currentUserRole === 'channel_manager'
+  )
+  const [conflictRerunning, setConflictRerunning] = useState(false)
 
   useEffect(() => {
     if (!token) return
@@ -658,6 +664,38 @@ export default function InternalDealDetail() {
 
   }
 
+
+
+  async function rerunConflictCheck() {
+    if (conflictRerunning) return
+    setConflictRerunning(true)
+    setError(null)
+    try {
+      const r = await fetch(`${API}/internal/deals/${id}/conflict-check`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const msg = typeof body.detail === 'string'
+          ? body.detail
+          : JSON.stringify(body.detail || body)
+        throw new Error(msg || `HTTP ${r.status}`)
+      }
+      const verdict = body.conflict_status === 'clear'
+        ? 'clear'
+        : body.conflict_status === 'conflict_detected'
+          ? 'conflict detected'
+          : body.conflict_status
+      setToast(`Conflict check complete — ${verdict}`)
+      setReloadKey((k) => k + 1)
+      window.setTimeout(() => setToast(null), 4000)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setConflictRerunning(false)
+    }
+  }
 
 
   async function overrideConflict(notes) {
@@ -1103,7 +1141,23 @@ export default function InternalDealDetail() {
 
           <section className="fp-card">
 
-            <h2 className="fp-section-title">Conflict Check</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
+
+              <h2 className="fp-section-title" style={{ margin: 0 }}>Conflict Check</h2>
+
+              {canRerunConflict && (
+                <button
+                  type="button"
+                  className="fp-btn fp-btn--secondary fp-btn--sm"
+                  onClick={rerunConflictCheck}
+                  disabled={conflictRerunning}
+                  title="Re-evaluate against currently active deals on the same customer domain"
+                >
+                  {conflictRerunning ? 'Checking…' : 'Re-run Conflict Check'}
+                </button>
+              )}
+
+            </div>
 
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
 
