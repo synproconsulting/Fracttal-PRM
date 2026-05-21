@@ -9,6 +9,7 @@ const TABS = [
   { key: 'tiers',      label: 'Partner Tiers' },
   { key: 'criteria',   label: 'Activation Checklist' },
   { key: 'pricing',    label: 'Pricing' },
+  { key: 'commission', label: 'Commission Rates' },
 ]
 
 const ROLE_OPTIONS = [
@@ -1391,13 +1392,401 @@ export default function ProgramConfig() {
       )}
 
       <div style={{ marginTop: 16 }}>
-        {active === 'workflow' && <ApprovalWorkflowTab token={token} onUpdate={onUpdate} onError={onError} />}
-        {active === 'tiers'    && <TiersTab            token={token} onUpdate={onUpdate} onError={onError} />}
-        {active === 'criteria' && <ActivationTab       token={token} onUpdate={onUpdate} onError={onError} />}
-        {active === 'pricing'  && <PricingTab          token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
+        {active === 'workflow'   && <ApprovalWorkflowTab token={token} onUpdate={onUpdate} onError={onError} />}
+        {active === 'tiers'      && <TiersTab            token={token} onUpdate={onUpdate} onError={onError} />}
+        {active === 'criteria'   && <ActivationTab       token={token} onUpdate={onUpdate} onError={onError} />}
+        {active === 'pricing'    && <PricingTab          token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
+        {active === 'commission' && <CommissionRatesTab  token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
       </div>
 
       <Toast message={toast} />
+    </div>
+  )
+}
+
+
+// ---- Tab 5 — Commission Rates ----------------------------------------------
+//
+// Lives at /internal/config/commission-rates. Rows are grouped by partner
+// category (Reseller / Master / Promotor …) via a sub-tab row above the
+// table. Inline edit on rate_pct + notes; "Deactivate" soft-deletes
+// (system_admin only); "Show inactive" toggle surfaces previously-retired
+// rows. An amber warning is shown next to the Save button on edits and on
+// the Add Rate form because changes affect all future deal commission
+// snapshots -- existing approved deals keep their snapshotted rate.
+
+const COMMISSION_TYPE_OPTIONS = [
+  { value: 'autonomous_sell', label: 'Autonomous Sell' },
+  { value: 'indirect_sell',   label: 'Indirect Sell' },
+  { value: 'direct_sell',     label: 'Direct Sell' },
+  { value: 'co_sell_shared',  label: 'Co-Sell (Shared)' },
+]
+
+const COMMISSION_TYPE_LABEL = Object.fromEntries(
+  COMMISSION_TYPE_OPTIONS.map((o) => [o.value, o.label]),
+)
+
+function commissionTypeLabel(code) {
+  if (COMMISSION_TYPE_LABEL[code]) return COMMISSION_TYPE_LABEL[code]
+  return humaniseKey(code || '')
+}
+
+const YEAR_OPTIONS = [
+  { value: 'year_1',      label: 'Year 1' },
+  { value: 'year_2_plus', label: 'Year 2+' },
+]
+
+const AMBER_WARNING = '⚠ This change affects all future deal commission snapshots.'
+
+function CommissionRatesTab({ token, role, onUpdate, onError }) {
+  const [rates, setRates] = useState([])
+  const [categories, setCategories] = useState([])
+  const [activeCategory, setActiveCategory] = useState('')
+  const [showInactive, setShowInactive] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editDraft, setEditDraft] = useState({ rate_pct: '', notes: '' })
+  const [adding, setAdding] = useState(false)
+  const [addDraft, setAddDraft] = useState({
+    partner_category: '',
+    commission_type: 'autonomous_sell',
+    year: 'year_1',
+    rate_pct: '',
+    notes: '',
+  })
+  const [loading, setLoading] = useState(true)
+  const canDeactivate = role === 'system_admin'
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const qs = showInactive ? '?include_inactive=true' : ''
+      const data = await call(token, 'GET', `/internal/config/commission-rates${qs}`)
+      setRates(data.items || [])
+    } catch (err) {
+      onError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [token, showInactive, onError])
+
+  useEffect(() => { load() }, [load])
+
+  // Categories come from the public partner-category config endpoint --
+  // same source the partner registration form uses, so the sub-tab list
+  // stays in sync with whichever categories the admin has activated.
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API}/config/partner-categories`)
+      .then((r) => r.ok ? r.json() : { items: [] })
+      .then((data) => {
+        if (cancelled) return
+        const items = data.items || []
+        setCategories(items)
+        // Default the sub-tab to whichever category has rates, falling
+        // back to the first known category if everything is empty.
+        if (items.length > 0 && !activeCategory) {
+          setActiveCategory(items[0].code)
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Seed Add Rate's partner_category dropdown with the active sub-tab so
+  // the admin doesn't have to re-pick.
+  useEffect(() => {
+    if (adding && activeCategory && !addDraft.partner_category) {
+      setAddDraft((d) => ({ ...d, partner_category: activeCategory }))
+    }
+  }, [adding, activeCategory, addDraft.partner_category])
+
+  const visibleRates = useMemo(() => {
+    if (!activeCategory) return rates
+    return rates.filter((r) => r.partner_category === activeCategory)
+  }, [rates, activeCategory])
+
+  function beginEdit(rate) {
+    setEditingId(rate.id)
+    setEditDraft({
+      rate_pct: String(rate.rate_pct ?? ''),
+      notes: rate.notes ?? '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditDraft({ rate_pct: '', notes: '' })
+  }
+
+  async function saveEdit(rate) {
+    const pct = Number(editDraft.rate_pct)
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      onError('Rate must be a number between 0 and 100')
+      return
+    }
+    try {
+      await call(token, 'PATCH', `/internal/config/commission-rates/${rate.id}`, {
+        rate_pct: pct,
+        notes: editDraft.notes,
+      })
+      onUpdate('Commission rate updated')
+      cancelEdit()
+      load()
+    } catch (err) {
+      onError(err.message)
+    }
+  }
+
+  async function deactivate(rate) {
+    try {
+      await call(token, 'DELETE', `/internal/config/commission-rates/${rate.id}`)
+      onUpdate('Commission rate deactivated')
+      load()
+    } catch (err) {
+      onError(err.message)
+    }
+  }
+
+  async function submitAdd() {
+    const pct = Number(addDraft.rate_pct)
+    if (!addDraft.partner_category) {
+      onError('Partner category is required')
+      return
+    }
+    if (!addDraft.commission_type.trim()) {
+      onError('Commission type is required')
+      return
+    }
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      onError('Rate must be a number between 0 and 100')
+      return
+    }
+    try {
+      await call(token, 'POST', '/internal/config/commission-rates', {
+        partner_category: addDraft.partner_category,
+        commission_type: addDraft.commission_type.trim(),
+        year_label: addDraft.year,
+        rate_pct: pct,
+        notes: addDraft.notes || null,
+      })
+      onUpdate('Commission rate created')
+      setAdding(false)
+      setAddDraft({
+        partner_category: activeCategory || '',
+        commission_type: 'autonomous_sell',
+        year: 'year_1',
+        rate_pct: '',
+        notes: '',
+      })
+      load()
+    } catch (err) {
+      onError(err.message)
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>Commission Rates</h2>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#5A6478' }}>
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+            />
+            Show inactive
+          </label>
+          <button
+            type="button"
+            className="fp-btn fp-btn--primary"
+            onClick={() => setAdding(true)}
+            disabled={adding}
+          >
+            + Add Rate
+          </button>
+        </div>
+      </div>
+
+      {/* Category sub-tabs */}
+      {categories.length > 0 && (
+        <div role="tablist" style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
+          {categories.map((c) => (
+            <button
+              key={c.code}
+              type="button"
+              role="tab"
+              aria-selected={activeCategory === c.code}
+              onClick={() => setActiveCategory(c.code)}
+              style={{
+                padding: '6px 14px', border: '1px solid #CBD5E1', borderRadius: 16,
+                background: activeCategory === c.code ? '#1A6EBB' : '#fff',
+                color: activeCategory === c.code ? '#fff' : '#475569',
+                fontWeight: 600, fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              {c.display_name || humaniseKey(c.code)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Add Rate inline form */}
+      {adding && (
+        <div className="fp-card" style={{ padding: 16, marginBottom: 12, background: '#FFFBEB', border: '1px solid #FCD34D' }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>New commission rate</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 8 }}>
+            <label style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+              Partner category
+              <select
+                value={addDraft.partner_category}
+                onChange={(e) => setAddDraft((d) => ({ ...d, partner_category: e.target.value }))}
+                style={{ width: '100%', padding: 6, marginTop: 4, border: '1px solid #CBD5E1', borderRadius: 6 }}
+              >
+                <option value="">Select…</option>
+                {categories.map((c) => (
+                  <option key={c.code} value={c.code}>{c.display_name || humaniseKey(c.code)}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+              Commission type
+              <input
+                type="text"
+                list="commission-type-options"
+                value={addDraft.commission_type}
+                onChange={(e) => setAddDraft((d) => ({ ...d, commission_type: e.target.value }))}
+                style={{ width: '100%', padding: 6, marginTop: 4, border: '1px solid #CBD5E1', borderRadius: 6 }}
+              />
+              <datalist id="commission-type-options">
+                {COMMISSION_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value} />)}
+              </datalist>
+            </label>
+            <label style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+              Year
+              <select
+                value={addDraft.year}
+                onChange={(e) => setAddDraft((d) => ({ ...d, year: e.target.value }))}
+                style={{ width: '100%', padding: 6, marginTop: 4, border: '1px solid #CBD5E1', borderRadius: 6 }}
+              >
+                {YEAR_OPTIONS.map((y) => <option key={y.value} value={y.value}>{y.label}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+              Rate %
+              <input
+                type="number" min="0" max="100" step="0.01"
+                value={addDraft.rate_pct}
+                onChange={(e) => setAddDraft((d) => ({ ...d, rate_pct: e.target.value }))}
+                style={{ width: '100%', padding: 6, marginTop: 4, border: '1px solid #CBD5E1', borderRadius: 6 }}
+              />
+            </label>
+            <label style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>
+              Notes
+              <input
+                type="text"
+                value={addDraft.notes}
+                onChange={(e) => setAddDraft((d) => ({ ...d, notes: e.target.value }))}
+                style={{ width: '100%', padding: 6, marginTop: 4, border: '1px solid #CBD5E1', borderRadius: 6 }}
+              />
+            </label>
+          </div>
+          <div style={{ fontSize: 12, color: '#92400E', marginBottom: 8 }}>{AMBER_WARNING}</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="fp-btn fp-btn--primary" onClick={submitAdd}>Save</button>
+            <button type="button" className="fp-btn fp-btn--ghost" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ color: '#5A6478', fontSize: 14 }}>Loading commission rates…</div>}
+
+      {!loading && visibleRates.length === 0 && (
+        <div className="fp-card" style={{ padding: 18, color: '#94A3B8', textAlign: 'center' }}>
+          No commission rates configured for this category.
+        </div>
+      )}
+
+      {!loading && visibleRates.length > 0 && (
+        <div className="fp-card" style={{ padding: 0, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr style={{ background: '#F8FAFC' }}>
+                <th style={{ textAlign: 'left', padding: '10px 12px' }}>Commission Type</th>
+                <th style={{ textAlign: 'left', padding: '10px 12px' }}>Year</th>
+                <th style={{ textAlign: 'right', padding: '10px 12px' }}>Rate</th>
+                <th style={{ textAlign: 'left', padding: '10px 12px' }}>Notes</th>
+                <th style={{ textAlign: 'right', padding: '10px 12px' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRates.map((rate) => {
+                const editing = editingId === rate.id
+                const rowStyle = {
+                  borderTop: '1px solid #E5E7EB',
+                  opacity: rate.is_active ? 1 : 0.55,
+                  background: rate.is_active ? 'transparent' : '#F8FAFC',
+                }
+                return (
+                  <tr key={rate.id} style={rowStyle}>
+                    <td style={{ padding: '10px 12px' }}>{commissionTypeLabel(rate.commission_type)}</td>
+                    <td style={{ padding: '10px 12px' }}>{rate.year_label}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                      {editing ? (
+                        <input
+                          type="number" min="0" max="100" step="0.01"
+                          value={editDraft.rate_pct}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, rate_pct: e.target.value }))}
+                          style={{ width: 80, padding: 4, border: '1px solid #CBD5E1', borderRadius: 6, textAlign: 'right' }}
+                        />
+                      ) : (
+                        <strong>{rate.rate_pct}%</strong>
+                      )}
+                    </td>
+                    <td style={{ padding: '10px 12px' }}>
+                      {editing ? (
+                        <input
+                          type="text"
+                          value={editDraft.notes}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, notes: e.target.value }))}
+                          style={{ width: '100%', padding: 4, border: '1px solid #CBD5E1', borderRadius: 6 }}
+                        />
+                      ) : (rate.notes || '—')}
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {editing ? (
+                        <>
+                          <span style={{ fontSize: 11, color: '#92400E', marginRight: 8 }}>{AMBER_WARNING}</span>
+                          <button type="button" className="fp-btn fp-btn--primary fp-btn--sm" onClick={() => saveEdit(rate)}>Save</button>
+                          <button type="button" className="fp-btn fp-btn--ghost fp-btn--sm" style={{ marginLeft: 4 }} onClick={cancelEdit}>Cancel</button>
+                        </>
+                      ) : rate.is_active ? (
+                        <>
+                          <button type="button" className="fp-btn fp-btn--ghost fp-btn--sm" onClick={() => beginEdit(rate)}>Edit</button>
+                          {canDeactivate && (
+                            <button
+                              type="button"
+                              className="fp-btn fp-btn--ghost fp-btn--sm"
+                              style={{ marginLeft: 4, color: '#991B1B' }}
+                              onClick={() => deactivate(rate)}
+                              title="system_admin only -- soft-delete (is_active=false)"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: '#94A3B8', fontSize: 12 }}>Inactive</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

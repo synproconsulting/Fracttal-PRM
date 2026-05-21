@@ -395,3 +395,291 @@ def test_tier_endpoints_forbidden_for_partner_role(client, db_session, seeded_ti
     assert r.status_code == 403, r.text
     r2 = client.post("/internal/config/tiers", json={"tier_name": "X", "tier_rank": 9})
     assert r2.status_code == 403, r2.text
+
+
+# ============================================================================
+# Commission rates admin (post-Sprint 20 Phase 6 polish)
+# ============================================================================
+
+
+from decimal import Decimal as _Dec
+
+from models import (
+    AuditLog,
+    CommissionStructure,
+    CommissionYear,
+    PartnerCategoryConfig,
+)
+
+
+@pytest.fixture()
+def seeded_partner_category(db_session):
+    """Reseller category row -- the FK target for commission rate inserts."""
+    cat = PartnerCategoryConfig(
+        id=uuid.uuid4(),
+        code="reseller",
+        display_name="Reseller",
+        deal_reg_sla_hours=96,
+        max_discount_pct=_Dec("20"),
+        monthly_fee_usd=_Dec("200"),
+        is_active=True,
+    )
+    db_session.add(cat)
+    db_session.commit()
+    return cat
+
+
+@pytest.fixture()
+def seeded_commission_rate(db_session, seeded_partner_category):
+    rate = CommissionStructure(
+        id=uuid.uuid4(),
+        partner_category_code="reseller",
+        commission_type="autonomous_sell",
+        year=CommissionYear.year_1,
+        commission_pct=_Dec("50"),
+        subpartner_uplift_pct=_Dec("10"),
+        applies_to_upsell=True,
+        notes=None,
+        is_active=True,
+    )
+    db_session.add(rate)
+    db_session.commit()
+    db_session.refresh(rate)
+    return rate
+
+
+def test_create_commission_rate_happy_path(client, db_session, seeded_partner_category):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "reseller",
+        "commission_type": "autonomous_sell",
+        "year_label": "Year 1",
+        "rate_pct": 50,
+        "notes": "Standard reseller Y1",
+    })
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["partner_category"] == "reseller"
+    assert body["commission_type"] == "autonomous_sell"
+    assert body["year"] == "year_1"
+    assert body["year_label"] == "Year 1"
+    assert body["rate_pct"] == 50.0
+    assert body["notes"] == "Standard reseller Y1"
+    assert body["is_active"] is True
+
+    # Audit event written
+    audit = db_session.query(AuditLog).filter_by(action="commission_rate.created").first()
+    assert audit is not None
+    assert audit.after_state["rate_pct"] == 50.0
+
+
+def test_create_commission_rate_accepts_enum_code_year(client, db_session, seeded_partner_category):
+    """year_label / year accept the enum code too, not just the display label."""
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "reseller",
+        "commission_type": "co_sell_shared",
+        "year": "year_2_plus",
+        "rate_pct": 15,
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["year"] == "year_2_plus"
+
+
+def test_create_commission_rate_rejects_unknown_partner_category(client, db_session):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "definitely_not_a_real_code",
+        "commission_type": "autonomous_sell",
+        "year_label": "Year 1",
+        "rate_pct": 10,
+    })
+    assert r.status_code == 422
+    assert "partner_category" in r.json()["detail"]
+
+
+def test_create_commission_rate_rejects_bad_year_label(client, db_session, seeded_partner_category):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "reseller",
+        "commission_type": "autonomous_sell",
+        "year_label": "next quarter",
+        "rate_pct": 10,
+    })
+    assert r.status_code == 422
+
+
+def test_create_commission_rate_rejects_out_of_range_pct(client, db_session, seeded_partner_category):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "reseller",
+        "commission_type": "autonomous_sell",
+        "year_label": "Year 1",
+        "rate_pct": 150,
+    })
+    assert r.status_code == 422
+
+
+def test_create_commission_rate_rejects_duplicate_active_tuple(
+    client, db_session, seeded_commission_rate,
+):
+    """The (category, type, year) tuple is what _snapshot_commission picks
+    on, so duplicates would race."""
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "reseller",
+        "commission_type": "autonomous_sell",
+        "year_label": "Year 1",
+        "rate_pct": 55,
+    })
+    assert r.status_code == 409, r.text
+
+
+def test_create_commission_rate_forbidden_for_channel_manager(
+    client, db_session, seeded_partner_category,
+):
+    _as(_make_user(db_session, UserRole.channel_manager))
+    r = client.post("/internal/config/commission-rates", json={
+        "partner_category": "reseller",
+        "commission_type": "autonomous_sell",
+        "year_label": "Year 1",
+        "rate_pct": 50,
+    })
+    assert r.status_code == 403
+
+
+def test_patch_commission_rate_updates_rate_and_notes(
+    client, db_session, seeded_commission_rate,
+):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.patch(
+        f"/internal/config/commission-rates/{seeded_commission_rate.id}",
+        json={"rate_pct": 45, "notes": "Bumped for promo"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rate_pct"] == 45.0
+    assert body["notes"] == "Bumped for promo"
+
+    audit = db_session.query(AuditLog).filter_by(action="commission_rate.updated").first()
+    assert audit is not None
+    assert audit.before_state["rate_pct"] == 50.0
+    assert audit.after_state["rate_pct"] == 45.0
+
+
+def test_patch_commission_rate_requires_at_least_one_field(
+    client, db_session, seeded_commission_rate,
+):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.patch(
+        f"/internal/config/commission-rates/{seeded_commission_rate.id}",
+        json={},
+    )
+    assert r.status_code == 422
+
+
+def test_patch_commission_rate_404_on_missing(client, db_session):
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.patch(
+        f"/internal/config/commission-rates/{uuid.uuid4()}",
+        json={"rate_pct": 10},
+    )
+    assert r.status_code == 404
+
+
+def test_delete_commission_rate_soft_deletes_and_logs(
+    client, db_session, seeded_commission_rate,
+):
+    _as(_make_user(db_session, UserRole.system_admin))
+    r = client.delete(f"/internal/config/commission-rates/{seeded_commission_rate.id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["is_active"] is False
+
+    db_session.expire_all()
+    refreshed = (
+        db_session.query(CommissionStructure)
+        .filter_by(id=seeded_commission_rate.id)
+        .first()
+    )
+    assert refreshed is not None  # row still exists
+    assert refreshed.is_active is False
+
+    audit = db_session.query(AuditLog).filter_by(action="commission_rate.deleted").first()
+    assert audit is not None
+    assert audit.before_state["is_active"] is True
+    assert audit.after_state["is_active"] is False
+
+
+def test_delete_commission_rate_forbidden_for_channel_ops_admin(
+    client, db_session, seeded_commission_rate,
+):
+    """DELETE is system_admin only -- channel_ops_admin can edit but not
+    retire rates."""
+    _as(_make_user(db_session, UserRole.channel_ops_admin))
+    r = client.delete(f"/internal/config/commission-rates/{seeded_commission_rate.id}")
+    assert r.status_code == 403
+
+
+def test_list_commission_rates_default_excludes_inactive(
+    client, db_session, seeded_commission_rate,
+):
+    # Soft-delete the seeded rate
+    seeded_commission_rate.is_active = False
+    db_session.commit()
+    _as(_make_user(db_session, UserRole.channel_manager))
+    r = client.get("/internal/config/commission-rates")
+    assert r.status_code == 200
+    assert all(it["is_active"] for it in r.json()["items"])
+    assert len(r.json()["items"]) == 0
+
+
+def test_list_commission_rates_include_inactive_returns_all(
+    client, db_session, seeded_commission_rate,
+):
+    seeded_commission_rate.is_active = False
+    db_session.commit()
+    _as(_make_user(db_session, UserRole.channel_manager))
+    r = client.get("/internal/config/commission-rates?include_inactive=true")
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 1
+    assert r.json()["items"][0]["is_active"] is False
+
+
+def test_list_commission_rates_filters_by_partner_category(
+    client, db_session, seeded_commission_rate, seeded_partner_category,
+):
+    # Add a second category + rate
+    master = PartnerCategoryConfig(
+        id=uuid.uuid4(),
+        code="master",
+        display_name="Master",
+        deal_reg_sla_hours=72,
+        max_discount_pct=_Dec("25"),
+        monthly_fee_usd=_Dec("400"),
+        is_active=True,
+    )
+    db_session.add(master)
+    db_session.add(CommissionStructure(
+        id=uuid.uuid4(),
+        partner_category_code="master",
+        commission_type="autonomous_sell",
+        year=CommissionYear.year_1,
+        commission_pct=_Dec("60"),
+        subpartner_uplift_pct=_Dec("10"),
+        applies_to_upsell=True,
+        is_active=True,
+    ))
+    db_session.commit()
+
+    _as(_make_user(db_session, UserRole.channel_manager))
+    r = client.get("/internal/config/commission-rates?partner_category=reseller")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert len(items) == 1
+    assert items[0]["partner_category"] == "reseller"
+
+
+def test_list_commission_rates_forbidden_for_partner(client, db_session):
+    _as(_make_user(db_session, UserRole.partner_admin))
+    r = client.get("/internal/config/commission-rates")
+    assert r.status_code == 403

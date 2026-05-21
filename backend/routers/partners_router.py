@@ -409,9 +409,15 @@ def get_commission_rates(
         if hasattr(partner.partner_category, "value")
         else str(partner.partner_category)
     )
+    # Migration 031 introduced is_active for soft-delete. Hide deactivated
+    # rates from partner-facing form dropdowns so admins can retire a rate
+    # without it lingering as a selectable option.
     rows = (
         db.query(CommissionStructure)
-        .filter(CommissionStructure.partner_category_code == code)
+        .filter(
+            CommissionStructure.partner_category_code == code,
+            CommissionStructure.is_active.is_(True),
+        )
         .all()
     )
     items = []
