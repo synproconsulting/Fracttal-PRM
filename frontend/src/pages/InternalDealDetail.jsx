@@ -929,6 +929,8 @@ export default function InternalDealDetail() {
 
               <DisplayField label="Industry" value={deal.customer_industry} />
 
+              <DisplayField label="Industry sector" value={deal.industry_sector} />
+
               <DisplayField label="Country" value={deal.customer_country} />
 
               <DisplayField label="Region / state" value={deal.customer_region} />
@@ -954,8 +956,6 @@ export default function InternalDealDetail() {
               <DisplayField label="Partner contact phone" value={deal.prospect_phone} />
 
               <DisplayField label="Partner website / LinkedIn" value={deal.prospect_website} />
-
-              <DisplayField label="Industry sector" value={deal.industry_sector} />
 
               <DisplayField label="Compiled by" value={deal.compiled_by} />
 
@@ -1765,6 +1765,7 @@ const EDIT_SECTIONS = [
           'Food & Beverage', 'Education', 'Retail', 'Government', 'Other',
         ],
       },
+      { key: 'industry_sector', label: 'Industry sector', type: 'text' },
       {
         key: 'customer_country', label: 'Country', type: 'select',
         options: [
@@ -1959,6 +1960,7 @@ const CHANGE_LOG_FIELD_LABELS = {
   customer_contact_email: 'Contact email',
   customer_contact_phone: 'Contact phone',
   customer_industry: 'Industry',
+  industry_sector: 'Industry sector',
   customer_country: 'Country',
   customer_region: 'Region / state',
   company_size: 'Company size',

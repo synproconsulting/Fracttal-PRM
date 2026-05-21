@@ -523,6 +523,13 @@ export default function DealRegistrationForm() {
             onChange={(v) => setField('customer_industry', v)}
             options={INDUSTRY_OPTIONS}
           />
+          <FloatingInput
+            id="deal-industry_sector"
+            label="Industry sector (optional)"
+            type="text"
+            value={deal.industry_sector ?? ''}
+            onChange={(v) => setField('industry_sector', v)}
+          />
           <FloatingSelect
             id="deal-customer_country"
             label="Country"

@@ -190,6 +190,19 @@ function NewDealModal({ token, onClose, onCreated }) {
                      style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }} />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Industry sector</span>
+              <input value={draft.industry_sector} onChange={(e) => setField('industry_sector', e.target.value)}
+                     style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Company size</span>
+              <select value={draft.company_size} onChange={(e) => setField('company_size', e.target.value)}
+                      style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }}>
+                <option value="">Select…</option>
+                {_COMPANY_SIZE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Estimated value (USD)</span>
               <input type="number" value={draft.estimated_deal_value} onChange={(e) => setField('estimated_deal_value', e.target.value)}
                      style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }} />
@@ -218,19 +231,6 @@ function NewDealModal({ token, onClose, onCreated }) {
               <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Prospect phone</span>
               <input type="tel" value={draft.prospect_phone} onChange={(e) => setField('prospect_phone', e.target.value)}
                      style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Industry sector</span>
-              <input value={draft.industry_sector} onChange={(e) => setField('industry_sector', e.target.value)}
-                     style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Company size</span>
-              <select value={draft.company_size} onChange={(e) => setField('company_size', e.target.value)}
-                      style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }}>
-                <option value="">Select…</option>
-                {_COMPANY_SIZE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Indicative feature plan</span>
