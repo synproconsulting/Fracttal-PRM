@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
+import { SortableTh } from '../components/SortableTh.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -85,6 +86,13 @@ export default function DealList() {
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+
+  function toggleSort(field) {
+    setSort((s) => s.field === field
+      ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { field, dir: 'asc' })
+  }
 
   // URL sync (no navigation — just replace state).
   useEffect(() => {
@@ -103,6 +111,9 @@ export default function DealList() {
     }
   }, [])
 
+  // Filter-only query string (pipeline endpoint doesn't accept sort params --
+  // it groups by status). The list-view fetch adds sort_by / sort_dir
+  // separately.
   const queryStr = useMemo(() => {
     const p = new URLSearchParams()
     if (filters.status) p.set('status', filters.status)
@@ -110,6 +121,16 @@ export default function DealList() {
     if (filters.to_date) p.set('to_date', filters.to_date)
     const q = p.toString(); return q ? `?${q}` : ''
   }, [filters])
+
+  const listQueryStr = useMemo(() => {
+    const p = new URLSearchParams()
+    if (filters.status) p.set('status', filters.status)
+    if (filters.from_date) p.set('from_date', filters.from_date)
+    if (filters.to_date) p.set('to_date', filters.to_date)
+    p.set('sort_by', sort.field)
+    p.set('sort_dir', sort.dir)
+    return `?${p.toString()}`
+  }, [filters, sort])
 
   function fetchPipeline() {
     if (!token || !partnerOrgId) return
@@ -132,7 +153,7 @@ export default function DealList() {
   function fetchList() {
     if (!token) return
     setLoadingList(true); setError(null)
-    fetch(`${API}/deal-registrations${queryStr}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}/deal-registrations${listQueryStr}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}))
@@ -147,7 +168,7 @@ export default function DealList() {
 
   // Both views need pipeline (for the summary strip); list view also fetches the list endpoint.
   useEffect(() => { fetchPipeline() /* eslint-disable-line */ }, [partnerOrgId, queryStr])
-  useEffect(() => { if (viewMode === 'list') fetchList() /* eslint-disable-line */ }, [viewMode, queryStr])
+  useEffect(() => { if (viewMode === 'list') fetchList() /* eslint-disable-line */ }, [viewMode, listQueryStr])
 
   const summary = useMemo(() => {
     if (!pipeline) return { total: 0, totalValue: 0, approvedValue: 0, infoRequired: 0 }
@@ -311,9 +332,9 @@ export default function DealList() {
             <table className="fp-table">
               <thead>
                 <tr>
-                  <th>Deal</th>
+                  <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
                   <th>Customer</th>
-                  <th>Status</th>
+                  <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
                   <th>Est. value</th>
                   <th>Submitted</th>
                 </tr>

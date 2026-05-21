@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { SortableTh } from '../components/SortableTh.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -284,6 +285,13 @@ export default function DealQueue() {
   const [exporting, setExporting] = useState(false)
   const [newDealOpen, setNewDealOpen] = useState(false)
   const [toast, setToast] = useState(null)
+  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+
+  function toggleSort(field) {
+    setSort((s) => s.field === field
+      ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { field, dir: 'asc' })
+  }
 
   const activeFilter = useMemo(() => TABS.find((t) => t.key === tab)?.filter, [tab])
 
@@ -291,10 +299,9 @@ export default function DealQueue() {
     if (!token) return
     setLoading(true)
     setError(null)
-    const url = activeFilter
-      ? `${API}/internal/deals?status=${activeFilter}&limit=200`
-      : `${API}/internal/deals?limit=200`
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    const qs = new URLSearchParams({ limit: '200', sort_by: sort.field, sort_dir: sort.dir })
+    if (activeFilter) qs.set('status', activeFilter)
+    fetch(`${API}/internal/deals?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}))
@@ -307,7 +314,7 @@ export default function DealQueue() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { reload() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab])
+  useEffect(() => { reload() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab, sort])
 
   async function exportCSV() {
     setExporting(true)
@@ -404,12 +411,12 @@ export default function DealQueue() {
         <table className="fp-table">
           <thead>
             <tr>
-              <th>Deal</th>
-              <th>Partner org</th>
-              <th>Customer</th>
-              <th>Status</th>
-              <th>Est. value</th>
-              <th>Submitted</th>
+              <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
+              <SortableTh field="partner_org" sort={sort} onSort={toggleSort}>Partner org</SortableTh>
+              <SortableTh field="customer_name" sort={sort} onSort={toggleSort}>Customer</SortableTh>
+              <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
+              <SortableTh field="deal_value" sort={sort} onSort={toggleSort}>Est. value</SortableTh>
+              <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
               <th>Actions</th>
             </tr>
           </thead>

@@ -51,6 +51,7 @@ from models import (
 )
 from quote_engine import calculate_quote
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
+from sorting import apply_sort
 
 
 router = APIRouter(tags=["quotes"])
@@ -1036,6 +1037,17 @@ def get_quote_scenarios(
 # ===================== Sprint 18 — Internal quote dashboard =====================
 
 
+_INTERNAL_QUOTE_SORT = {
+    "quote_name": Quote.quote_name,
+    "deal_name": DealRegistration.deal_name,
+    "partner_org": PartnerOrganization.legal_name,
+    "feature_plan": QuoteVersion.feature_plan,
+    "grand_total_after_discount": QuoteVersion.grand_total_after_discount,
+    "status": Quote.status,
+    "created_at": Quote.created_at,
+}
+
+
 @router.get("/internal/quotes")
 def list_internal_quotes(
     status: Optional[str] = None,
@@ -1044,6 +1056,8 @@ def list_internal_quotes(
     search: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
+    sort_by: Optional[str] = "created_at",
+    sort_dir: Optional[str] = "desc",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1081,10 +1095,17 @@ def list_internal_quotes(
         like = f"%{search}%"
         base = base.filter(or_(Quote.quote_name.ilike(like), DealRegistration.deal_name.ilike(like)))
 
+    base = apply_sort(
+        base,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_INTERNAL_QUOTE_SORT,
+        default_col=Quote.created_at,
+        tiebreaker=Quote.id,
+    )
     total = base.count()
     rows = (
-        base.order_by(Quote.created_at.desc())
-        .offset((page - 1) * page_size)
+        base.offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
@@ -1149,10 +1170,22 @@ def list_internal_quotes(
 # ===================== Sprint 18 — Partner quote history =====================
 
 
+_PARTNER_QUOTE_SORT = {
+    "quote_name": Quote.quote_name,
+    "deal_name": DealRegistration.deal_name,
+    "feature_plan": QuoteVersion.feature_plan,
+    "grand_total_after_discount": QuoteVersion.grand_total_after_discount,
+    "status": Quote.status,
+    "created_at": Quote.created_at,
+}
+
+
 @router.get("/partners/{partner_org_id}/quotes")
 def list_partner_quotes(
     partner_org_id: uuid.UUID,
     status: Optional[str] = None,
+    sort_by: Optional[str] = "created_at",
+    sort_dir: Optional[str] = "desc",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1188,7 +1221,15 @@ def list_partner_quotes(
     if status:
         base = base.filter(Quote.status == status)
 
-    rows = base.order_by(Quote.created_at.desc()).all()
+    base = apply_sort(
+        base,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_PARTNER_QUOTE_SORT,
+        default_col=Quote.created_at,
+        tiebreaker=Quote.id,
+    )
+    rows = base.all()
     items = [
         {
             "id": str(quote.id),

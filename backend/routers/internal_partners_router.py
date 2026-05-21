@@ -19,6 +19,7 @@ from audit import log_audit_event
 from auth import get_current_user
 from csv_export import csv_response
 from database import get_db
+from sorting import apply_sort
 from models import (
     PartnerActivationChecklist,
     PartnerCategory,
@@ -57,6 +58,16 @@ def _enum_value(value):
     return value.value if hasattr(value, "value") else value
 
 
+_PARTNER_SORT = {
+    "legal_name": PartnerOrganization.legal_name,
+    "program_type": PartnerOrganization.program_type,
+    "partner_category": PartnerOrganization.partner_category,
+    "tier": PartnerOrganization.tier,
+    "status": PartnerOrganization.status,
+    "created_at": PartnerOrganization.created_at,
+}
+
+
 @router.get("")
 def list_partners_for_internal(
     search: Optional[str] = Query(default=None),
@@ -66,6 +77,8 @@ def list_partners_for_internal(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     _: User = Depends(require_partner_list_role),
 ):
@@ -125,10 +138,17 @@ def list_partners_for_internal(
             ],
         )
 
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_PARTNER_SORT,
+        default_col=PartnerOrganization.created_at,
+        tiebreaker=PartnerOrganization.id,
+    )
     total = query.count()
     rows = (
-        query.order_by(PartnerOrganization.created_at.desc())
-        .offset((page - 1) * page_size)
+        query.offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )

@@ -24,6 +24,7 @@ from audit import log_audit_event
 from auth import get_current_user
 from csv_export import csv_response
 from database import get_db
+from sorting import apply_sort
 from models import (
     InvitedRole,
     PartnerOrganization,
@@ -89,6 +90,17 @@ class InviteRequest(BaseModel):
     invited_role: InvitedRole
 
 
+# Outer-join to PartnerOrganization so ``partner_org`` can sort by org name.
+_PARTNER_USER_SORT = {
+    "email": User.email,
+    "full_name": User.full_name,
+    "role": User.role,
+    "partner_org": PartnerOrganization.legal_name,
+    "status": User.is_active,
+    "created_at": User.created_at,
+}
+
+
 @router.get("")
 def list_partner_users(
     partner_org_id: Optional[uuid.UUID] = Query(default=None),
@@ -97,11 +109,17 @@ def list_partner_users(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     export: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     _: User = Depends(require_internal_admin),
 ):
     partner_role_values = {r.value for r in PARTNER_ROLES}
-    query = db.query(User).filter(User.role.in_(partner_role_values))
+    query = (
+        db.query(User)
+        .outerjoin(PartnerOrganization, PartnerOrganization.id == User.partner_org_id)
+        .filter(User.role.in_(partner_role_values))
+    )
     if partner_org_id is not None:
         query = query.filter(User.partner_org_id == partner_org_id)
     if role is not None:
@@ -137,10 +155,17 @@ def list_partner_users(
             ],
         )
 
+    query = apply_sort(
+        query,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        allowed=_PARTNER_USER_SORT,
+        default_col=User.created_at,
+        tiebreaker=User.id,
+    )
     total = query.count()
     rows = (
-        query.order_by(User.created_at.desc())
-        .offset((page - 1) * page_size)
+        query.offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
