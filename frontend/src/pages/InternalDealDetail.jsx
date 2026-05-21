@@ -131,29 +131,8 @@ function DisplayField({ label, value }) {
 
 
 
-// FPRM-316 -- Section A additional + Section B SPICED read-only display.
-
-const _DI_SECTION_A = [
-
-  { key: 'engagement_date',           label: 'Engagement date' },
-
-  { key: 'prospect_contact_name',     label: 'Prospect contact name' },
-
-  { key: 'prospect_contact_position', label: 'Contact position' },
-
-  { key: 'prospect_phone',            label: 'Prospect phone' },
-
-  { key: 'prospect_website',          label: 'Website / LinkedIn' },
-
-  { key: 'industry_sector',           label: 'Industry sector' },
-
-  { key: 'company_size',              label: 'Company size' },
-
-  { key: 'compiled_by',               label: 'Compiled by' },
-
-  { key: 'feature_plan_preference',   label: 'Indicative feature plan' },
-
-]
+// Read-only field maps shared between the Customer State and Needs Assessment
+// section below. Labels mirror the partner-portal deal form.
 
 const _DI_SYSTEMS = [
 
@@ -173,7 +152,7 @@ const _DI_FEATURES = [
 
   { key: 'need_asset_depreciation',     label: 'Asset Depreciation' },
 
-  { key: 'need_wo_wr',                  label: 'WO / WR' },
+  { key: 'need_wo_wr',                  label: 'Work Orders / WR' },
 
   { key: 'need_reports',                label: 'Reports' },
 
@@ -181,7 +160,7 @@ const _DI_FEATURES = [
 
   { key: 'need_purchasing',             label: 'Purchasing' },
 
-  { key: 'need_integration',            label: 'Integration' },
+  { key: 'need_integration',            label: 'Require Integration' },
 
   { key: 'need_multi_language',         label: 'Multi-language' },
 
@@ -195,7 +174,7 @@ const _DI_FEATURES = [
 
   { key: 'need_schedule_third_parties', label: 'Schedule Third Parties' },
 
-  { key: 'need_track_labour',           label: 'Track Labour' },
+  { key: 'need_track_labour',           label: 'Track Labour Activities' },
 
 ]
 
@@ -215,34 +194,6 @@ const _DI_NARRATIVES = [
 
 ]
 
-function _hasAnySectionData(deal) {
-
-  if (!deal) return false
-
-  const keys = [
-
-    ..._DI_SECTION_A.map((f) => f.key),
-
-    ..._DI_SYSTEMS.map((f) => f.key),
-
-    ..._DI_FEATURES.map((f) => f.key),
-
-    ..._DI_NARRATIVES.map((f) => f.key),
-
-    'integration_with', 'languages_required',
-
-  ]
-
-  return keys.some((k) => {
-
-    const v = deal[k]
-
-    return v !== null && v !== undefined && v !== ''
-
-  })
-
-}
-
 function _featureIcon(v) {
 
   if (v === true) return '✅'
@@ -250,124 +201,6 @@ function _featureIcon(v) {
   if (v === false) return '❌'
 
   return '—'
-
-}
-
-function DealInformationSection({ deal }) {
-
-  const [open, setOpen] = useState(false)
-
-  const hasData = _hasAnySectionData(deal)
-
-  const headerNote = hasData ? '' : ' — not yet completed by partner'
-
-  return (
-
-    <section className="fp-card" style={{ marginBottom: 16 }}>
-
-      <button
-
-        type="button"
-
-        onClick={() => setOpen((v) => !v)}
-
-        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, width: '100%', textAlign: 'left' }}
-
-      >
-
-        <h2 className="fp-section-title" style={{ margin: 0 }}>
-
-          {open ? '▼' : '▶'} Deal Information (Section A + B SPICED){headerNote}
-
-        </h2>
-
-      </button>
-
-      {open && (
-
-        <div style={{ marginTop: 12 }}>
-
-          {/* Section A grid */}
-
-          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Section A — Prospect &amp; Engagement</h3>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-
-            {_DI_SECTION_A.map((f) => (
-
-              <DisplayField key={f.key} label={f.label} value={deal[f.key]} />
-
-            ))}
-
-          </div>
-
-          {/* Current Systems */}
-
-          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Situation (S) — Current Systems</h3>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-
-            {_DI_SYSTEMS.map((f) => (
-
-              <DisplayField key={f.key} label={f.label} value={deal[f.key]} />
-
-            ))}
-
-          </div>
-
-          {/* Features Required */}
-
-          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Features Required</h3>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 16px', marginBottom: 12, fontSize: 'var(--fp-fs-sm)' }}>
-
-            {_DI_FEATURES.map((f) => (
-
-              <div key={f.key}>{_featureIcon(deal[f.key])} {f.label}</div>
-
-            ))}
-
-          </div>
-
-          {(deal.integration_with || deal.languages_required) && (
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-
-              {deal.integration_with && <DisplayField label="Integrate with" value={deal.integration_with} />}
-
-              {deal.languages_required && <DisplayField label="Languages required" value={deal.languages_required} />}
-
-            </div>
-
-          )}
-
-          {/* SPICED Narratives */}
-
-          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>SPICED Narrative</h3>
-
-          <div style={{ display: 'grid', gap: 12 }}>
-
-            {_DI_NARRATIVES.map((f) => (
-
-              <div key={f.key}>
-
-                <div style={{ fontSize: 'var(--fp-fs-xs)', fontWeight: 600, color: 'var(--fp-text-secondary)', marginBottom: 2 }}>{f.label}</div>
-
-                <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fp-fs-sm)' }}>{deal[f.key] || '—'}</div>
-
-              </div>
-
-            ))}
-
-          </div>
-
-        </div>
-
-      )}
-
-    </section>
-
-  )
 
 }
 
@@ -1110,6 +943,30 @@ export default function InternalDealDetail() {
 
           <section className="fp-card" style={{ marginBottom: 16 }}>
 
+            <h2 className="fp-section-title">Partner contact information</h2>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+
+              <DisplayField label="Partner contact name" value={deal.prospect_contact_name} />
+
+              <DisplayField label="Partner contact title" value={deal.prospect_contact_position} />
+
+              <DisplayField label="Partner contact phone" value={deal.prospect_phone} />
+
+              <DisplayField label="Partner website / LinkedIn" value={deal.prospect_website} />
+
+              <DisplayField label="Industry sector" value={deal.industry_sector} />
+
+              <DisplayField label="Compiled by" value={deal.compiled_by} />
+
+            </div>
+
+          </section>
+
+
+
+          <section className="fp-card" style={{ marginBottom: 16 }}>
+
             <h2 className="fp-section-title">Deal information</h2>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -1142,10 +999,75 @@ export default function InternalDealDetail() {
 
 
 
-          {/* FPRM-316 -- Section A additional prospect fields + Section B
-              (Current Systems / Features Required / SPICED) -- read-only. */}
+          <section className="fp-card" style={{ marginBottom: 16 }}>
 
-          <DealInformationSection deal={deal} />
+            <h2 className="fp-section-title">Current State and Needs Assessment</h2>
+
+            {/* About the Client -- full-width narrative */}
+
+            <div style={{ marginBottom: 20 }}>
+
+              <div style={{ fontSize: 'var(--fp-fs-xs)', fontWeight: 600, color: 'var(--fp-text-secondary)', marginBottom: 2 }}>About the Client</div>
+
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fp-fs-sm)' }}>{deal.about_client || '—'}</div>
+
+            </div>
+
+            <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Situation (S) — Current Systems</h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+
+              {_DI_SYSTEMS.map((f) => (
+
+                <DisplayField key={f.key} label={f.label} value={deal[f.key]} />
+
+              ))}
+
+            </div>
+
+            <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Features Required</h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 16px', marginBottom: 12, fontSize: 'var(--fp-fs-sm)' }}>
+
+              {_DI_FEATURES.map((f) => (
+
+                <div key={f.key}>{_featureIcon(deal[f.key])} {f.label}</div>
+
+              ))}
+
+            </div>
+
+            {(deal.integration_with || deal.languages_required) && (
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+
+                {deal.integration_with && <DisplayField label="Integrate with" value={deal.integration_with} />}
+
+                {deal.languages_required && <DisplayField label="Languages required" value={deal.languages_required} />}
+
+              </div>
+
+            )}
+
+            {/* SPICED narrative fields rendered directly, no sub-heading */}
+
+            <div style={{ display: 'grid', gap: 12 }}>
+
+              {_DI_NARRATIVES.filter((f) => f.key !== 'about_client').map((f) => (
+
+                <div key={f.key}>
+
+                  <div style={{ fontSize: 'var(--fp-fs-xs)', fontWeight: 600, color: 'var(--fp-text-secondary)', marginBottom: 2 }}>{f.label}</div>
+
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fp-fs-sm)' }}>{deal[f.key] || '—'}</div>
+
+                </div>
+
+              ))}
+
+            </div>
+
+          </section>
 
 
 
