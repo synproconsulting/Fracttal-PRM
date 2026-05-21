@@ -971,6 +971,8 @@ class DealRegistration(Base):
 
     customer_contact_name = Column(String, nullable=True)
 
+    customer_contact_position = Column(String, nullable=True)
+
     customer_contact_email = Column(String, nullable=True)
 
     customer_contact_phone = Column(String, nullable=True)

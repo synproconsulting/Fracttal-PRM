@@ -785,6 +785,51 @@ def test_section_b_booleans_round_trip_true_false_null(db_session):
         clear_overrides()
 
 
+def test_customer_contact_position_round_trips_via_post_and_patch(db_session):
+    """Regression for the PR #134 oversight -- the form's customer-side
+    "Contact title" was being silently dropped because the column was
+    missing, the whitelist entry was missing, and the model lacked the
+    field. Migration 030 + the CREATABLE_FIELDS update + the model column
+    close that gap. This test would have caught the bug at PR time."""
+    org = make_org(db_session)
+    make_checklist(db_session, org.id, complete=True)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.post("/deal-registrations", json={
+            "customer_name": "Title Co",
+            "deal_name": "Title Deal",
+            "customer_contact_position": "VP Operations",
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        deal_id = body["id"]
+        assert body["customer_contact_position"] == "VP Operations"
+
+        # PATCH updates the field
+        r = client.patch(f"/deal-registrations/{deal_id}", json={
+            "customer_contact_position": "Director of Maintenance",
+        })
+        assert r.status_code == 200
+        assert r.json()["customer_contact_position"] == "Director of Maintenance"
+
+        # GET reads it back
+        r = client.get(f"/deal-registrations/{deal_id}")
+        assert r.status_code == 200
+        assert r.json()["customer_contact_position"] == "Director of Maintenance"
+
+        # Bare create leaves it null -- no regression for legacy payloads
+        r = client.post("/deal-registrations", json={
+            "customer_name": "Bare Title Co",
+            "deal_name": "Bare Title Deal",
+        })
+        assert r.status_code == 201
+        assert r.json()["customer_contact_position"] is None
+    finally:
+        clear_overrides()
+
+
 def test_license_qty_fields_round_trip(db_session):
     """Post-Sprint 20 deal form fix -- partners capture requested license
     counts on the deal (migration 029). Both columns are nullable so legacy
