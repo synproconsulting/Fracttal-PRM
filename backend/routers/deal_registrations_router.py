@@ -66,6 +66,10 @@ CREATABLE_FIELDS = {
     "customer_name", "customer_domain", "customer_contact_name",
     "customer_contact_email", "customer_contact_phone", "customer_industry",
     "customer_country", "customer_region",
+    # Post-Sprint 20 deal form fix -- customer-side Contact title (migration 030).
+    # Added to the form in PR #134 but the column / whitelist entry were missed,
+    # which silently dropped every "Contact title" the partner typed.
+    "customer_contact_position",
     "deal_name", "estimated_deal_value", "estimated_close_date",
     "deal_notes", "commission_type",
     # Sprint 20 / FPRM-316 -- Section A additional prospect/engagement fields
