@@ -39,6 +39,7 @@ from csv_export import csv_response
 from conflict_checker import check_deal_conflict
 from database import get_db
 from models import (
+    AuditLog,
     CommissionStructure,
     CommissionYear,
     DealMessage,
@@ -168,6 +169,13 @@ def _require_partner_admin(user: User) -> None:
 # FPRM-317 -- internal roles allowed to create deals on behalf of a partner.
 _INTERNAL_CREATE_ROLES = {
     UserRole.channel_manager, UserRole.channel_ops_admin, UserRole.system_admin,
+}
+
+# Post-Sprint 20 PR B -- internal admin roles allowed to edit any deal in any
+# status. Channel managers retain only their existing review actions; only
+# system_admin and channel_ops_admin can correct deal data.
+_INTERNAL_EDIT_ROLES = {
+    UserRole.channel_ops_admin, UserRole.system_admin,
 }
 
 
@@ -447,36 +455,78 @@ def update_deal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update draft fields. partner_admin own org only; draft status only."""
-    _require_partner_admin(current_user)
+    """Update deal fields.
+
+    Authorisation:
+      * ``partner_admin`` -- own org only, draft status only (unchanged).
+      * ``system_admin`` / ``channel_ops_admin`` (post-Sprint 20 PR B) --
+        any deal in any status. For these callers, every changed whitelisted
+        field is logged as a ``deal.field_updated`` audit event with the
+        old and new value so the deal detail's Change Log can reconstruct
+        who edited what.
+    """
+    role = UserRole(current_user.role)
+    is_internal_edit = role in _INTERNAL_EDIT_ROLES
+
+    if not is_internal_edit:
+        _require_partner_admin(current_user)
+
     deal = _get_deal_or_404(deal_id, db)
-    if str(deal.partner_org_id) != str(current_user.partner_org_id):
-        raise HTTPException(status_code=403, detail="Access denied")
-    if deal.status != "draft":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot edit deal in status '{deal.status}'",
-        )
+
+    if not is_internal_edit:
+        if str(deal.partner_org_id) != str(current_user.partner_org_id):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if deal.status != "draft":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot edit deal in status '{deal.status}'",
+            )
 
     before = _serialize(deal)
     payload = _coerce_dates(payload)
+    changed_fields = []
     for key, value in payload.items():
-        if key in CREATABLE_FIELDS:
-            setattr(deal, key, value)
+        if key not in CREATABLE_FIELDS:
+            continue
+        old_value = getattr(deal, key)
+        # Skip no-op writes -- only audit / mutate when the value actually
+        # changes. Compare via the JSON-serialised form so date/UUID/decimal
+        # types compare equal to their wire representations.
+        before_json = jsonable_encoder(old_value)
+        after_json = jsonable_encoder(value)
+        if before_json == after_json:
+            continue
+        setattr(deal, key, value)
+        changed_fields.append((key, before_json, after_json))
     deal.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(deal)
 
-    log_audit_event(
-        db=db,
-        actor=current_user,
-        action="deal_registration.updated",
-        object_type="deal_registration",
-        object_id=deal.id,
-        before={"status": before["status"]},
-        after={"status": deal.status},
-        ip_address=_client_ip(request),
-    )
+    ip = _client_ip(request)
+    if is_internal_edit:
+        # Per-field audit events so the Change Log can render a row per change.
+        for field_name, old_v, new_v in changed_fields:
+            log_audit_event(
+                db=db,
+                actor=current_user,
+                action="deal.field_updated",
+                object_type="deal_registration",
+                object_id=deal.id,
+                before={field_name: old_v},
+                after={field_name: new_v},
+                ip_address=ip,
+            )
+    else:
+        log_audit_event(
+            db=db,
+            actor=current_user,
+            action="deal_registration.updated",
+            object_type="deal_registration",
+            object_id=deal.id,
+            before={"status": before["status"]},
+            after={"status": deal.status},
+            ip_address=ip,
+        )
     return _serialize(deal)
 
 
@@ -572,6 +622,71 @@ def delete_deal(
     db.delete(deal)
     db.commit()
     return None
+
+
+# -------------------- Change log (post-Sprint 20 PR B) --------------------
+
+
+@router.get("/internal/deals/{deal_id}/change-log")
+def list_deal_change_log(
+    deal_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every ``deal.field_updated`` audit event for this deal.
+
+    Each event has ``before_state = {<field>: <old>}`` and
+    ``after_state = {<field>: <new>}`` -- the response unpacks that pair into
+    a flat ``field_name`` / ``old_value`` / ``new_value`` shape so the
+    frontend's Change Log tab can render a simple row per change.
+
+    Access: any internal role (channel_manager / channel_ops_admin /
+    system_admin) -- only system_admin and channel_ops_admin can *produce*
+    these events via PATCH, but channel_manager reviewers need read access
+    to see corrections that landed before their review.
+    """
+    _require_review_role(current_user)
+    _get_deal_or_404(deal_id, db)  # 404 if the deal doesn't exist
+
+    rows = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.object_type == "deal_registration",
+            AuditLog.object_id == deal_id,
+            AuditLog.action == "deal.field_updated",
+        )
+        .order_by(AuditLog.timestamp.desc())
+        .all()
+    )
+
+    # Resolve actor email once per actor_id (cheap -- there are usually only
+    # a handful of distinct editors per deal).
+    actor_ids = {r.actor_id for r in rows if r.actor_id is not None}
+    actor_emails = {}
+    if actor_ids:
+        for uid, email in (
+            db.query(User.id, User.email)
+            .filter(User.id.in_(list(actor_ids)))
+            .all()
+        ):
+            actor_emails[str(uid)] = email
+
+    out = []
+    for r in rows:
+        before = r.before_state or {}
+        after = r.after_state or {}
+        field_name = next(iter(after.keys()), next(iter(before.keys()), None))
+        out.append({
+            "id": str(r.id),
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "actor_id": str(r.actor_id) if r.actor_id else None,
+            "actor_email": actor_emails.get(str(r.actor_id)) if r.actor_id else None,
+            "actor_role": r.actor_role,
+            "field_name": field_name,
+            "old_value": before.get(field_name) if field_name else None,
+            "new_value": after.get(field_name) if field_name else None,
+        })
+    return out
 
 
 # -------------------- Internal deal review endpoints (Sprint 8 / FPRM-134) --------------------

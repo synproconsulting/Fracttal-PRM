@@ -1004,3 +1004,255 @@ def test_partner_user_role_cannot_create_on_behalf(db_session):
         assert r.status_code == 403
     finally:
         clear_overrides()
+
+
+# ------------------ Post-Sprint 20 PR B: internal admin editability ------------------
+
+
+def _count_field_events(db, deal_id):
+    return (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.object_type == "deal_registration",
+            AuditLog.object_id == deal_id,
+            AuditLog.action == "deal.field_updated",
+        )
+        .count()
+    )
+
+
+def test_system_admin_can_patch_deal_in_any_status(db_session):
+    """system_admin can edit a deal even after submission / approval --
+    internal admins need to correct typos at any stage."""
+    org = make_org(db_session)
+    admin = make_user(UserRole.system_admin)
+    for status in ("draft", "submitted", "under_review", "approved", "rejected"):
+        deal = make_deal(db_session, org.id, status=status, name=f"Deal {status}")
+        override_user(db_session, admin)
+        client = TestClient(app)
+        try:
+            r = client.patch(f"/deal-registrations/{deal.id}", json={
+                "customer_name": f"Corrected {status}",
+                "about_client": "Post-submission correction.",
+            })
+            assert r.status_code == 200, f"status={status}: {r.text}"
+            body = r.json()
+            assert body["customer_name"] == f"Corrected {status}"
+            assert body["about_client"] == "Post-submission correction."
+            # Status must not change as a side-effect of the edit.
+            assert body["status"] == status
+        finally:
+            clear_overrides()
+
+
+def test_channel_ops_admin_can_patch_deal_in_any_status(db_session):
+    """channel_ops_admin has the same edit reach as system_admin."""
+    org = make_org(db_session)
+    admin = make_user(UserRole.channel_ops_admin)
+    deal = make_deal(db_session, org.id, status="approved", name="Approved Deal")
+    override_user(db_session, admin)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "deal_name": "Approved Deal (renamed)",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["deal_name"] == "Approved Deal (renamed)"
+    finally:
+        clear_overrides()
+
+
+def test_channel_manager_cannot_patch_deal_fields(db_session):
+    """Channel managers retain only review actions; they cannot edit deal
+    fields directly. They fall through to the partner_admin gate and
+    fail it because they aren't a partner_admin."""
+    org = make_org(db_session)
+    mgr = make_user(UserRole.channel_manager)
+    deal = make_deal(db_session, org.id, status="under_review")
+    override_user(db_session, mgr)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "customer_name": "Tampered",
+        })
+        assert r.status_code == 403
+    finally:
+        clear_overrides()
+
+
+def test_internal_admin_patch_logs_field_updated_audit_per_change(db_session):
+    """Every changed whitelisted field must produce a deal.field_updated
+    event with the right before/after values. Unchanged fields must not
+    produce an event."""
+    org = make_org(db_session)
+    admin = make_user(UserRole.system_admin)
+    deal = make_deal(db_session, org.id, status="approved", customer="Old Co", name="Old Deal")
+    deal.customer_contact_email = "old@example.com"
+    db_session.commit()
+    db_session.refresh(deal)
+    before_count = _count_field_events(db_session, deal.id)
+
+    override_user(db_session, admin)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "customer_name": "New Co",
+            "customer_contact_email": "new@example.com",
+            # no-op: same as current
+            "deal_name": "Old Deal",
+        })
+        assert r.status_code == 200, r.text
+    finally:
+        clear_overrides()
+
+    events = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.object_type == "deal_registration",
+            AuditLog.object_id == deal.id,
+            AuditLog.action == "deal.field_updated",
+        )
+        .order_by(AuditLog.timestamp.asc())
+        .all()
+    )
+    # Two real changes (customer_name, customer_contact_email); the no-op
+    # write to deal_name must NOT produce an event.
+    assert len(events) == before_count + 2
+
+    by_field = {next(iter(e.after_state.keys())): e for e in events[-2:]}
+    assert "customer_name" in by_field
+    assert by_field["customer_name"].before_state == {"customer_name": "Old Co"}
+    assert by_field["customer_name"].after_state == {"customer_name": "New Co"}
+    assert "customer_contact_email" in by_field
+    assert by_field["customer_contact_email"].before_state == {"customer_contact_email": "old@example.com"}
+    assert by_field["customer_contact_email"].after_state == {"customer_contact_email": "new@example.com"}
+    # Actor is the system_admin who made the change
+    assert all(e.actor_id == admin.id for e in events[-2:])
+
+
+def test_partner_admin_patch_still_logs_legacy_event_not_field_updated(db_session):
+    """Regression: partner_admin edits continue to log a single
+    deal_registration.updated event, NOT per-field deal.field_updated
+    events. The new audit shape applies only to internal admin edits."""
+    org = make_org(db_session)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id)  # draft
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "customer_name": "Partner Renamed",
+        })
+        assert r.status_code == 200
+    finally:
+        clear_overrides()
+
+    field_events = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.object_type == "deal_registration",
+            AuditLog.object_id == deal.id,
+            AuditLog.action == "deal.field_updated",
+        )
+        .count()
+    )
+    legacy_events = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.object_type == "deal_registration",
+            AuditLog.object_id == deal.id,
+            AuditLog.action == "deal_registration.updated",
+        )
+        .count()
+    )
+    assert field_events == 0
+    assert legacy_events >= 1
+
+
+def test_partner_admin_cannot_patch_submitted_deal(db_session):
+    """Regression: partners still can't edit a submitted deal, even after
+    the internal-admin escape hatch was added."""
+    org = make_org(db_session)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id, status="submitted")
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.patch(f"/deal-registrations/{deal.id}", json={
+            "customer_name": "Sneaky edit",
+        })
+        assert r.status_code == 400
+        assert "draft" in r.json()["detail"].lower() or "submitted" in r.json()["detail"].lower()
+    finally:
+        clear_overrides()
+
+
+def test_change_log_endpoint_returns_field_events_in_descending_order(db_session):
+    """GET /internal/deals/{id}/change-log unpacks deal.field_updated events
+    into flat field_name / old_value / new_value rows, newest first."""
+    org = make_org(db_session)
+    admin = make_user(UserRole.system_admin)
+    db_session.add(admin)
+    db_session.commit()
+    db_session.refresh(admin)
+    deal = make_deal(db_session, org.id, status="approved")
+    override_user(db_session, admin)
+    client = TestClient(app)
+    try:
+        # Two sequential edits -> two events
+        r1 = client.patch(f"/deal-registrations/{deal.id}", json={
+            "customer_name": "Edit 1",
+        })
+        assert r1.status_code == 200, r1.text
+        r2 = client.patch(f"/deal-registrations/{deal.id}", json={
+            "customer_name": "Edit 2",
+            "deal_notes": "Added note",
+        })
+        assert r2.status_code == 200, r2.text
+
+        r = client.get(f"/internal/deals/{deal.id}/change-log")
+        assert r.status_code == 200, r.text
+        rows = r.json()
+        # 1 (Edit 1) + 2 (Edit 2: customer_name + deal_notes) = 3 events
+        assert len(rows) >= 3
+        # Each row has the unpacked shape
+        for row in rows:
+            assert "timestamp" in row
+            assert "field_name" in row
+            assert "old_value" in row
+            assert "new_value" in row
+            assert row["actor_id"] == str(admin.id)
+            assert row["actor_email"] == admin.email
+        # Newest first -- the most recent edit was Edit 2 -> customer_name
+        # went from "Edit 1" to "Edit 2"
+        cust_rows = [r for r in rows if r["field_name"] == "customer_name"]
+        assert len(cust_rows) >= 2
+        assert cust_rows[0]["new_value"] == "Edit 2"
+        assert cust_rows[0]["old_value"] == "Edit 1"
+        assert cust_rows[1]["new_value"] == "Edit 1"
+    finally:
+        clear_overrides()
+
+
+def test_change_log_endpoint_404_when_deal_missing(db_session):
+    admin = make_user(UserRole.system_admin)
+    override_user(db_session, admin)
+    client = TestClient(app)
+    try:
+        r = client.get(f"/internal/deals/{uuid.uuid4()}/change-log")
+        assert r.status_code == 404
+    finally:
+        clear_overrides()
+
+
+def test_change_log_endpoint_blocks_partner(db_session):
+    org = make_org(db_session)
+    user = make_user(UserRole.partner_admin, partner_org_id=org.id)
+    deal = make_deal(db_session, org.id)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(f"/internal/deals/{deal.id}/change-log")
+        assert r.status_code == 403
+    finally:
+        clear_overrides()

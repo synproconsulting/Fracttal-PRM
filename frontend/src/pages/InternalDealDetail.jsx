@@ -640,10 +640,17 @@ export default function InternalDealDetail() {
   const [cancelInfoError, setCancelInfoError] = useState(null)
 
   const [toast, setToast] = useState(null)
+  // Post-Sprint 20 PR B -- Edit Deal modal state. Only system_admin /
+  // channel_ops_admin see the entry point; both modal open and save are
+  // gated by that check on the server too.
+  const [editOpen, setEditOpen] = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState(null)
 
   // FPRM-274 / Sprint 17 — role of the logged-in reviewer, used to gate the
   // Approve button when multi-step workflow has a role-specific step.
   const [currentUserRole, setCurrentUserRole] = useState(null)
+  const canEditDeal = currentUserRole === 'system_admin' || currentUserRole === 'channel_ops_admin'
 
   useEffect(() => {
     if (!token) return
@@ -752,6 +759,35 @@ export default function InternalDealDetail() {
   }
 
 
+
+  async function saveDealEdits(patchPayload) {
+    setEditSaving(true)
+    setEditError(null)
+    try {
+      const r = await fetch(`${API}/deal-registrations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(patchPayload),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const msg = typeof body.detail === 'string'
+          ? body.detail
+          : JSON.stringify(body.detail || body)
+        throw new Error(msg || `HTTP ${r.status}`)
+      }
+      setEditOpen(false)
+      setToast('Deal updated')
+      setReloadKey((k) => k + 1)
+      window.setTimeout(() => setToast(null), 4000)
+      return true
+    } catch (e) {
+      setEditError(e.message)
+      return false
+    } finally {
+      setEditSaving(false)
+    }
+  }
 
   async function startReview() {
 
@@ -975,7 +1011,7 @@ export default function InternalDealDetail() {
 
 
 
-      <div className="fp-page-header">
+      <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
 
         <div>
 
@@ -1016,6 +1052,17 @@ export default function InternalDealDetail() {
           </div>
 
         </div>
+
+        {canEditDeal && (
+          <button
+            type="button"
+            className="fp-btn fp-btn--secondary"
+            onClick={() => { setEditError(null); setEditOpen(true) }}
+            title="Edit deal fields (system_admin / channel_ops_admin)"
+          >
+            Edit Deal
+          </button>
+        )}
 
       </div>
 
@@ -1507,6 +1554,18 @@ export default function InternalDealDetail() {
         dealQtyLimitedTech={deal.qty_limited_tech_users ?? 0}
       />
 
+      <ChangeLogSection dealId={deal.id} reloadKey={reloadKey} />
+
+      {editOpen && (
+        <EditDealModal
+          deal={deal}
+          saving={editSaving}
+          error={editError}
+          onClose={() => { if (!editSaving) { setEditOpen(false); setEditError(null) } }}
+          onSave={saveDealEdits}
+        />
+      )}
+
       {toast && (
 
         <div
@@ -1757,6 +1816,343 @@ function DealHeaderQuoteBadge({ dealId }) {
       <span style={{ opacity: 0.75 }}>·</span>
       <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totalStr}</span>
     </span>
+  )
+}
+
+
+// ============================================================================
+// Post-Sprint 20 PR B -- Edit Deal modal + Change Log section
+// ============================================================================
+
+const EDIT_SECTIONS = [
+  {
+    title: 'Customer information',
+    fields: [
+      { key: 'customer_name', label: 'Company name', type: 'text', required: true },
+      { key: 'customer_domain', label: 'Customer domain', type: 'text' },
+      { key: 'customer_contact_name', label: 'Contact name', type: 'text' },
+      { key: 'customer_contact_position', label: 'Contact title', type: 'text' },
+      { key: 'customer_contact_email', label: 'Contact email', type: 'email' },
+      { key: 'customer_contact_phone', label: 'Contact phone', type: 'tel' },
+      { key: 'customer_region', label: 'Region / state', type: 'text' },
+      {
+        key: 'customer_industry', label: 'Industry', type: 'select',
+        options: [
+          '', 'Manufacturing', 'Mining', 'Energy & Utilities', 'Healthcare',
+          'Hospitality', 'Logistics & Transportation', 'Real Estate',
+          'Food & Beverage', 'Education', 'Retail', 'Government', 'Other',
+        ],
+      },
+      {
+        key: 'customer_country', label: 'Country', type: 'select',
+        options: [
+          '', 'Argentina', 'Brazil', 'Chile', 'Colombia', 'Costa Rica', 'Ecuador',
+          'Mexico', 'Panama', 'Paraguay', 'Peru', 'Uruguay', 'United States', 'Other',
+        ],
+      },
+      {
+        key: 'company_size', label: 'Company size', type: 'select',
+        options: ['', '1-10', '11-50', '51-200', '201-500', '500+'],
+      },
+    ],
+  },
+  {
+    title: 'Partner contact information',
+    fields: [
+      { key: 'prospect_contact_name', label: 'Partner contact name', type: 'text' },
+      { key: 'prospect_contact_position', label: 'Partner contact title', type: 'text' },
+      { key: 'prospect_phone', label: 'Partner contact phone', type: 'tel' },
+      { key: 'prospect_website', label: 'Partner website / LinkedIn', type: 'url' },
+      { key: 'compiled_by', label: 'Compiled by', type: 'text' },
+    ],
+  },
+  {
+    title: 'Deal information',
+    fields: [
+      { key: 'deal_name', label: 'Deal name', type: 'text', required: true },
+      { key: 'estimated_deal_value', label: 'Estimated deal value (USD)', type: 'number' },
+      { key: 'estimated_close_date', label: 'Estimated close date', type: 'date' },
+      { key: 'engagement_date', label: 'Engagement date', type: 'date' },
+      { key: 'qty_transactional_users', label: 'Requested Qty Transactional User Licenses', type: 'number', min: 0 },
+      { key: 'qty_limited_tech_users', label: 'Requested Qty Limited Technician User Licenses', type: 'number', min: 0 },
+      {
+        key: 'feature_plan_preference', label: 'Indicative feature plan', type: 'select',
+        options: ['', 'starter', 'professional', 'enterprise'],
+      },
+      { key: 'deal_notes', label: 'Deal notes', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Current State and Needs Assessment',
+    fields: [
+      { key: 'about_client', label: 'About the Client', type: 'textarea' },
+      { key: 'current_system', label: 'Current System', type: 'text' },
+      { key: 'old_system', label: 'Old System', type: 'text' },
+      { key: 'inventory_stores', label: 'Inventory / Stores', type: 'text' },
+      { key: 'work_orders_prs', label: 'Work Orders & PRs', type: 'text' },
+      { key: 'monitoring_system', label: 'Monitoring', type: 'text' },
+      { key: 'integration_with', label: 'Integrate with', type: 'text' },
+      { key: 'languages_required', label: 'Languages required', type: 'text' },
+      { key: 'pain', label: 'Pain (P)', type: 'textarea' },
+      { key: 'impact', label: 'Impact (I)', type: 'textarea' },
+      { key: 'critical_event', label: 'Critical Event (CE)', type: 'textarea' },
+      { key: 'decision', label: 'Decision (D)', type: 'textarea' },
+      { key: 'next_steps', label: 'Next Steps', type: 'textarea' },
+    ],
+  },
+]
+
+const NUMERIC_EDIT_KEYS = new Set([
+  'estimated_deal_value', 'qty_transactional_users', 'qty_limited_tech_users',
+])
+
+function EditDealModal({ deal, saving, error, onClose, onSave }) {
+  // Local form state seeded from the current deal -- the modal is the source
+  // of truth while it's open. Cancel discards by simply unmounting.
+  const initial = useMemo(() => {
+    const out = {}
+    for (const section of EDIT_SECTIONS) {
+      for (const f of section.fields) {
+        const v = deal[f.key]
+        out[f.key] = v === null || v === undefined ? '' : v
+      }
+    }
+    return out
+  }, [deal])
+  const [values, setValues] = useState(initial)
+
+  function setField(key, v) {
+    setValues((cur) => ({ ...cur, [key]: v }))
+  }
+
+  function buildPatchPayload() {
+    const payload = {}
+    for (const section of EDIT_SECTIONS) {
+      for (const f of section.fields) {
+        const v = values[f.key]
+        const before = deal[f.key]
+        // Only send fields that actually changed -- avoids spurious audit
+        // events for fields the admin opened in the modal but didn't touch.
+        const norm = (x) => (x === '' || x === null || x === undefined ? null : x)
+        const beforeNorm = norm(before)
+        let afterNorm = norm(v)
+        if (afterNorm !== null && NUMERIC_EDIT_KEYS.has(f.key)) {
+          const num = Number(afterNorm)
+          afterNorm = Number.isFinite(num) ? num : null
+        }
+        if (String(beforeNorm) !== String(afterNorm)) {
+          payload[f.key] = afterNorm
+        }
+      }
+    }
+    return payload
+  }
+
+  async function handleSave() {
+    const payload = buildPatchPayload()
+    if (Object.keys(payload).length === 0) {
+      onClose()
+      return
+    }
+    await onSave(payload)
+  }
+
+  return (
+    <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+      <div className="fp-modal" style={{ maxWidth: 1100, width: '92vw', maxHeight: '92vh', overflowY: 'auto' }}>
+        <h3 className="fp-modal__title">Edit deal</h3>
+        <p className="fp-modal__subtitle">
+          {deal.deal_name} — {deal.customer_name}
+        </p>
+        {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
+
+        {EDIT_SECTIONS.map((section) => (
+          <section key={section.title} style={{ marginBottom: 20 }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>
+              {section.title}
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              {section.fields.map((f) => {
+                const isFullWidth = f.type === 'textarea'
+                return (
+                  <div key={f.key} style={isFullWidth ? { gridColumn: '1 / -1' } : undefined}>
+                    <label style={{ display: 'block', fontSize: 12, color: '#64748B', fontWeight: 600, marginBottom: 4 }}>
+                      {f.label}{f.required ? ' *' : ''}
+                    </label>
+                    {f.type === 'textarea' ? (
+                      <textarea
+                        rows={3}
+                        value={values[f.key] ?? ''}
+                        onChange={(e) => setField(f.key, e.target.value)}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}
+                      />
+                    ) : f.type === 'select' ? (
+                      <select
+                        value={values[f.key] ?? ''}
+                        onChange={(e) => setField(f.key, e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}
+                      >
+                        {f.options.map((opt) => (
+                          <option key={opt} value={opt}>{opt === '' ? '(none)' : opt}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={f.type}
+                        min={f.min}
+                        required={f.required}
+                        value={values[f.key] ?? ''}
+                        onChange={(e) => setField(f.key, e.target.value)}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        ))}
+
+        <div className="fp-modal__actions">
+          <button type="button" onClick={onClose} disabled={saving} className="fp-btn fp-btn--ghost">
+            Cancel
+          </button>
+          <button type="button" onClick={handleSave} disabled={saving} className="fp-btn fp-btn--primary">
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// Human-friendly labels for the Change Log. Keys not in this map fall back
+// to the raw column name so newly-added fields still render correctly.
+const CHANGE_LOG_FIELD_LABELS = {
+  customer_name: 'Company name',
+  customer_domain: 'Customer domain',
+  customer_contact_name: 'Contact name',
+  customer_contact_position: 'Contact title',
+  customer_contact_email: 'Contact email',
+  customer_contact_phone: 'Contact phone',
+  customer_industry: 'Industry',
+  customer_country: 'Country',
+  customer_region: 'Region / state',
+  company_size: 'Company size',
+  deal_name: 'Deal name',
+  estimated_deal_value: 'Estimated value',
+  estimated_close_date: 'Estimated close date',
+  engagement_date: 'Engagement date',
+  qty_transactional_users: 'Qty Transactional Users',
+  qty_limited_tech_users: 'Qty Limited Tech Users',
+  feature_plan_preference: 'Indicative feature plan',
+  deal_notes: 'Deal notes',
+  commission_type: 'Commission type',
+  prospect_contact_name: 'Partner contact name',
+  prospect_contact_position: 'Partner contact title',
+  prospect_phone: 'Partner contact phone',
+  prospect_website: 'Partner website',
+  compiled_by: 'Compiled by',
+  about_client: 'About the Client',
+  pain: 'Pain', impact: 'Impact', critical_event: 'Critical Event',
+  decision: 'Decision', next_steps: 'Next Steps',
+  current_system: 'Current System', old_system: 'Old System',
+  inventory_stores: 'Inventory / Stores',
+  work_orders_prs: 'Work Orders & PRs',
+  monitoring_system: 'Monitoring',
+  integration_with: 'Integrate with',
+  languages_required: 'Languages required',
+}
+
+function formatChangeValue(v) {
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'boolean') return v ? '✅' : '❌'
+  return String(v)
+}
+
+function ChangeLogSection({ dealId, reloadKey }) {
+  const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    || 'https://fracttal-prm-backend-production.up.railway.app'
+  const token = localStorage.getItem('token')
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState(null) // null = not yet fetched
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!open || !dealId || !token) return
+    setLoading(true); setError(null)
+    fetch(`${API_BASE}/internal/deals/${dealId}/change-log`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}))
+          throw new Error(body.detail || `HTTP ${r.status}`)
+        }
+        return r.json()
+      })
+      .then((data) => setRows(Array.isArray(data) ? data : []))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [open, dealId, token, reloadKey])
+
+  return (
+    <section className="fp-card" style={{ marginTop: 24 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, width: '100%', textAlign: 'left' }}
+      >
+        <h2 className="fp-section-title" style={{ margin: 0 }}>
+          {open ? '▼' : '▶'} Change Log
+        </h2>
+      </button>
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          {loading && <div style={{ color: '#64748B' }}>Loading change log…</div>}
+          {error && <div className="fp-alert fp-alert--danger">{error}</div>}
+          {rows && rows.length === 0 && !loading && !error && (
+            <div style={{ color: '#94A3B8', padding: 16, textAlign: 'center' }}>
+              No internal edits recorded for this deal.
+            </div>
+          )}
+          {rows && rows.length > 0 && (
+            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#F5F7FA' }}>
+                  <th style={{ textAlign: 'left', padding: 8 }}>Timestamp</th>
+                  <th style={{ textAlign: 'left', padding: 8 }}>Changed by</th>
+                  <th style={{ textAlign: 'left', padding: 8 }}>Field</th>
+                  <th style={{ textAlign: 'left', padding: 8 }}>Old value → New value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id} style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'top' }}>
+                    <td style={{ padding: 8, whiteSpace: 'nowrap' }}>
+                      {row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}
+                    </td>
+                    <td style={{ padding: 8 }}>
+                      {row.actor_email || row.actor_role || '—'}
+                    </td>
+                    <td style={{ padding: 8 }}>
+                      {CHANGE_LOG_FIELD_LABELS[row.field_name] || row.field_name || '—'}
+                    </td>
+                    <td style={{ padding: 8 }}>
+                      <span style={{ color: '#94A3B8' }}>{formatChangeValue(row.old_value)}</span>
+                      <span style={{ margin: '0 6px', color: '#64748B' }}>→</span>
+                      <strong>{formatChangeValue(row.new_value)}</strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
