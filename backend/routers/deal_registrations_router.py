@@ -1022,6 +1022,60 @@ def reject_deal(
 # -------------------- Conflict override (Sprint 10 / FPRM-157) --------------------
 
 
+@router.post("/internal/deals/{deal_id}/conflict-check")
+def rerun_conflict_check(
+    deal_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-run the conflict check for a deal on demand.
+
+    Access: any review role (channel_manager / channel_ops_admin /
+    system_admin). Calls the existing ``check_deal_conflict`` and persists
+    the new ``conflict_status`` / ``conflict_checked_at`` / ``conflict_notes``
+    on the deal row, logs a ``deal.conflict_check_rerun`` audit event, and
+    returns the fresh state plus the ids of any conflicting deals so the
+    frontend can refresh the section without a follow-up fetch.
+
+    Note: a re-run on a deal that was previously manually overridden via
+    ``/override-conflict`` will re-evaluate honestly -- the override notes
+    on ``conflict_notes`` are overwritten with the checker's verdict. If
+    a real conflict resurfaces, the admin can override again.
+    """
+    _require_review_role(current_user)
+    deal = _get_deal_or_404(deal_id, db)
+
+    before_status = deal.conflict_status
+    result = check_deal_conflict(db, deal.id)
+    deal.conflict_status = result.conflict_status
+    deal.conflict_checked_at = datetime.utcnow()
+    deal.conflict_notes = result.notes
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal.conflict_check_rerun",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"conflict_status": before_status},
+        after={
+            "conflict_status": result.conflict_status,
+            "conflicting_deal_ids": [str(i) for i in result.conflicting_deal_ids],
+        },
+        ip_address=_client_ip(request),
+    )
+    return {
+        "conflict_status": deal.conflict_status,
+        "conflict_checked_at": deal.conflict_checked_at.isoformat() if deal.conflict_checked_at else None,
+        "conflict_notes": deal.conflict_notes,
+        "conflicts": [str(i) for i in result.conflicting_deal_ids],
+    }
+
+
 OVERRIDE_ROLES = {UserRole.channel_manager, UserRole.system_admin}
 
 
