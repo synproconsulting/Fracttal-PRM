@@ -275,6 +275,7 @@ export default function DealDetail() {
               <DisplayField label="Contact email" value={deal.customer_contact_email} />
               <DisplayField label="Contact phone" value={deal.customer_contact_phone} />
               <DisplayField label="Industry" value={deal.customer_industry} />
+              <DisplayField label="Industry sector" value={deal.industry_sector} />
               <DisplayField label="Country" value={deal.customer_country} />
               <DisplayField label="Region / state" value={deal.customer_region} />
               <DisplayField label="Company size" value={deal.company_size} />
