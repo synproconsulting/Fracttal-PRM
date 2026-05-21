@@ -613,6 +613,12 @@ class CommissionStructure(Base):
 
     notes = Column(Text, nullable=True)
 
+    # Migration 031 -- admin lifecycle columns for the
+    # /internal/config/commission-rates UI (soft-delete + audit timestamps).
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
 
 
 

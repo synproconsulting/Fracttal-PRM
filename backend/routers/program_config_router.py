@@ -21,9 +21,15 @@ from sqlalchemy.orm import Session
 from audit import log_audit_event
 from auth import get_current_user
 from database import get_db
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
 from models import (
     ActivationChecklistConfig,
     ApprovalWorkflowStep,
+    CommissionStructure,
+    CommissionYear,
+    PartnerCategoryConfig,
     PartnerTierConfig,
     PartnerTierEligibilityRule,
     User,
@@ -649,3 +655,302 @@ def delete_activation_criterion(
         ip_address=_client_ip(request),
     )
     return _serialize_criterion(crit)
+
+
+# ---- Commission rates admin (post-Sprint 20 Phase 6 polish) ---------------
+#
+# Mounted under /internal/config/commission-rates to live alongside the
+# other Program Config tabs (Approval Workflow, Tiers, Activation, Pricing).
+# The legacy /config/commission-structures endpoints in config_router.py
+# stay in place -- both the deal submission flow and partner commission-
+# rate fetch still consume them, and migrating those callers is out of
+# scope. The new endpoints are the only write path for the admin UI.
+#
+# API ergonomics deliberately differ from the column names:
+#   * ``rate_pct``       <-> CommissionStructure.commission_pct
+#   * ``partner_category`` <-> CommissionStructure.partner_category_code
+#   * ``year_label``     <-> CommissionStructure.year (enum)
+# Year accepts both the enum code ("year_1") and the human label
+# ("Year 1" / "Year 2+") so the frontend can send whichever feels natural.
+
+
+_YEAR_LABEL_MAP = {
+    "year_1": CommissionYear.year_1,
+    "year 1": CommissionYear.year_1,
+    "y1": CommissionYear.year_1,
+    "year_2_plus": CommissionYear.year_2_plus,
+    "year 2+": CommissionYear.year_2_plus,
+    "year 2 plus": CommissionYear.year_2_plus,
+    "y2+": CommissionYear.year_2_plus,
+}
+
+_YEAR_DISPLAY = {
+    CommissionYear.year_1: "Year 1",
+    CommissionYear.year_2_plus: "Year 2+",
+}
+
+
+def _coerce_year(raw) -> CommissionYear:
+    """Accept enum value, enum code, or display label and return the enum."""
+    if isinstance(raw, CommissionYear):
+        return raw
+    key = (str(raw) if raw is not None else "").strip().lower()
+    if not key:
+        raise HTTPException(status_code=422, detail="year_label is required")
+    out = _YEAR_LABEL_MAP.get(key)
+    if out is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "year_label must be 'Year 1' / 'Year 2+' "
+                "(or the enum codes year_1 / year_2_plus)"
+            ),
+        )
+    return out
+
+
+def _coerce_pct(raw, *, field: str) -> Decimal:
+    if raw is None or raw == "":
+        raise HTTPException(status_code=422, detail=f"{field} is required")
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        raise HTTPException(status_code=422, detail=f"{field} must be a number")
+    if value < 0 or value > 100:
+        raise HTTPException(status_code=422, detail=f"{field} must be between 0 and 100")
+    return value
+
+
+def _serialize_commission_rate(c: CommissionStructure) -> dict:
+    """Admin-facing serializer with the UI's preferred field names plus a
+    display label for the year column."""
+    year_enum = c.year if isinstance(c.year, CommissionYear) else CommissionYear(c.year)
+    return {
+        "id": str(c.id),
+        "partner_category": c.partner_category_code,
+        "commission_type": c.commission_type,
+        "year": year_enum.value,
+        "year_label": _YEAR_DISPLAY.get(year_enum, year_enum.value),
+        "rate_pct": float(c.commission_pct),
+        "subpartner_uplift_pct": float(c.subpartner_uplift_pct) if c.subpartner_uplift_pct is not None else None,
+        "applies_to_upsell": bool(c.applies_to_upsell),
+        "notes": c.notes,
+        "is_active": bool(c.is_active),
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+def _ensure_partner_category(db: Session, code: str) -> PartnerCategoryConfig:
+    code_clean = (code or "").strip()
+    if not code_clean:
+        raise HTTPException(status_code=422, detail="partner_category is required")
+    row = (
+        db.query(PartnerCategoryConfig)
+        .filter(PartnerCategoryConfig.code == code_clean)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"partner_category '{code_clean}' is not a known category code",
+        )
+    return row
+
+
+@router.get("/commission-rates")
+def list_commission_rates(
+    partner_category: Optional[str] = Query(default=None),
+    commission_type: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_internal),
+):
+    """List commission rates. Defaults to active rows only; pass
+    ``?include_inactive=true`` to surface soft-deleted rows for the
+    admin "Show inactive" toggle."""
+    query = db.query(CommissionStructure)
+    if not include_inactive:
+        query = query.filter(CommissionStructure.is_active.is_(True))
+    if partner_category:
+        query = query.filter(CommissionStructure.partner_category_code == partner_category)
+    if commission_type:
+        query = query.filter(CommissionStructure.commission_type == commission_type)
+    rows = (
+        query
+        .order_by(
+            CommissionStructure.partner_category_code.asc(),
+            CommissionStructure.commission_type.asc(),
+            CommissionStructure.year.asc(),
+        )
+        .all()
+    )
+    return {"items": [_serialize_commission_rate(r) for r in rows]}
+
+
+@router.post("/commission-rates", status_code=201)
+def create_commission_rate(
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_config_writer),
+):
+    """Create a new commission rate row.
+
+    Body shape:
+        commission_type: str (e.g. "autonomous_sell" or any free-text -- the
+                              field is intentionally not enum-validated to
+                              keep the vocabulary admin-controlled)
+        year_label:      "Year 1" | "Year 2+" (or year_1 / year_2_plus)
+        rate_pct:        number 0..100
+        partner_category: str -- must exist in partner_category_configs.code
+        notes:           optional str
+    """
+    commission_type = (payload.get("commission_type") or "").strip()
+    if not commission_type:
+        raise HTTPException(status_code=422, detail="commission_type is required")
+    year_enum = _coerce_year(payload.get("year_label") or payload.get("year"))
+    rate_pct = _coerce_pct(payload.get("rate_pct"), field="rate_pct")
+    cat = _ensure_partner_category(db, payload.get("partner_category"))
+    notes = payload.get("notes")
+    if isinstance(notes, str):
+        notes = notes.strip() or None
+
+    # The (partner_category, commission_type, year) tuple is what
+    # _snapshot_commission uses to pick the rate at deal-submit time, so
+    # we soft-enforce uniqueness here -- duplicates would race and produce
+    # nondeterministic snapshots.
+    duplicate = (
+        db.query(CommissionStructure)
+        .filter(
+            CommissionStructure.partner_category_code == cat.code,
+            CommissionStructure.commission_type == commission_type,
+            CommissionStructure.year == year_enum,
+            CommissionStructure.is_active.is_(True),
+        )
+        .first()
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "An active commission rate already exists for this "
+                f"({cat.code}, {commission_type}, {year_enum.value}) "
+                "tuple -- edit the existing row or deactivate it first."
+            ),
+        )
+
+    row = CommissionStructure(
+        id=uuid.uuid4(),
+        partner_category_code=cat.code,
+        commission_type=commission_type,
+        year=year_enum,
+        commission_pct=rate_pct,
+        notes=notes,
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="commission_rate.created",
+        object_type="commission_structure",
+        object_id=row.id,
+        after=jsonable_encoder(_serialize_commission_rate(row)),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_commission_rate(row)
+
+
+@router.patch("/commission-rates/{rate_id}")
+def update_commission_rate(
+    rate_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_config_writer),
+):
+    """Update rate_pct or notes on an existing rate. Other columns are
+    immutable -- changing the (category, type, year) tuple would break the
+    historical commission snapshots that still FK to this row."""
+    row = (
+        db.query(CommissionStructure)
+        .filter(CommissionStructure.id == rate_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Commission rate not found")
+
+    before = jsonable_encoder(_serialize_commission_rate(row))
+    touched = False
+    if "rate_pct" in payload:
+        row.commission_pct = _coerce_pct(payload["rate_pct"], field="rate_pct")
+        touched = True
+    if "notes" in payload:
+        n = payload["notes"]
+        row.notes = (n.strip() or None) if isinstance(n, str) else n
+        touched = True
+    if not touched:
+        # Nothing to do -- behave like the other admin endpoints and 422
+        # rather than silently committing an empty patch.
+        raise HTTPException(
+            status_code=422,
+            detail="provide at least one of: rate_pct, notes",
+        )
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="commission_rate.updated",
+        object_type="commission_structure",
+        object_id=row.id,
+        before=before,
+        after=jsonable_encoder(_serialize_commission_rate(row)),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_commission_rate(row)
+
+
+@router.delete("/commission-rates/{rate_id}")
+def deactivate_commission_rate(
+    rate_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_system_admin),
+):
+    """Soft-delete a commission rate (sets is_active=False). The row stays
+    in the table because deal_registrations.commission_structure_id may
+    still FK to it from historical snapshots."""
+    row = (
+        db.query(CommissionStructure)
+        .filter(CommissionStructure.id == rate_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Commission rate not found")
+    if not row.is_active:
+        return _serialize_commission_rate(row)  # idempotent
+
+    before = jsonable_encoder(_serialize_commission_rate(row))
+    row.is_active = False
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="commission_rate.deleted",
+        object_type="commission_structure",
+        object_id=row.id,
+        before=before,
+        after=jsonable_encoder(_serialize_commission_rate(row)),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_commission_rate(row)

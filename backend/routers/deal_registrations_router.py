@@ -286,12 +286,16 @@ def _snapshot_commission(db: Session, deal: DealRegistration) -> None:
         return
     code = org.partner_category.value if hasattr(org.partner_category, "value") else str(org.partner_category)
 
+    # Migration 031: soft-deleted rates must not be snapshotted onto new
+    # deals -- if no active row matches, leave the snapshot null (same
+    # outcome as no row existing at all).
     row = (
         db.query(CommissionStructure)
         .filter(
             CommissionStructure.partner_category_code == code,
             CommissionStructure.commission_type == deal.commission_type,
             CommissionStructure.year == CommissionYear.year_1,
+            CommissionStructure.is_active.is_(True),
         )
         .first()
     )
