@@ -62,6 +62,47 @@ function DisplayField({ label, value }) {
   )
 }
 
+// Field maps shared with InternalDealDetail. Labels mirror the partner-portal
+// deal form so the read-only view reads back the same vocabulary the partner
+// filled in.
+const SYSTEMS = [
+  { key: 'current_system',    label: 'Current System' },
+  { key: 'old_system',        label: 'Old System' },
+  { key: 'inventory_stores',  label: 'Inventory / Stores' },
+  { key: 'work_orders_prs',   label: 'Work Orders & PRs' },
+  { key: 'monitoring_system', label: 'Monitoring' },
+]
+
+const FEATURES = [
+  { key: 'need_asset_depreciation',     label: 'Asset Depreciation' },
+  { key: 'need_wo_wr',                  label: 'Work Orders / WR' },
+  { key: 'need_reports',                label: 'Reports' },
+  { key: 'need_tool_management',        label: 'Tool Management' },
+  { key: 'need_purchasing',             label: 'Purchasing' },
+  { key: 'need_integration',            label: 'Require Integration' },
+  { key: 'need_multi_language',         label: 'Multi-language' },
+  { key: 'need_asset_management',       label: 'Asset Management' },
+  { key: 'need_document_management',    label: 'Document Management' },
+  { key: 'need_cost_tracking',          label: 'Cost Tracking' },
+  { key: 'need_monitoring',             label: 'Monitoring' },
+  { key: 'need_schedule_third_parties', label: 'Schedule Third Parties' },
+  { key: 'need_track_labour',           label: 'Track Labour Activities' },
+]
+
+const NARRATIVES = [
+  { key: 'pain',           label: 'Pain (P)' },
+  { key: 'impact',         label: 'Impact (I)' },
+  { key: 'critical_event', label: 'Critical Event (CE)' },
+  { key: 'decision',       label: 'Decision (D)' },
+  { key: 'next_steps',     label: 'Next Steps' },
+]
+
+function featureIcon(v) {
+  if (v === true) return '✅'
+  if (v === false) return '❌'
+  return '—'
+}
+
 export default function DealDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -227,27 +268,82 @@ export default function DealDetail() {
           <section className="fp-card" style={{ marginBottom: 16 }}>
             <h2 className="fp-section-title">Customer information</h2>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              <DisplayField label="Customer name" value={deal.customer_name} />
+              <DisplayField label="Company name" value={deal.customer_name} />
               <DisplayField label="Customer domain" value={deal.customer_domain} />
               <DisplayField label="Contact name" value={deal.customer_contact_name} />
+              <DisplayField label="Contact title" value={deal.customer_contact_position} />
               <DisplayField label="Contact email" value={deal.customer_contact_email} />
               <DisplayField label="Contact phone" value={deal.customer_contact_phone} />
               <DisplayField label="Industry" value={deal.customer_industry} />
               <DisplayField label="Country" value={deal.customer_country} />
               <DisplayField label="Region / state" value={deal.customer_region} />
+              <DisplayField label="Company size" value={deal.company_size} />
             </div>
           </section>
 
-          <section className="fp-card">
+          <section className="fp-card" style={{ marginBottom: 16 }}>
+            <h2 className="fp-section-title">Partner contact information</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <DisplayField label="Partner contact name" value={deal.prospect_contact_name} />
+              <DisplayField label="Partner contact title" value={deal.prospect_contact_position} />
+              <DisplayField label="Partner contact phone" value={deal.prospect_phone} />
+              <DisplayField label="Partner website / LinkedIn" value={deal.prospect_website} />
+              <DisplayField label="Compiled by" value={deal.compiled_by} />
+            </div>
+          </section>
+
+          <section className="fp-card" style={{ marginBottom: 16 }}>
             <h2 className="fp-section-title">Deal information</h2>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               <DisplayField label="Deal name" value={deal.deal_name} />
               <DisplayField label="Estimated value (USD)" value={formatMoney(deal.estimated_deal_value)} />
               <DisplayField label="Estimated close date" value={formatDate(deal.estimated_close_date)} />
+              <DisplayField label="Engagement date" value={formatDate(deal.engagement_date)} />
+              <DisplayField label="Requested Qty Transactional User Licenses" value={deal.qty_transactional_users} />
+              <DisplayField label="Requested Qty Limited Technician User Licenses" value={deal.qty_limited_tech_users} />
+              <DisplayField label="Indicative feature plan" value={deal.feature_plan_preference} />
               <DisplayField label="Commission type" value={deal.commission_type} />
               <div style={{ gridColumn: '1 / -1' }}>
                 <DisplayField label="Deal notes" value={deal.deal_notes} />
               </div>
+            </div>
+          </section>
+
+          <section className="fp-card">
+            <h2 className="fp-section-title">Current State and Needs Assessment</h2>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 'var(--fp-fs-xs)', fontWeight: 600, color: 'var(--fp-text-secondary)', marginBottom: 2 }}>About the Client</div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fp-fs-sm)' }}>{deal.about_client || '—'}</div>
+            </div>
+
+            <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Situation (S) — Current Systems</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+              {SYSTEMS.map((f) => (
+                <DisplayField key={f.key} label={f.label} value={deal[f.key]} />
+              ))}
+            </div>
+
+            <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fp-fs-md)', fontWeight: 600 }}>Features Required</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 16px', marginBottom: 12, fontSize: 'var(--fp-fs-sm)' }}>
+              {FEATURES.map((f) => (
+                <div key={f.key}>{featureIcon(deal[f.key])} {f.label}</div>
+              ))}
+            </div>
+            {(deal.integration_with || deal.languages_required) && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+                {deal.integration_with && <DisplayField label="Integrate with" value={deal.integration_with} />}
+                {deal.languages_required && <DisplayField label="Languages required" value={deal.languages_required} />}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gap: 12 }}>
+              {NARRATIVES.map((f) => (
+                <div key={f.key}>
+                  <div style={{ fontSize: 'var(--fp-fs-xs)', fontWeight: 600, color: 'var(--fp-text-secondary)', marginBottom: 2 }}>{f.label}</div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fp-fs-sm)' }}>{deal[f.key] || '—'}</div>
+                </div>
+              ))}
             </div>
           </section>
         </div>
