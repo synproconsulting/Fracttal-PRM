@@ -33,6 +33,8 @@ from models import (
     PartnerDocument,
     PartnerOrganization,
     PartnerProfile,
+    Quote,
+    QuoteVersion,
     User,
 )
 from permissions import require_permission
@@ -43,6 +45,33 @@ router = APIRouter(prefix="/partners", tags=["partners"])
 
 def _serialize(partner: PartnerOrganization) -> dict:
     return {c.name: getattr(partner, c.name) for c in partner.__table__.columns}
+
+
+def _pipeline_totals_for_deals(db: Session, deal_ids):
+    """Sum pipeline-included quote totals per deal — same semantics as the
+    helper in ``deal_registrations_router._pipeline_totals_for_deals``. Kept
+    inline here to avoid a cross-router import.
+
+    Returns ``{deal_id_str: float}``. Deals with no qualifying quotes are
+    absent from the dict — distinguishes "no included quotes" from "zero".
+    """
+    if not deal_ids:
+        return {}
+    rows = (
+        db.query(Quote.deal_id, func.sum(QuoteVersion.grand_total_after_discount))
+        .join(
+            QuoteVersion,
+            (QuoteVersion.quote_id == Quote.id)
+            & (QuoteVersion.version_number == Quote.active_version)
+            & (QuoteVersion.is_deleted.is_(False)),
+        )
+        .filter(Quote.deal_id.in_(list(deal_ids)))
+        .filter(Quote.include_in_pipeline.is_(True))
+        .filter(~Quote.status.in_(["expired", "cancelled"]))
+        .group_by(Quote.deal_id)
+        .all()
+    )
+    return {str(deal_id): float(total) for deal_id, total in rows if total is not None}
 
 
 def _serialize_checklist(checklist: PartnerActivationChecklist) -> dict:
@@ -559,8 +588,10 @@ def get_partner_pipeline(
         except ValueError:
             raise HTTPException(status_code=422, detail="to_date must be ISO YYYY-MM-DD")
 
+    deals = q.all()
+    pipeline_map = _pipeline_totals_for_deals(db, {d.id for d in deals})
     grouped: dict = {s: [] for s in PIPELINE_STATUSES}
-    for deal in q.all():
+    for deal in deals:
         bucket = grouped.get(deal.status)
         if bucket is None:
             grouped.setdefault(deal.status, [])
@@ -570,6 +601,7 @@ def get_partner_pipeline(
             "deal_name": deal.deal_name,
             "customer_name": deal.customer_name,
             "estimated_deal_value": deal.estimated_deal_value,
+            "pipeline_total": pipeline_map.get(str(deal.id)),
             "status": deal.status,
             "submitted_at": deal.submitted_at.isoformat() if deal.submitted_at else None,
             "estimated_close_date": deal.estimated_close_date.isoformat() if deal.estimated_close_date else None,

@@ -57,6 +57,13 @@ function formatMoney(value) {
   return `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
+function formatPipelineMoney(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '—'
+  return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
 function formatDate(value) {
   if (!value) return '—'
   try { return new Date(value).toLocaleDateString() } catch { return value }
@@ -416,6 +423,7 @@ export default function DealQueue() {
               <SortableTh field="customer_name" sort={sort} onSort={toggleSort}>Customer</SortableTh>
               <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
               <SortableTh field="deal_value" sort={sort} onSort={toggleSort}>Est. value</SortableTh>
+              <th>Pipeline</th>
               <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
               <th>Actions</th>
             </tr>
@@ -435,6 +443,7 @@ export default function DealQueue() {
                 <td>{d.customer_name || '—'}</td>
                 <td><StatusBadge status={d.status} /></td>
                 <td>{formatMoney(d.estimated_deal_value)}</td>
+                <td>{d.pipeline_total == null ? '—' : formatPipelineMoney(d.pipeline_total)}</td>
                 <td>{formatDate(d.submitted_at)}</td>
                 <td>
                   {d.status === 'submitted' && (

@@ -170,14 +170,22 @@ export default function DealList() {
   useEffect(() => { fetchPipeline() /* eslint-disable-line */ }, [partnerOrgId, queryStr])
   useEffect(() => { if (viewMode === 'list') fetchList() /* eslint-disable-line */ }, [viewMode, listQueryStr])
 
+  // Pipeline value for a deal = sum of `include_in_pipeline` quote totals
+  // (server-aggregated as `pipeline_total`). Fall back to the partner's own
+  // estimated_deal_value when no quotes have been opted into the pipeline yet.
+  function dealPipelineValue(d) {
+    if (d && d.pipeline_total != null) return Number(d.pipeline_total) || 0
+    return Number(d?.estimated_deal_value) || 0
+  }
+
   const summary = useMemo(() => {
     if (!pipeline) return { total: 0, totalValue: 0, approvedValue: 0, infoRequired: 0 }
     const all = []
     KANBAN_ORDER.forEach((s) => (pipeline[s] || []).forEach((d) => all.push(d)))
     const approved = pipeline.approved || []
     const infoRequired = (pipeline.info_required || []).length
-    const totalValue = all.reduce((acc, d) => acc + (d.estimated_deal_value || 0), 0)
-    const approvedValue = approved.reduce((acc, d) => acc + (d.estimated_deal_value || 0), 0)
+    const totalValue = all.reduce((acc, d) => acc + dealPipelineValue(d), 0)
+    const approvedValue = approved.reduce((acc, d) => acc + dealPipelineValue(d), 0)
     return { total: all.length, totalValue, approvedValue, infoRequired }
   }, [pipeline])
 
@@ -281,7 +289,7 @@ export default function DealList() {
             <div style={{ display: 'flex', flexDirection: 'row', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
               {KANBAN_ORDER.map((sk) => {
                 const items = pipeline[sk] || []
-                const colValue = items.reduce((acc, d) => acc + (d.estimated_deal_value || 0), 0)
+                const colValue = items.reduce((acc, d) => acc + dealPipelineValue(d), 0)
                 return (
                   <div key={sk} style={{ minWidth: 220, flexShrink: 0, background: '#fff', borderLeft: `4px solid ${COLUMN_ACCENT[sk]}`, border: '1px solid #E0E4EA', borderRadius: 6, padding: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -297,7 +305,7 @@ export default function DealList() {
                       <div key={d.id} style={{ background: '#fff', border: '1px solid #E0E4EA', borderRadius: 6, padding: 12, marginBottom: 8 }}>
                         <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B' }}>{d.deal_name}</div>
                         <div style={{ fontSize: 12, color: '#64748B' }}>{d.customer_name || '—'}</div>
-                        <div style={{ fontSize: 13, color: '#1A6EBB', marginTop: 4 }}>{formatMoney(d.estimated_deal_value)}</div>
+                        <div style={{ fontSize: 13, color: '#1A6EBB', marginTop: 4 }}>{formatMoney(dealPipelineValue(d))}</div>
                         <div style={{ fontSize: 12, color: '#64748B' }}>{formatDate(d.estimated_close_date)}</div>
                       </div>
                     ))}
@@ -351,7 +359,7 @@ export default function DealList() {
                       </td>
                       <td>{d.customer_name || '—'}</td>
                       <td><StatusBadge status={d.status} /></td>
-                      <td>{formatMoney(d.estimated_deal_value)}</td>
+                      <td>{formatMoney(dealPipelineValue(d))}</td>
                       <td>{formatDate(d.submitted_at)}</td>
                     </tr>
                   )
