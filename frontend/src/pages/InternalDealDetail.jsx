@@ -33,6 +33,8 @@ const STATUS_TONE = {
 
   withdrawn: 'fp-badge--neutral',
 
+  won: 'fp-badge--success',
+
 }
 
 
@@ -56,6 +58,8 @@ const STATUS_LABEL = {
   lost: 'Lost',
 
   withdrawn: 'Withdrawn',
+
+  won: 'Won',
 
 }
 
@@ -799,6 +803,33 @@ export default function InternalDealDetail() {
     }
   }
 
+  // Approved → Won. Backend cascades: every draft/sent quote on the deal is
+  // cancelled and stripped from the pipeline; accepted quote(s) survive as
+  // the closed-won value. Same role gate as Mark as Lost/Withdrawn.
+  async function markWon() {
+    setActionSaving(true); setError(null)
+    try {
+      const r = await fetch(`${API}/internal/deals/${id}/won`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const msg = typeof body.detail === 'string'
+          ? body.detail
+          : JSON.stringify(body.detail || body)
+        throw new Error(msg || `HTTP ${r.status}`)
+      }
+      setToast('Deal marked as Won — quotes updated')
+      setReloadKey((k) => k + 1)
+      window.setTimeout(() => setToast(null), 4000)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionSaving(false)
+    }
+  }
+
 
   async function cancelInfoRequest() {
 
@@ -1529,6 +1560,28 @@ export default function InternalDealDetail() {
 
                 {deal.status === 'approved' && (
 
+                  <button type="button" className="fp-btn fp-btn--success"
+
+                          disabled={actionSaving}
+
+                          onClick={() => {
+
+                            if (window.confirm('Mark this deal as Won? All draft and sent quotes will be cancelled. This cannot be undone.')) {
+
+                              markWon()
+
+                            }
+
+                          }}>
+
+                    Mark as Won
+
+                  </button>
+
+                )}
+
+                {deal.status === 'approved' && (
+
                   <button type="button" className="fp-btn fp-btn--danger"
 
                           disabled={actionSaving}
@@ -1655,6 +1708,7 @@ export default function InternalDealDetail() {
         dealQtyTransactional={deal.qty_transactional_users ?? 1}
         dealQtyLimitedTech={deal.qty_limited_tech_users ?? 0}
         initialOpenQuoteId={pendingOpenQuoteId}
+        onDealStatusChange={() => setReloadKey((k) => k + 1)}
       />
 
       <ChangeLogSection dealId={deal.id} reloadKey={reloadKey} />
@@ -1713,7 +1767,7 @@ export default function InternalDealDetail() {
 
 }
 
-function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, initialOpenQuoteId }) {
+function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, initialOpenQuoteId, onDealStatusChange }) {
   const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
     || 'https://fracttal-prm-backend-production.up.railway.app'
   const token = localStorage.getItem('token')
@@ -1857,6 +1911,7 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, initi
               quoteId={viewQuoteId}
               includeInPipeline={!!quotes.find((x) => x.id === viewQuoteId)?.include_in_pipeline}
               onPipelineChange={onModalPipelineChange}
+              onDealStatusChange={onDealStatusChange}
               onClose={() => { setViewQuoteId(null); refresh() }}
               onAddVersion={(quote) => {
                 const active = quote.active_version_data

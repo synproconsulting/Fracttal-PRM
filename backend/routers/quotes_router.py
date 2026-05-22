@@ -568,7 +568,14 @@ def update_quote_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Status transitions: draft -> sent | sent -> accepted | sent -> expired."""
+    """Status transitions: draft -> sent | sent -> accepted | sent -> expired.
+
+    When a quote transitions to ``accepted`` AND the parent deal is still
+    ``approved`` AND no other ``draft``/``sent`` quotes remain on the deal,
+    the response includes ``suggest_mark_won: true`` so the frontend can
+    prompt the reviewer to close the deal as Won. The deal is never closed
+    automatically -- the suggestion is purely advisory.
+    """
     _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
     new_status = payload.get("status")
@@ -598,7 +605,26 @@ def update_quote_status(
         after={"status": new_status},
         ip_address=_client_ip(request) if request else None,
     )
-    return _serialize_quote(quote)
+
+    body = _serialize_quote(quote)
+    if new_status == "accepted":
+        deal = (
+            db.query(DealRegistration)
+            .filter(DealRegistration.id == quote.deal_id)
+            .first()
+        )
+        if deal is not None and deal.status == "approved":
+            has_pending = (
+                db.query(Quote)
+                .filter(Quote.deal_id == quote.deal_id)
+                .filter(Quote.status.in_(["draft", "sent"]))
+                .first()
+                is not None
+            )
+            body["suggest_mark_won"] = not has_pending
+        else:
+            body["suggest_mark_won"] = False
+    return body
 
 
 @router.patch("/quotes/{quote_id}/pipeline-inclusion")
@@ -1180,13 +1206,27 @@ def list_internal_quotes(
 
     # Summary across all quotes (not filtered) — small enough at current volumes
     all_quotes = db.query(Quote).all()
+    # Won deals are closed -- their accepted quote contributes to
+    # ``closed_won_value`` (not the active pipeline) and any straggling
+    # ``include_in_pipeline=True`` accepted quote on a won deal must be
+    # excluded from ``pipeline_total`` so the two numbers don't overlap.
+    won_deal_ids = {
+        d.id
+        for d in db.query(DealRegistration)
+        .filter(DealRegistration.status == "won")
+        .all()
+    }
+
     pipeline_total = 0.0
     for q in all_quotes:
         # Pipeline contribution requires the explicit include_in_pipeline opt-in
-        # AND a live status. Expired and cancelled never contribute.
+        # AND a live status. Expired and cancelled never contribute; quotes on
+        # won deals are excluded because they are closed-won, not pipeline.
         if not bool(q.include_in_pipeline):
             continue
         if q.status in ("expired", "cancelled"):
+            continue
+        if q.deal_id in won_deal_ids:
             continue
         av = (
             db.query(QuoteVersion)
@@ -1201,6 +1241,32 @@ def list_internal_quotes(
             continue
         pipeline_total += float(av.grand_total_after_discount or 0)
 
+    # closed_won = accepted quotes on won deals. won_deals counts the won
+    # deals that actually have at least one accepted quote -- a won deal
+    # with no accepted quote (shouldn't happen in normal flow, but possible
+    # if a reviewer marks won before accepting any quote) is excluded so the
+    # count and value stay in sync.
+    closed_won_value = 0.0
+    won_deals_with_accepted_quote = set()
+    for q in all_quotes:
+        if q.deal_id not in won_deal_ids:
+            continue
+        if q.status != "accepted":
+            continue
+        av = (
+            db.query(QuoteVersion)
+            .filter(
+                QuoteVersion.quote_id == q.id,
+                QuoteVersion.version_number == q.active_version,
+                QuoteVersion.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if av is None:
+            continue
+        closed_won_value += float(av.grand_total_after_discount or 0)
+        won_deals_with_accepted_quote.add(q.deal_id)
+
     summary = {
         "total_quotes": len(all_quotes),
         "draft": sum(1 for q in all_quotes if q.status == "draft"),
@@ -1209,6 +1275,8 @@ def list_internal_quotes(
         "expired": sum(1 for q in all_quotes if q.status == "expired"),
         "cancelled": sum(1 for q in all_quotes if q.status == "cancelled"),
         "pipeline_total": round(pipeline_total, 2),
+        "won_deals": len(won_deals_with_accepted_quote),
+        "closed_won_value": round(closed_won_value, 2),
     }
 
     return {
