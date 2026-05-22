@@ -519,6 +519,76 @@ def test_internal_list_supports_status_and_partner_filters(db_session):
         clear_overrides()
 
 
+def test_internal_list_default_sort_is_submitted_desc_then_created_desc(db_session):
+    """No ?sort_by= => submitted deals first (newest submission), drafts last.
+
+    PR #139 changed this default to a single-column created_at DESC, which let
+    drafts (no submitted_at, but later created_at) float to the top of the
+    internal review queue. Restored to the composite the CSV export already
+    used.
+    """
+    from datetime import datetime, timedelta
+    org = make_org(db_session)
+    now = datetime.utcnow()
+    # Order of creation interleaves drafts and submitted deals on purpose so
+    # a single-column created_at sort would yield a different ordering.
+    d_draft_old = make_deal(db_session, org.id, status="draft", name="DraftOld")
+    d_submitted_old = make_deal(db_session, org.id, status="submitted", name="SubmittedOld")
+    d_submitted_old.submitted_at = now - timedelta(days=5)
+    d_submitted_old.created_at = now - timedelta(days=10)  # created earliest
+    d_draft_new = make_deal(db_session, org.id, status="draft", name="DraftNew")
+    d_draft_new.created_at = now  # newest created
+    d_submitted_new = make_deal(db_session, org.id, status="submitted", name="SubmittedNew")
+    d_submitted_new.submitted_at = now - timedelta(days=1)  # newest submission
+    d_submitted_new.created_at = now - timedelta(days=2)
+    # And pin draft_old created_at between the two submitted rows
+    d_draft_old.created_at = now - timedelta(days=3)
+    db_session.commit()
+
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        # Scope to this test's org so earlier tests' deals (shared sqlite file)
+        # don't pollute the result set.
+        r = client.get(f"/internal/deals?partner_org_id={org.id}")
+        assert r.status_code == 200, r.text
+        names = [it["deal_name"] for it in r.json()["items"]]
+        # Expected order: submitted (newest first) THEN drafts by created_at desc
+        assert names == ["SubmittedNew", "SubmittedOld", "DraftNew", "DraftOld"], names
+    finally:
+        clear_overrides()
+
+
+def test_internal_list_explicit_sort_by_overrides_default(db_session):
+    """When ?sort_by= IS provided, the single-column apply_sort path runs.
+
+    This is the PR #139 behaviour and must not regress.
+    """
+    from datetime import datetime, timedelta
+    org = make_org(db_session)
+    now = datetime.utcnow()
+    d_a = make_deal(db_session, org.id, status="submitted", name="Apple")
+    d_b = make_deal(db_session, org.id, status="submitted", name="Banana")
+    d_c = make_deal(db_session, org.id, status="draft", name="Cherry")
+    d_a.submitted_at = now - timedelta(days=1)
+    d_b.submitted_at = now - timedelta(days=2)
+    db_session.commit()
+
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        # Explicit deal_name ASC -- ignores submitted_at composite entirely.
+        # Scope to this test's org so earlier tests' deals don't pollute.
+        r = client.get(f"/internal/deals?partner_org_id={org.id}&sort_by=deal_name&sort_dir=asc")
+        assert r.status_code == 200
+        names = [it["deal_name"] for it in r.json()["items"]]
+        assert names == ["Apple", "Banana", "Cherry"], names
+    finally:
+        clear_overrides()
+
+
 def test_internal_list_rejects_partner_admin(db_session):
     org = make_org(db_session)
     user = make_user(UserRole.partner_admin, partner_org_id=org.id)
