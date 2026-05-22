@@ -265,6 +265,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
 
   const currency = quote.currency_code || 'USD'
   const activeVersionNum = quote.active_version
+  const isTerminal = quote.status === 'accepted' || quote.status === 'expired' || quote.status === 'cancelled'
 
   return (
     <div>
@@ -310,7 +311,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
               Cancel Quote
             </button>
           )}
-          {onAddVersion && (
+          {onAddVersion && !isTerminal && (
             <button type="button" disabled={busy} onClick={() => onAddVersion(quote)} className="fp-btn fp-btn--primary">
               Add Version
             </button>
@@ -385,7 +386,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
             )
           })}
         </div>
-        {selectedVersion && selectedVersion.version_number !== activeVersionNum && !selectedVersion.is_deleted && (
+        {selectedVersion && selectedVersion.version_number !== activeVersionNum && !selectedVersion.is_deleted && !isTerminal && (
           <button type="button" disabled={busy} onClick={() => setActive(selectedVersion.version_number)}
             className="fp-btn fp-btn--ghost" style={{ marginTop: 12 }}>
             Set as Active
