@@ -1430,8 +1430,12 @@ export default function InternalDealDetail() {
 
             {deal.status === 'under_review' && (() => {
               const ap = deal.approval_progress
+              // system_admin satisfies any step's required_role server-side,
+              // so don't show a roleMismatch warning or disable the button
+              // for them — the backend will accept the approval regardless.
               const roleMismatch = (
                 ap && ap.current_required_role && currentUserRole &&
+                currentUserRole !== 'system_admin' &&
                 currentUserRole !== ap.current_required_role
               )
               const approveTitle = roleMismatch
