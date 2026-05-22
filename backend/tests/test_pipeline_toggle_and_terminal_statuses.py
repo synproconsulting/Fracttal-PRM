@@ -416,3 +416,83 @@ def test_pipeline_report_excludes_lost_and_withdrawn(client, db_session):
     bp = body["by_partner"]
     assert len(bp) == 1
     assert bp[0]["total_deals"] == 1
+
+
+# ============================================================
+# Admin retract (accepted -> sent)
+# ============================================================
+
+
+import base64 as _b64  # noqa: E402
+
+_RETRACT_PDF = b"%PDF-1.4\n%%EOF"
+
+
+def _accept_a_quote(client, deal_id):
+    """Helper: create a quote, attach the required acceptance document, and
+    walk it to ``accepted``. Returns the quote id."""
+    qid = _make_quote(client, deal_id)
+    client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
+    r_doc = client.post(f"/quotes/{qid}/documents", json={
+        "document_type": "quote_acceptance",
+        "file_name": "acceptance.pdf",
+        "file_data": _b64.b64encode(_RETRACT_PDF).decode(),
+        "file_size_bytes": len(_RETRACT_PDF),
+    })
+    assert r_doc.status_code == 201, r_doc.text
+    r_acc = client.patch(f"/quotes/{qid}/status", json={"status": "accepted"})
+    assert r_acc.status_code == 200, r_acc.text
+    return qid
+
+
+def test_system_admin_can_retract_accepted_quote(client, db_session):
+    org = _org(db_session)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    deal = _deal(db_session, org.id)
+    qid = _accept_a_quote(client, deal.id)
+
+    _auth(_user(db_session, UserRole.system_admin.value))
+    r = client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "sent"
+    # Audit row must use the dedicated quote.retracted action so reporting
+    # can tell a real status_changed apart from a corrective retract.
+    from models import AuditLog
+    audit = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.action == "quote.retracted")
+        .filter(AuditLog.object_id == uuid.UUID(qid))
+        .first()
+    )
+    assert audit is not None
+    assert audit.before_state == {"status": "accepted"}
+    assert audit.after_state == {"status": "sent"}
+
+
+def test_channel_manager_cannot_retract_accepted_quote(client, db_session):
+    org = _org(db_session)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    deal = _deal(db_session, org.id)
+    qid = _accept_a_quote(client, deal.id)
+
+    # Still authed as channel_manager — attempt the retract.
+    r = client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
+    assert r.status_code == 403
+    assert "system_admin" in r.json()["detail"]
+    # Quote must remain accepted.
+    assert client.get(f"/quotes/{qid}").json()["status"] == "accepted"
+
+
+def test_partner_admin_cannot_retract_accepted_quote(client, db_session):
+    org = _org(db_session)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    deal = _deal(db_session, org.id)
+    qid = _accept_a_quote(client, deal.id)
+
+    _auth(_user(db_session, UserRole.partner_admin.value, org_id=org.id))
+    r = client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
+    # partner_admin is blocked by the write-role check (403) BEFORE the
+    # retract-specific check fires — either way the request must fail
+    # and the quote stays accepted.
+    assert r.status_code == 403
+    assert client.get(f"/quotes/{qid}").json()["status"] == "accepted"

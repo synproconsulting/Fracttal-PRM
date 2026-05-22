@@ -204,6 +204,30 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
     }
   }
 
+  async function handleRetractAcceptance() {
+    if (busy || !quote) return
+    if (!window.confirm(
+      'Retract this accepted quote back to Sent? This should only be done '
+      + 'to correct an error. This action is logged.'
+    )) return
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch(`${API}/quotes/${quoteId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'sent' }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      await loadQuote()
+      showToast('Acceptance retracted — quote returned to Sent')
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleMarkWonFromPrompt() {
     if (busy || !quote) return
     setBusy(true); setError(null)
@@ -511,6 +535,14 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
               Add Version
             </button>
           )}
+          {!isReadOnly && quote.status === 'accepted' && currentUserRole === 'system_admin' && (
+            <button type="button" disabled={busy}
+              onClick={handleRetractAcceptance}
+              className="fp-btn fp-btn--ghost"
+              title="Roll the quote back to Sent for correction. Audit-logged.">
+              Retract Acceptance
+            </button>
+          )}
           {onClose && (
             <button type="button" onClick={onClose} className="fp-btn fp-btn--ghost">Close</button>
           )}
@@ -576,27 +608,41 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
 
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <h3 className="fp-section-title">Versions</h3>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {versionsList.map((v) => {
-            const isSelected = selectedVersion && selectedVersion.version_number === v.version_number
-            const isActive = v.version_number === activeVersionNum
-            return (
-              <button key={v.version_number} type="button" onClick={() => selectVersion(v.version_number)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  border: isSelected ? '2px solid #1A6EBB' : '1px solid #E0E4EA',
-                  background: isActive ? '#1A6EBB' : '#fff',
-                  color: isActive ? '#fff' : '#1E293B',
-                  fontWeight: isActive ? 700 : 500,
-                  cursor: 'pointer',
-                  opacity: v.is_deleted ? 0.4 : 1,
-                }}>
-                v{v.version_number}{v.scenario_label ? ` (${v.scenario_label})` : ''}{isActive ? ' ★' : ''}
-              </button>
-            )
-          })}
-        </div>
+        {isTerminal ? (
+          // Terminal quotes (accepted / expired / cancelled) freeze on whichever
+          // version was active at the time of the transition. Other versions
+          // become irrelevant -- showing them as switchable tabs implies
+          // history is browsable when in fact the locked version is the only
+          // meaningful one. Render a single read-only label instead.
+          <div style={{ fontSize: 13, color: '#64748B' }}>
+            Locked at active version:{' '}
+            <strong style={{ color: '#1E293B' }}>
+              v{activeVersionNum}{quote.active_scenario ? ` (${quote.active_scenario})` : ''}
+            </strong>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {versionsList.map((v) => {
+              const isSelected = selectedVersion && selectedVersion.version_number === v.version_number
+              const isActive = v.version_number === activeVersionNum
+              return (
+                <button key={v.version_number} type="button" onClick={() => selectVersion(v.version_number)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    border: isSelected ? '2px solid #1A6EBB' : '1px solid #E0E4EA',
+                    background: isActive ? '#1A6EBB' : '#fff',
+                    color: isActive ? '#fff' : '#1E293B',
+                    fontWeight: isActive ? 700 : 500,
+                    cursor: 'pointer',
+                    opacity: v.is_deleted ? 0.4 : 1,
+                  }}>
+                  v{v.version_number}{v.scenario_label ? ` (${v.scenario_label})` : ''}{isActive ? ' ★' : ''}
+                </button>
+              )
+            })}
+          </div>
+        )}
         {!isReadOnly && selectedVersion && selectedVersion.version_number !== activeVersionNum && !selectedVersion.is_deleted && !isTerminal && (
           <button type="button" disabled={busy} onClick={() => setActive(selectedVersion.version_number)}
             className="fp-btn fp-btn--ghost" style={{ marginTop: 12 }}>

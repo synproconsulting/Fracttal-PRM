@@ -74,8 +74,13 @@ DELETE_ROLES = {UserRole.channel_ops_admin, UserRole.system_admin}
 ALLOWED_STATUS_TRANSITIONS = {
     "draft": {"sent", "cancelled"},
     "sent": {"accepted", "expired", "cancelled"},
-    # accepted / expired / cancelled are terminal -- absence here means
-    # PATCH /quotes/{id}/status returns 422 for any outbound transition.
+    # ``accepted -> sent`` is a system_admin-only retract path so an
+    # incorrectly accepted quote can be returned to ``sent`` for
+    # correction. The role gate lives in the handler -- the transition is
+    # present in the map so write-role users hit the role check (403)
+    # rather than a generic 422 "Invalid status transition" error. expired
+    # and cancelled remain strictly terminal.
+    "accepted": {"sent"},
 }
 
 
@@ -597,6 +602,19 @@ def update_quote_status(
             detail=f"Invalid status transition: {quote.status} -> {new_status}",
         )
 
+    # Retract gate: only system_admin can roll an accepted quote back to
+    # ``sent``. channel_manager / channel_ops_admin must escalate to an
+    # admin — this is an evidence-trail-preserving correction path, not a
+    # routine workflow.
+    is_retract = quote.status == "accepted" and new_status == "sent"
+    if is_retract and UserRole(current_user.role) != UserRole.system_admin:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Only system_admin can retract an accepted quote back to sent."
+            ),
+        )
+
     # Acceptance gate: an ``accepted`` quote must have a proof-of-acceptance
     # document on file (signed order form / confirmation). Enforced here so
     # there's no path -- API or UI -- that can flip a quote to accepted
@@ -628,7 +646,7 @@ def update_quote_status(
     log_audit_event(
         db=db,
         actor=current_user,
-        action="quote.status_changed",
+        action="quote.retracted" if is_retract else "quote.status_changed",
         object_type="quote",
         object_id=quote.id,
         before={"status": before},
