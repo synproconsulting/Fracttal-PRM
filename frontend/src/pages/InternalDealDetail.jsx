@@ -529,8 +529,10 @@ export default function InternalDealDetail() {
   // the backend enforces the same check and returns 422 if it's missing.
   // Fetch the quotes list once on mount and on every reloadKey bump so the
   // button enables/disables in step with quote-status changes inside the
-  // modal.
+  // modal. The same fetch also drives the header summary badges (pipeline
+  // total + accepted indicator) -- one round trip, two consumers.
   const [hasAcceptedQuote, setHasAcceptedQuote] = useState(false)
+  const [headerPipelineTotal, setHeaderPipelineTotal] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -544,10 +546,32 @@ export default function InternalDealDetail() {
     if (!id || !token) return
     fetch(`${API}/deals/${id}/quotes`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : []))
-      .then((list) => setHasAcceptedQuote(
-        Array.isArray(list) && list.some((q) => q.status === 'accepted')
-      ))
-      .catch(() => setHasAcceptedQuote(false))
+      .then((list) => {
+        if (!Array.isArray(list)) {
+          setHasAcceptedQuote(false)
+          setHeaderPipelineTotal(null)
+          return
+        }
+        setHasAcceptedQuote(list.some((q) => q.status === 'accepted'))
+        // Pipeline total = sum of grand_total_after_discount for quotes that
+        // are include_in_pipeline=true AND status NOT IN (expired, cancelled).
+        // Same semantics as the backend _pipeline_totals_for_deals helper;
+        // computed client-side because GET /deal-registrations/{id} doesn't
+        // expose pipeline_total today (only the *list* endpoints do).
+        let total = 0
+        let any = false
+        for (const q of list) {
+          if (!q.include_in_pipeline) continue
+          if (q.status === 'expired' || q.status === 'cancelled') continue
+          const v = Number(q.grand_total_after_discount)
+          if (Number.isFinite(v)) { total += v; any = true }
+        }
+        setHeaderPipelineTotal(any ? total : null)
+      })
+      .catch(() => {
+        setHasAcceptedQuote(false)
+        setHeaderPipelineTotal(null)
+      })
   }, [id, token, reloadKey])
 
 
@@ -1023,7 +1047,7 @@ export default function InternalDealDetail() {
 
             </span>
 
-            <DealHeaderQuoteBadge dealId={deal.id} />
+            <DealHeaderSummary pipelineTotal={headerPipelineTotal} hasAccepted={hasAcceptedQuote} />
 
           </div>
 
@@ -1530,50 +1554,6 @@ export default function InternalDealDetail() {
 
             )}
 
-            {deal.status === 'approved' && (
-
-              <div className="fp-alert fp-alert--success" style={{ margin: 0 }}>
-
-                <div><strong>Approved</strong> {deal.reviewed_at && `on ${formatDate(deal.reviewed_at)}`}</div>
-
-                {deal.review_notes && <div style={{ marginTop: 6 }}>{deal.review_notes}</div>}
-
-              </div>
-
-            )}
-
-            {deal.status === 'rejected' && (
-
-              <div className="fp-alert fp-alert--danger" style={{ margin: 0 }}>
-
-                <div><strong>Rejected</strong> {deal.reviewed_at && `on ${formatDate(deal.reviewed_at)}`}</div>
-
-                {deal.review_notes && <div style={{ marginTop: 6 }}>{deal.review_notes}</div>}
-
-              </div>
-
-            )}
-
-            {deal.status === 'lost' && (
-
-              <div className="fp-alert fp-alert--danger" style={{ margin: 0 }}>
-
-                <div><strong>Lost</strong></div>
-
-              </div>
-
-            )}
-
-            {deal.status === 'withdrawn' && (
-
-              <div className="fp-alert fp-alert--neutral" style={{ margin: 0 }}>
-
-                <div><strong>Withdrawn</strong></div>
-
-              </div>
-
-            )}
-
             {canTerminate && (deal.status === 'submitted' || deal.status === 'under_review' || deal.status === 'approved') && (
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
@@ -1646,7 +1626,7 @@ export default function InternalDealDetail() {
 
             )}
 
-            {(deal.status === 'draft' || deal.status === 'expired') && (
+            {['draft', 'expired', 'rejected', 'lost', 'withdrawn', 'won'].includes(deal.status) && (
 
               <div style={{ color: 'var(--fp-text-muted)', fontSize: 'var(--fp-fs-sm)' }}>
 
@@ -1957,67 +1937,36 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, initi
 }
 
 
-function DealHeaderQuoteBadge({ dealId }) {
-  const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
-    || 'https://fracttal-prm-backend-production.up.railway.app'
-  const token = localStorage.getItem('token')
-  const [primary, setPrimary] = useState(null)
-  const [loaded, setLoaded] = useState(false)
-
-  useEffect(() => {
-    if (!dealId || !token) return
-    fetch(`${API}/deals/${dealId}/quotes`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (r) => (r.ok ? r.json() : []))
-      .then((quotes) => {
-        if (!Array.isArray(quotes) || quotes.length === 0) { setPrimary(null); return }
-        const priority = { accepted: 3, sent: 2, draft: 1, expired: 0 }
-        const sorted = [...quotes].sort((a, b) => (priority[b.status] || 0) - (priority[a.status] || 0))
-        setPrimary(sorted[0])
-      })
-      .catch(() => setPrimary(null))
-      .finally(() => setLoaded(true))
-  }, [dealId, token])
-
-  if (!loaded) return null
-
-  if (!primary) {
-    return (
-      <span style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        padding: '4px 10px', borderRadius: 6,
-        border: '1px dashed #1A6EBB', color: '#1A6EBB',
-        fontSize: 12, fontWeight: 600,
-      }}>
-        No quote yet
-      </span>
-    )
-  }
-
-  const tone = primary.status === 'accepted'
-    ? { bg: '#E6F4EA', fg: '#1B8743', border: '#4CAF50' }
-    : primary.status === 'sent'
-    ? { bg: '#EBF4FF', fg: '#1A6EBB', border: '#1A6EBB' }
-    : { bg: '#F5F7FA', fg: '#475569', border: '#CBD5E1' }
-  const sym = (primary.currency_code && primary.currency_code !== 'USD') ? `${primary.currency_code} ` : '$'
-  const totalNum = Number(primary.grand_total_after_discount)
-  const totalStr = Number.isFinite(totalNum)
-    ? `${sym}${totalNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : '—'
-
+function DealHeaderSummary({ pipelineTotal, hasAccepted }) {
+  // Two independent at-a-glance badges. Single-quote drill-down (version,
+  // amount) lives in the dedicated Quotes section -- the header doesn't
+  // make sense with multiple quotes per deal, so it stays summary-only.
+  if (pipelineTotal == null && !hasAccepted) return null
+  const pipelineStr = pipelineTotal != null
+    ? `$${Math.round(pipelineTotal).toLocaleString()}`
+    : null
   return (
-    <span title="Most relevant quote on this deal" style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '4px 10px', borderRadius: 6,
-      background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`,
-      fontSize: 12, fontWeight: 600,
-    }}>
-      <span style={{ textTransform: 'capitalize' }}>
-        {primary.status === 'accepted' ? '✓ ' : ''}Quote: {primary.status}
-      </span>
-      <span style={{ opacity: 0.75 }}>·</span>
-      <span>v{primary.active_version}</span>
-      <span style={{ opacity: 0.75 }}>·</span>
-      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totalStr}</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      {pipelineStr && (
+        <span title="Sum of pipeline-included quotes on this deal" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '4px 10px', borderRadius: 6,
+          background: '#EBF4FF', color: '#1A6EBB', border: '1px solid #1A6EBB',
+          fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+        }}>
+          Pipeline: {pipelineStr}
+        </span>
+      )}
+      {hasAccepted && (
+        <span title="At least one quote on this deal is accepted" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '4px 10px', borderRadius: 6,
+          background: '#E6F4EA', color: '#1B8743', border: '1px solid #4CAF50',
+          fontSize: 12, fontWeight: 600,
+        }}>
+          ✅ Quote accepted
+        </span>
+      )}
     </span>
   )
 }
