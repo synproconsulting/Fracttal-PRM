@@ -411,7 +411,13 @@ def approve_application(
                 status_code=422,
                 detail="All approval steps are already completed",
             )
-        if current_user.role != current_step.required_role:
+        # See deal_registrations_router for the matching break-glass rule:
+        # system_admin satisfies any required_role so admins can always
+        # unblock a workflow stuck on a role they don't personally hold.
+        if (
+            current_user.role != "system_admin"
+            and current_user.role != current_step.required_role
+        ):
             raise HTTPException(
                 status_code=403,
                 detail=f"This step requires role: {current_step.required_role}",
