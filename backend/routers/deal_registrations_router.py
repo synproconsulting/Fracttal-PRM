@@ -688,12 +688,17 @@ def delete_deal(
     return None
 
 
-# -------------------- Lost / Withdrawn terminal statuses --------------------
+# -------------------- Lost / Withdrawn / Won terminal statuses --------------------
 
 
 # Map of allowed deal status transitions for the dedicated terminal-status
 # endpoint. ``lost`` and ``withdrawn`` are both terminal -- absence as a key
-# means no transition out is permitted via this endpoint.
+# means no transition out is permitted via this endpoint. ``won`` is also a
+# terminal status but is set via the dedicated ``POST
+# /internal/deals/{id}/won`` endpoint (not this PATCH) so it does not appear
+# in this map; once a deal is ``won``, every status-mutating endpoint
+# (approve / reject / start-review / this PATCH) rejects it because ``won``
+# is not in any allowed-source-status set.
 _TERMINAL_STATUS_TRANSITIONS = {
     "lost": {"approved"},
     "withdrawn": {"approved", "submitted", "under_review"},
@@ -703,6 +708,70 @@ _TERMINAL_AUDIT_ACTIONS = {
     "lost": "deal.lost",
     "withdrawn": "deal.withdrawn",
 }
+
+# Cascade notes attached to the ``quote.cancelled`` audit events emitted when
+# a deal moves into a terminal status. Mirrors the wording the user-facing
+# confirmation dialog uses, so the audit trail and the UI agree.
+_CASCADE_NOTES = {
+    "lost": "Deal marked as lost",
+    "withdrawn": "Deal marked as withdrawn",
+    "won": "Deal marked as won",
+}
+
+
+def _cascade_cancel_quotes(
+    db: Session,
+    deal: DealRegistration,
+    actor: User,
+    note: str,
+    ip_address: Optional[str] = None,
+) -> int:
+    """Cancel every ``draft``/``sent`` quote on the deal.
+
+    Accepted, expired, and already-cancelled quotes are left untouched -- the
+    only outcome from this helper is that *open* quotes on the deal are
+    closed when the deal itself reaches a terminal status. Each cancelled
+    quote has its ``include_in_pipeline`` flag cleared so it stops
+    contributing to the cross-deal pipeline summary, and emits a
+    ``quote.cancelled`` audit event with the supplied note (e.g. "Deal
+    marked as won") so reporting can attribute the cancellation to the
+    deal-level event rather than treating it as a standalone manual cancel.
+
+    Returns the number of quotes cancelled (handy for the response payload
+    of the won endpoint, but the helper is fire-and-forget for callers that
+    don't need it).
+    """
+    quotes = (
+        db.query(Quote)
+        .filter(Quote.deal_id == deal.id)
+        .filter(Quote.status.in_(["draft", "sent"]))
+        .all()
+    )
+    if not quotes:
+        return 0
+    # Snapshot prior state *before* mutating so audit before/after are accurate.
+    prior_states = [
+        (q.id, q.status, bool(q.include_in_pipeline)) for q in quotes
+    ]
+    now = datetime.utcnow()
+    for q in quotes:
+        q.status = "cancelled"
+        q.include_in_pipeline = False
+        q.updated_at = now
+    db.commit()
+    for qid, prior_status, prior_inclusion in prior_states:
+        log_audit_event(
+            db=db,
+            actor=actor,
+            action="quote.cancelled",
+            object_type="quote",
+            object_id=qid,
+            before={"status": prior_status, "include_in_pipeline": prior_inclusion},
+            after={"status": "cancelled", "include_in_pipeline": False},
+            ip_address=ip_address,
+            notes=note,
+        )
+    return len(quotes)
 
 
 @router.patch("/deal-registrations/{deal_id}/status")
@@ -763,7 +832,66 @@ def patch_deal_status(
         after={"status": new_status},
         ip_address=_client_ip(request),
     )
+    # Cascade: cancel every draft/sent quote on the deal and clear their
+    # pipeline-inclusion flag. Accepted/expired/cancelled quotes are left
+    # alone -- this only closes still-open quotes when the deal itself is
+    # closed terminally.
+    _cascade_cancel_quotes(
+        db, deal, current_user, _CASCADE_NOTES[new_status], _client_ip(request)
+    )
     return _serialize(deal)
+
+
+@router.post("/internal/deals/{deal_id}/won")
+def post_deal_won(
+    deal_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark a deal as ``won``.
+
+    Auth: channel_manager / channel_ops_admin / system_admin. Allowed source
+    status: ``approved`` only. ``won`` is terminal -- no endpoint accepts
+    ``won`` as a source status, so the deal cannot transition out again.
+
+    Cascade: every draft + sent quote on the deal is cancelled with
+    ``include_in_pipeline`` cleared and a ``quote.cancelled`` audit event
+    annotated ``Deal marked as won``. Accepted quotes are intentionally left
+    untouched -- they are the closed-won value that the cross-deal summary
+    will surface separately.
+    """
+    _require_review_role(current_user)
+    deal = _get_deal_or_404(deal_id, db)
+    if deal.status != "approved":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Cannot transition deal from '{deal.status}' to 'won'. "
+                "Allowed source statuses: ['approved']"
+            ),
+        )
+
+    before_status = deal.status
+    deal.status = "won"
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="deal.won",
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": before_status},
+        after={"status": "won"},
+        ip_address=_client_ip(request),
+    )
+    cascaded = _cascade_cancel_quotes(
+        db, deal, current_user, _CASCADE_NOTES["won"], _client_ip(request)
+    )
+    return {**_serialize(deal), "cascaded_cancelled_quotes": cascaded}
 
 
 # -------------------- Change log (post-Sprint 20 PR B) --------------------
