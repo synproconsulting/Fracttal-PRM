@@ -416,6 +416,8 @@ def list_quotes_for_deal(
                 "grand_total_after_discount": (
                     str(active.grand_total_after_discount) if active else None
                 ),
+                "feature_plan": active.feature_plan if active else None,
+                "include_in_pipeline": bool(q.include_in_pipeline),
             }
         )
     return items
