@@ -207,3 +207,25 @@ def test_internal_user_blocked_from_partner_endpoint(client, db_session):
     assert r.status_code == 403
     body = r.json()
     assert "/internal/quotes" in body["detail"]
+
+
+def test_partner_quotes_export_csv(client, db_session):
+    # Set up: two quotes on the org's deal.
+    org = _org(db_session)
+    deal = _deal(db_session, org.id)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    _quote(client, deal.id)
+    _quote(client, deal.id, plan="professional")
+
+    partner = _user(db_session, UserRole.partner_admin.value, org_id=org.id)
+    _auth(partner)
+    r = client.get(f"/partners/{org.id}/quotes?export=csv")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers.get("content-disposition", "")
+    assert 'filename="my_quotes_export_' in r.headers.get("content-disposition", "")
+
+    body = r.text.splitlines()
+    # Header + two data rows
+    assert body[0].startswith("Quote Name,Deal Name,Plan,Currency,Grand Total,Status,Pipeline,Active Scenario,Created")
+    assert len(body) == 3

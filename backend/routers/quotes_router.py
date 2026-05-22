@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 
 from audit import log_audit_event
 from auth import get_current_user
+from csv_export import csv_response
 from database import get_db
 from models import (
     AddonCatalogItem,
@@ -1567,6 +1568,7 @@ def list_partner_quotes(
     status: Optional[str] = None,
     sort_by: Optional[str] = "created_at",
     sort_dir: Optional[str] = "desc",
+    export: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1574,6 +1576,9 @@ def list_partner_quotes(
 
     Internal users are blocked here — they have the richer cross-org dashboard
     at GET /internal/quotes.
+
+    Pass ``?export=csv`` to download the same filtered set as a CSV stream
+    (fetch + Blob + Authorization header per AD-20).
     """
     role = UserRole(current_user.role)
     if role in WRITE_ROLES:
@@ -1611,6 +1616,30 @@ def list_partner_quotes(
         tiebreaker=Quote.id,
     )
     rows = base.all()
+
+    if export == "csv":
+        return csv_response(
+            "my_quotes_export",
+            [
+                "Quote Name", "Deal Name", "Plan", "Currency",
+                "Grand Total", "Status", "Pipeline", "Active Scenario", "Created",
+            ],
+            [
+                [
+                    quote.quote_name or "Untitled Quote",
+                    deal.deal_name or "",
+                    version.feature_plan or "",
+                    quote.currency_code or "",
+                    float(version.grand_total_after_discount),
+                    quote.status or "",
+                    "Yes" if bool(quote.include_in_pipeline) else "No",
+                    quote.active_scenario or "",
+                    quote.created_at.date().isoformat() if quote.created_at else "",
+                ]
+                for quote, version, deal in rows
+            ],
+        )
+
     items = [
         {
             "id": str(quote.id),

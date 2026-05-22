@@ -5,13 +5,16 @@ import { SortableTh } from '../components/SortableTh.jsx'
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
-const STATUS_COLORS = {
-  draft: '#9e9e9e',
-  submitted: '#2196f3',
-  under_review: '#ffc107',
-  info_required: '#ff9800',
-  approved: '#4caf50',
-  rejected: '#f44336',
+// Tinted-background scheme per AD-27. Tokens match PROJECT_CONTEXT.md §7
+// (success / warning / danger families). InternalQuotes.jsx is the canonical
+// reference.
+const STATUS_TONE = {
+  draft:         { bg: '#F5F7FA', fg: '#555' },
+  submitted:     { bg: '#E6EEF7', fg: '#1A6EBB' },
+  under_review:  { bg: '#FEFCE8', fg: '#B7791F' },
+  info_required: { bg: '#FEFCE8', fg: '#B7791F' },
+  approved:      { bg: '#E6F4EA', fg: '#2E7D32' },
+  rejected:      { bg: '#FEECEC', fg: '#C62828' },
 }
 
 const STATUS_LABELS = {
@@ -24,15 +27,16 @@ const STATUS_LABELS = {
 }
 
 function StatusBadge({ status }) {
+  const tone = STATUS_TONE[status] || { bg: '#F5F7FA', fg: '#555' }
   return (
     <span
       style={{
-        background: STATUS_COLORS[status] || '#9e9e9e',
-        color: 'white',
+        background: tone.bg,
+        color: tone.fg,
         padding: '2px 10px',
         borderRadius: 12,
         fontSize: 12,
-        fontWeight: 500,
+        fontWeight: 600,
       }}
     >
       {STATUS_LABELS[status] || status}
@@ -123,26 +127,28 @@ export default function ApplicationQueue() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ padding: 8 }}
-        >
-          <option value="">All statuses</option>
-          <option value="submitted">Submitted</option>
-          <option value="under_review">Under Review</option>
-          <option value="info_required">Info Required</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <input
-          placeholder="Search by company, applicant, or email…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: 1, padding: 8 }}
-        />
-      </div>
+      <section className="fp-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+          >
+            <option value="">All statuses</option>
+            <option value="submitted">Submitted</option>
+            <option value="under_review">Under Review</option>
+            <option value="info_required">Info Required</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <input
+            placeholder="Search by company, applicant, or email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+          />
+        </div>
+      </section>
 
       {loading && <p>Loading…</p>}
       {error && <p style={{ color: '#c0392b' }}>Could not load applications: {error}</p>}

@@ -267,21 +267,23 @@ export default function DealList() {
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', margin: '12px 0' }}>
-        <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}>
-          <option value="">All Statuses</option>
-          <option value="draft">Draft</option>
-          <option value="submitted">Submitted</option>
-          <option value="under_review">Under review</option>
-          <option value="info_required">Info required</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <input type="date" value={filters.from_date} onChange={(e) => setFilters((f) => ({ ...f, from_date: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }} />
-        <input type="date" value={filters.to_date} onChange={(e) => setFilters((f) => ({ ...f, to_date: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }} />
-        <button type="button" onClick={() => setFilters({ status: '', from_date: '', to_date: '' })} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #E0E4EA', background: '#fff', cursor: 'pointer' }}>Clear</button>
-      </div>
+      {/* Filter bar — single fp-card horizontal row per AD-26 */}
+      <section className="fp-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All Statuses</option>
+            <option value="draft">Draft</option>
+            <option value="submitted">Submitted</option>
+            <option value="under_review">Under review</option>
+            <option value="info_required">Info required</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <input type="date" value={filters.from_date} onChange={(e) => setFilters((f) => ({ ...f, from_date: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          <input type="date" value={filters.to_date} onChange={(e) => setFilters((f) => ({ ...f, to_date: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          <button type="button" onClick={() => setFilters({ status: '', from_date: '', to_date: '' })} style={{ padding: '8px 12px', border: '1px solid #E0E4EA', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 14 }}>Clear</button>
+        </div>
+      </section>
 
       {/* Pipeline summary strip */}
       <div style={{ background: '#F8FAFC', borderBottom: '1px solid #E0E4EA', padding: '12px 20px', display: 'flex', gap: 32, marginBottom: 16, flexWrap: 'wrap' }}>
