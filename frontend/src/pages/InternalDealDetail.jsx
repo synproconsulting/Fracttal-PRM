@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import QuoteForm from './QuoteForm.jsx'
 import QuoteDetail from './QuoteDetail.jsx'
@@ -447,6 +447,21 @@ export default function InternalDealDetail() {
   const navigate = useNavigate()
 
   const token = localStorage.getItem('token')
+
+  // Deep-link from /internal/quotes "View" link: ?openQuote={quoteId} auto-opens
+  // the quote modal once on mount, then strips the param so refreshing the
+  // page doesn't re-open it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [pendingOpenQuoteId] = useState(() => searchParams.get('openQuote'))
+  useEffect(() => {
+    if (pendingOpenQuoteId) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('openQuote')
+      setSearchParams(next, { replace: true })
+    }
+    // Mount-only — capturing the param is a one-shot operation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
 
 
@@ -1641,6 +1656,7 @@ export default function InternalDealDetail() {
         dealQtyLimitedTech={deal.qty_limited_tech_users ?? 0}
         currentUserRole={currentUserRole}
         setToast={setToast}
+        initialOpenQuoteId={pendingOpenQuoteId}
       />
 
       <ChangeLogSection dealId={deal.id} reloadKey={reloadKey} />
@@ -1699,7 +1715,7 @@ export default function InternalDealDetail() {
 
 }
 
-function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, currentUserRole, setToast }) {
+function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, currentUserRole, setToast, initialOpenQuoteId }) {
   const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
     || 'https://fracttal-prm-backend-production.up.railway.app'
   const token = localStorage.getItem('token')
@@ -1707,7 +1723,7 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showForm, setShowForm] = useState(false)
-  const [viewQuoteId, setViewQuoteId] = useState(null)
+  const [viewQuoteId, setViewQuoteId] = useState(initialOpenQuoteId || null)
   const [versionFormFor, setVersionFormFor] = useState(null) // {quoteId, initialValues}
   const [reloadKey, setReloadKey] = useState(0)
   const [pipelineSaving, setPipelineSaving] = useState(() => new Set())
