@@ -64,8 +64,10 @@ WRITE_ROLES = {
 }
 DELETE_ROLES = {UserRole.channel_ops_admin, UserRole.system_admin}
 ALLOWED_STATUS_TRANSITIONS = {
-    "draft": {"sent"},
-    "sent": {"accepted", "expired"},
+    "draft": {"sent", "cancelled"},
+    "sent": {"accepted", "expired", "cancelled"},
+    # accepted / expired / cancelled are terminal -- absence here means
+    # PATCH /quotes/{id}/status returns 422 for any outbound transition.
 }
 
 
@@ -592,6 +594,49 @@ def update_quote_status(
         object_id=quote.id,
         before={"status": before},
         after={"status": new_status},
+        ip_address=_client_ip(request) if request else None,
+    )
+    return _serialize_quote(quote)
+
+
+@router.patch("/quotes/{quote_id}/pipeline-inclusion")
+def update_pipeline_inclusion(
+    quote_id: uuid.UUID,
+    payload: dict = Body(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Toggle whether the quote contributes to the cross-deal pipeline total.
+
+    Body: ``{"include_in_pipeline": bool}``. Auth: channel_manager,
+    channel_ops_admin, system_admin. Logs ``quote.pipeline_inclusion_changed``
+    with before/after so the audit trail records every flip.
+    """
+    _check_write_role(current_user)
+    quote = _get_quote_or_404(db, quote_id)
+
+    raw = payload.get("include_in_pipeline")
+    if not isinstance(raw, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="include_in_pipeline must be a boolean",
+        )
+
+    before = bool(quote.include_in_pipeline)
+    quote.include_in_pipeline = raw
+    quote.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quote)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="quote.pipeline_inclusion_changed",
+        object_type="quote",
+        object_id=quote.id,
+        before={"include_in_pipeline": before},
+        after={"include_in_pipeline": raw},
         ip_address=_client_ip(request) if request else None,
     )
     return _serialize_quote(quote)
@@ -1134,7 +1179,11 @@ def list_internal_quotes(
     all_quotes = db.query(Quote).all()
     pipeline_total = 0.0
     for q in all_quotes:
-        if q.status == "expired":
+        # Pipeline contribution requires the explicit include_in_pipeline opt-in
+        # AND a live status. Expired and cancelled never contribute.
+        if not bool(q.include_in_pipeline):
+            continue
+        if q.status in ("expired", "cancelled"):
             continue
         av = (
             db.query(QuoteVersion)
@@ -1155,6 +1204,7 @@ def list_internal_quotes(
         "sent": sum(1 for q in all_quotes if q.status == "sent"),
         "accepted": sum(1 for q in all_quotes if q.status == "accepted"),
         "expired": sum(1 for q in all_quotes if q.status == "expired"),
+        "cancelled": sum(1 for q in all_quotes if q.status == "cancelled"),
         "pipeline_total": round(pipeline_total, 2),
     }
 

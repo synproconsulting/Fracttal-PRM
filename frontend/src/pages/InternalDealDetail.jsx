@@ -29,6 +29,10 @@ const STATUS_TONE = {
 
   expired: 'fp-badge--neutral',
 
+  lost: 'fp-badge--danger',
+
+  withdrawn: 'fp-badge--neutral',
+
 }
 
 
@@ -48,6 +52,10 @@ const STATUS_LABEL = {
   rejected: 'Rejected',
 
   expired: 'Expired',
+
+  lost: 'Lost',
+
+  withdrawn: 'Withdrawn',
 
 }
 
@@ -489,6 +497,14 @@ export default function InternalDealDetail() {
     || currentUserRole === 'channel_ops_admin'
     || currentUserRole === 'channel_manager'
   )
+  // Mark Lost / Mark Withdrawn buttons are gated to the review roles
+  // (channel_manager + channel_ops_admin + system_admin) and only shown
+  // when the deal is in a status the backend permits transitioning out of.
+  const canTerminate = (
+    currentUserRole === 'system_admin'
+    || currentUserRole === 'channel_ops_admin'
+    || currentUserRole === 'channel_manager'
+  )
   const [conflictRerunning, setConflictRerunning] = useState(false)
 
   useEffect(() => {
@@ -740,6 +756,33 @@ export default function InternalDealDetail() {
 
   }
 
+
+
+  async function setTerminalStatus(newStatus) {
+    setActionSaving(true); setError(null)
+    try {
+      const r = await fetch(`${API}/deal-registrations/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const msg = typeof body.detail === 'string'
+          ? body.detail
+          : JSON.stringify(body.detail || body)
+        throw new Error(msg || `HTTP ${r.status}`)
+      }
+      const label = newStatus === 'lost' ? 'Lost' : 'Withdrawn'
+      setToast(`Deal marked as ${label}`)
+      setReloadKey((k) => k + 1)
+      window.setTimeout(() => setToast(null), 4000)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionSaving(false)
+    }
+  }
 
 
   async function cancelInfoRequest() {
@@ -1440,6 +1483,74 @@ export default function InternalDealDetail() {
                 <div><strong>Rejected</strong> {deal.reviewed_at && `on ${formatDate(deal.reviewed_at)}`}</div>
 
                 {deal.review_notes && <div style={{ marginTop: 6 }}>{deal.review_notes}</div>}
+
+              </div>
+
+            )}
+
+            {deal.status === 'lost' && (
+
+              <div className="fp-alert fp-alert--danger" style={{ margin: 0 }}>
+
+                <div><strong>Lost</strong></div>
+
+              </div>
+
+            )}
+
+            {deal.status === 'withdrawn' && (
+
+              <div className="fp-alert fp-alert--neutral" style={{ margin: 0 }}>
+
+                <div><strong>Withdrawn</strong></div>
+
+              </div>
+
+            )}
+
+            {canTerminate && (deal.status === 'submitted' || deal.status === 'under_review' || deal.status === 'approved') && (
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+
+                {deal.status === 'approved' && (
+
+                  <button type="button" className="fp-btn fp-btn--danger"
+
+                          disabled={actionSaving}
+
+                          onClick={() => {
+
+                            if (window.confirm('Mark this deal as Lost? This cannot be undone.')) {
+
+                              setTerminalStatus('lost')
+
+                            }
+
+                          }}>
+
+                    Mark as Lost
+
+                  </button>
+
+                )}
+
+                <button type="button" className="fp-btn fp-btn--ghost"
+
+                        disabled={actionSaving}
+
+                        onClick={() => {
+
+                          if (window.confirm('Mark this deal as Withdrawn? This cannot be undone.')) {
+
+                            setTerminalStatus('withdrawn')
+
+                          }
+
+                        }}>
+
+                  Mark as Withdrawn
+
+                </button>
 
               </div>
 

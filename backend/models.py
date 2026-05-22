@@ -1507,7 +1507,11 @@ class Quote(Base):
     currency_code = Column(String(3), default="USD", nullable=False)
     active_version = Column(Integer, default=1, nullable=False)
     active_scenario = Column(String, nullable=True)
-    status = Column(String, default="draft", nullable=False)  # draft|sent|accepted|expired
+    status = Column(String, default="draft", nullable=False)  # draft|sent|accepted|expired|cancelled
+    # Migration 032 -- channel-manager-controlled flag deciding whether the
+    # quote contributes to the cross-deal pipeline_total summary. Default
+    # False so back-filled rows are explicitly opted in.
+    include_in_pipeline = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -1551,6 +1555,10 @@ class QuoteVersion(Base):
     pdf_filename = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
+    # Migration 032 -- composition flags. Services pricing is not yet built,
+    # so existing rows are software-only (includes_software=TRUE, services=FALSE).
+    includes_software = Column(Boolean, default=True, nullable=False)
+    includes_services = Column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("quote_id", "version_number", name="uq_quote_versions_quote_version"),
