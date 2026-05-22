@@ -826,7 +826,7 @@ def list_internal_deals(
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     export: Optional[str] = Query(default=None),
-    sort_by: Optional[str] = Query(default="created_at"),
+    sort_by: Optional[str] = Query(default=None),
     sort_dir: Optional[str] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -835,6 +835,16 @@ def list_internal_deals(
 
     Supports `?status=` and `?partner_org_id=` filters. By default returns all
     statuses; the frontend filter tabs constrain to submitted / under_review.
+
+    Sort: when no ``sort_by`` query param is supplied, fall back to the
+    composite ``submitted_at DESC NULLS LAST, created_at DESC`` order that
+    surfaces submitted deals first and pushes drafts (which have no
+    ``submitted_at``) to the bottom. PR #139 inadvertently changed this
+    default to a single-column ``created_at DESC`` when introducing
+    sortable column headers, which let drafts float to the top of the
+    internal queue. When ``sort_by`` IS supplied (column-header click on
+    the frontend), the single-column ``apply_sort`` path applies as
+    introduced in PR #139.
     """
     _require_review_role(current_user)
     # Outer-join PartnerOrganization so the allowlisted ``partner_org`` key
@@ -876,14 +886,24 @@ def list_internal_deals(
             ],
         )
 
-    query = apply_sort(
-        query,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        allowed=_INTERNAL_DEAL_SORT,
-        default_col=DealRegistration.created_at,
-        tiebreaker=DealRegistration.id,
-    )
+    if sort_by is None:
+        # Default composite sort: submitted deals first (most-recently-submitted
+        # at the top), drafts (no submitted_at) at the bottom. Matches the
+        # behaviour the CSV export retained.
+        query = query.order_by(
+            DealRegistration.submitted_at.desc().nullslast(),
+            DealRegistration.created_at.desc(),
+            DealRegistration.id,
+        )
+    else:
+        query = apply_sort(
+            query,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            allowed=_INTERNAL_DEAL_SORT,
+            default_col=DealRegistration.created_at,
+            tiebreaker=DealRegistration.id,
+        )
     total = query.count()
     items = query.offset(offset).limit(limit).all()
     # FPRM-143: include partner_legal_name on each row (bulk lookup, single query).
