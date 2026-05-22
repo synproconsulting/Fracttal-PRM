@@ -178,6 +178,26 @@ def _quote_total(client, quote_id):
     return float(r.json()["active_version_data"]["grand_total_after_discount"])
 
 
+# Migration 033 / PR-after-156: PATCH /quotes/{id}/status -> accepted now
+# requires a ``quote_acceptance`` document on the quote. The shared helper
+# below attaches a minimal one so existing transition tests can still
+# accept a quote without each test caring about the file payload.
+import base64 as _base64  # noqa: E402
+
+_TEST_PDF_BYTES = b"%PDF-1.4\n%%EOF"
+
+
+def _attach_acceptance_doc(client, quote_id):
+    r = client.post(f"/quotes/{quote_id}/documents", json={
+        "document_type": "quote_acceptance",
+        "file_name": "acceptance.pdf",
+        "file_data": _base64.b64encode(_TEST_PDF_BYTES).decode(),
+        "file_size_bytes": len(_TEST_PDF_BYTES),
+    })
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
 # ============================================================
 # State machine
 # ============================================================
@@ -189,6 +209,7 @@ def _accept_one_quote(client, deal_id):
     Returns the quote id."""
     q = _make_quote(client, deal_id)
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
+    _attach_acceptance_doc(client, q)
     client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     return q
 
@@ -270,6 +291,7 @@ def test_won_cascade_cancels_draft_and_sent_preserves_accepted(client, db_sessio
     q_acc = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q_sent}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
+    _attach_acceptance_doc(client, q_acc)
     client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
 
     r = client.post(f"/internal/deals/{deal.id}/won")
@@ -379,6 +401,7 @@ def test_accept_quote_returns_suggest_mark_won_when_no_pending_quotes(client, db
     deal = _deal(db_session, org.id, status="approved")
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
+    _attach_acceptance_doc(client, q)
 
     r = client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     assert r.status_code == 200, r.text
@@ -394,6 +417,7 @@ def test_accept_quote_returns_no_suggest_when_pending_quote_exists(client, db_se
     q_acc = _make_quote(client, deal.id)
     _make_quote(client, deal.id)  # second quote, stays draft
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
+    _attach_acceptance_doc(client, q_acc)
 
     r = client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
     assert r.status_code == 200
@@ -414,6 +438,7 @@ def test_won_deals_excluded_from_pipeline_total(client, db_session):
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/pipeline-inclusion", json={"include_in_pipeline": True})
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
+    _attach_acceptance_doc(client, q)
     client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     # Pre-won: the accepted quote IS in pipeline_total
     pre = client.get("/internal/quotes").json()["summary"]
@@ -430,6 +455,7 @@ def test_closed_won_value_sums_accepted_quotes_on_won_deals(client, db_session):
     deal = _deal(db_session, org.id, status="approved")
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
+    _attach_acceptance_doc(client, q)
     client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     expected = round(_quote_total(client, q), 2)
 
