@@ -171,11 +171,19 @@ export default function DealList() {
   useEffect(() => { if (viewMode === 'list') fetchList() /* eslint-disable-line */ }, [viewMode, listQueryStr])
 
   // Pipeline value for a deal = sum of `include_in_pipeline` quote totals
-  // (server-aggregated as `pipeline_total`). Fall back to the partner's own
-  // estimated_deal_value when no quotes have been opted into the pipeline yet.
+  // (server-aggregated as `pipeline_total`, excluding expired/cancelled
+  // quotes per the helper in deal_registrations_router). NO fallback to
+  // estimated_deal_value -- pipeline must reflect actual quoted-and-opted-in
+  // value only; estimated_deal_value is the partner's guess at deal sign-on
+  // and renders in its own column. Deals with no pipeline-included quote
+  // contribute 0 to summary/column totals; list rows render '—'.
   function dealPipelineValue(d) {
     if (d && d.pipeline_total != null) return Number(d.pipeline_total) || 0
-    return Number(d?.estimated_deal_value) || 0
+    return 0
+  }
+
+  function formatPipelineCell(d) {
+    return d?.pipeline_total != null ? formatMoney(Number(d.pipeline_total)) : '—'
   }
 
   const summary = useMemo(() => {
@@ -264,8 +272,8 @@ export default function DealList() {
         ) : (
           <>
             <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Deals</div><div style={{ fontSize: 20, fontWeight: 700 }}>{summary.total}</div></div>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Value</div><div style={{ fontSize: 20, fontWeight: 700 }}>{formatMoney(summary.totalValue)}</div></div>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved Value</div><div style={{ fontSize: 20, fontWeight: 700, color: '#22C55E' }}>{formatMoney(summary.approvedValue)}</div></div>
+            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Pipeline Value</div><div style={{ fontSize: 20, fontWeight: 700 }}>{formatMoney(summary.totalValue)}</div></div>
+            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved Pipeline</div><div style={{ fontSize: 20, fontWeight: 700, color: '#22C55E' }}>{formatMoney(summary.approvedValue)}</div></div>
             <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Info Required</div><div style={{ fontSize: 20, fontWeight: 700, color: '#8B5CF6' }}>{summary.infoRequired}</div></div>
           </>
         )}
@@ -305,7 +313,12 @@ export default function DealList() {
                       <div key={d.id} style={{ background: '#fff', border: '1px solid #E0E4EA', borderRadius: 6, padding: 12, marginBottom: 8 }}>
                         <div style={{ fontWeight: 700, fontSize: 14, color: '#1E293B' }}>{d.deal_name}</div>
                         <div style={{ fontSize: 12, color: '#64748B' }}>{d.customer_name || '—'}</div>
-                        <div style={{ fontSize: 13, color: '#1A6EBB', marginTop: 4 }}>{formatMoney(dealPipelineValue(d))}</div>
+                        <div style={{ fontSize: 13, color: '#1A6EBB', marginTop: 4 }} title="Pipeline value (sum of quotes opted into pipeline)">
+                          Pipeline: {formatPipelineCell(d)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#94A3B8' }} title="Estimated deal value (partner's own estimate)">
+                          Est: {d.estimated_deal_value != null ? formatMoney(Number(d.estimated_deal_value)) : '—'}
+                        </div>
                         <div style={{ fontSize: 12, color: '#64748B' }}>{formatDate(d.estimated_close_date)}</div>
                       </div>
                     ))}
@@ -343,7 +356,8 @@ export default function DealList() {
                   <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
                   <th>Customer</th>
                   <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
-                  <th>Est. value</th>
+                  <th>Pipeline</th>
+                  <th>Estimated Value</th>
                   <th>Submitted</th>
                 </tr>
               </thead>
@@ -359,7 +373,8 @@ export default function DealList() {
                       </td>
                       <td>{d.customer_name || '—'}</td>
                       <td><StatusBadge status={d.status} /></td>
-                      <td>{formatMoney(dealPipelineValue(d))}</td>
+                      <td>{formatPipelineCell(d)}</td>
+                      <td>{d.estimated_deal_value != null ? formatMoney(Number(d.estimated_deal_value)) : '—'}</td>
                       <td>{formatDate(d.submitted_at)}</td>
                     </tr>
                   )
