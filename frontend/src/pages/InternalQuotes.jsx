@@ -42,6 +42,12 @@ export default function InternalQuotes() {
   const [summary, setSummary] = useState(null)
   const [total, setTotal] = useState(0)
   const [filters, setFilters] = useState({ status: '', search: '', feature_plan: '' })
+  // Pipeline-only is a client-side filter — the backend endpoint doesn't
+  // accept it as a query param yet, and include_in_pipeline is already on
+  // every row (added in PR #155). Trade-off: the current paginated page may
+  // briefly show fewer rows than page_size when the toggle is on; that's
+  // acceptable for this small surface area.
+  const [pipelineOnly, setPipelineOnly] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize] = useState(20)
   const [loading, setLoading] = useState(true)
@@ -125,13 +131,20 @@ export default function InternalQuotes() {
             value={filters.search}
             onChange={(e) => { setPage(1); setFilters((f) => ({ ...f, search: e.target.value })) }}
             style={{ flex: 1, minWidth: 200, padding: '8px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                 title="Show only quotes currently counted toward the pipeline total">
+            <input type="checkbox" checked={pipelineOnly} onChange={(e) => setPipelineOnly(e.target.checked)} />
+            <span style={{ fontSize: 13, color: '#64748B', fontWeight: 600 }}>Pipeline only</span>
+          </label>
         </div>
       </section>
 
       {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
       {loading && <div style={{ color: '#64748B', padding: 12 }}>Loading quotes…</div>}
 
-      {!loading && (
+      {!loading && (() => {
+        const visibleItems = pipelineOnly ? items.filter((q) => q.include_in_pipeline === true) : items
+        return (
         <section className="fp-card">
           <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>
@@ -148,12 +161,12 @@ export default function InternalQuotes() {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && (
+              {visibleItems.length === 0 && (
                 <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
                   No quotes match the current filters.
                 </td></tr>
               )}
-              {items.map((q) => (
+              {visibleItems.map((q) => (
                 <tr key={q.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
                   <td style={{ padding: 10 }}>
                     <Link to={`/internal/deals/${q.deal_id}?openQuote=${q.id}`} style={{ color: '#1A6EBB', fontWeight: 600 }}>
@@ -199,7 +212,8 @@ export default function InternalQuotes() {
             </div>
           )}
         </section>
-      )}
+        )
+      })()}
     </div>
   )
 }
