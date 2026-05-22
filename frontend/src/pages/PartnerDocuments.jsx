@@ -247,6 +247,8 @@ export default function PartnerDocuments() {
   const [actionDoc, setActionDoc] = useState(null)
   const [actionSaving, setActionSaving] = useState(false)
   const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+  const [typeFilter, setTypeFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   function toggleSort(field) {
     setSort((s) => s.field === field
@@ -332,6 +334,29 @@ export default function PartnerDocuments() {
         </div>
       </div>
 
+      {/* Filter bar — single fp-card horizontal row per AD-26. Client-side
+          filter on the already-loaded set; documents pages are small enough
+          that this avoids a backend query-param round-trip. */}
+      <section className="fp-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All document types</option>
+            {DOCUMENT_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All statuses</option>
+            <option value="pending_review">Pending review</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="expired">Expired</option>
+          </select>
+        </div>
+      </section>
+
       {error && (
         <div className="fp-alert fp-alert--danger">{error}</div>
       )}
@@ -352,7 +377,20 @@ export default function PartnerDocuments() {
         </div>
       )}
 
-      {!loading && docs.length > 0 && (
+      {!loading && docs.length > 0 && (() => {
+        const visibleDocs = docs.filter((d) => {
+          if (typeFilter && d.document_type !== typeFilter) return false
+          if (statusFilter && d.status !== statusFilter) return false
+          return true
+        })
+        if (visibleDocs.length === 0) {
+          return (
+            <div className="fp-card" style={{ color: 'var(--fp-text-secondary)', textAlign: 'center', padding: 32 }}>
+              No documents match the current filters.
+            </div>
+          )
+        }
+        return (
         <table className="fp-table">
           <thead>
             <tr>
@@ -365,7 +403,7 @@ export default function PartnerDocuments() {
             </tr>
           </thead>
           <tbody>
-            {docs.map((d) => (
+            {visibleDocs.map((d) => (
               <tr key={d.id}>
                 <td>{d.document_type}</td>
                 <td>{d.document_name}</td>
@@ -407,7 +445,8 @@ export default function PartnerDocuments() {
             ))}
           </tbody>
         </table>
-      )}
+        )
+      })()}
 
       {uploadOpen && (
         <UploadModal

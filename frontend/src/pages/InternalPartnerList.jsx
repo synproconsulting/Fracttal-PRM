@@ -215,44 +215,41 @@ export default function InternalPartnerList() {
         <button type="button" onClick={exportCSV} disabled={exporting} style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>{exporting ? 'Exporting...' : 'Export CSV'}</button>
       </div>
 
-      <div className="fp-card" style={{ padding: 12, marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 240 }}>
-          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Search</span>
+      {/* Filter bar — single fp-card horizontal row per AD-26.
+          Order: dropdowns LEFT, search RIGHT (flex:1) — matches
+          InternalQuotes.jsx canonical reference. */}
+      <section className="fp-card" style={{ marginTop: 16, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}
+                  style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All statuses</option>
+            {STATUS_OPTIONS.filter((o) => o.value).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}
+                  style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All categories</option>
+            {CATEGORY_OPTIONS.filter((o) => o.value).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <select value={tier} onChange={(e) => setTier(e.target.value)}
+                  style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All tiers</option>
+            {TIER_OPTIONS.filter((o) => o.value).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
           <input
-            placeholder="Partner legal name…"
+            type="search"
+            placeholder="Search partner legal name…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6 }}
+            style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
           />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Status</span>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}
-                  style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
-            {STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Category</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}
-                  style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
-            {CATEGORY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Tier</span>
-          <select value={tier} onChange={(e) => setTier(e.target.value)}
-                  style={{ padding: 8, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
-            {TIER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+        </div>
+      </section>
 
       {loading && <div className="fp-card" style={{ padding: 18, marginTop: 16 }}>Loading partners…</div>}
       {error && <div className="fp-alert fp-alert--danger" style={{ marginTop: 16 }}>Could not load partners: {error}</div>}

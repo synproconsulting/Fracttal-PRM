@@ -316,6 +316,7 @@ export default function InternalUsers() {
   const [error, setError] = useState(null)
   const [roleFilter, setRoleFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [searchInput, setSearchInput] = useState('')
   const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
 
   function toggleSort(field) {
@@ -411,27 +412,32 @@ export default function InternalUsers() {
         </div>
       </div>
 
-      <div className="fp-card" style={{ padding: 12, marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Role</span>
+      {/* Filter bar — single fp-card horizontal row per AD-26.
+          Search is client-side over the loaded set (page is non-paginated). */}
+      <section className="fp-card" style={{ marginTop: 16, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
-                  style={{ padding: 6, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 180 }}>
-            <option value="">All</option>
+                  style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All roles</option>
             {INTERNAL_ROLE_OPTIONS.map((r) => (
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#5A6478', fontWeight: 600 }}>Status</span>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-                  style={{ padding: 6, border: '1px solid #CBD5E1', borderRadius: 6, minWidth: 140 }}>
-            <option value="">All</option>
+                  style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All statuses</option>
             <option value="active">Active</option>
             <option value="disabled">Disabled</option>
           </select>
-        </label>
-      </div>
+          <input
+            type="search"
+            placeholder="Search by email or name…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+          />
+        </div>
+      </section>
 
       {loading && <div className="fp-card" style={{ padding: 18, marginTop: 16 }}>Loading users…</div>}
       {error && <div className="fp-alert fp-alert--danger" style={{ marginTop: 16 }}>Could not load users: {error}</div>}
@@ -451,14 +457,23 @@ export default function InternalUsers() {
               </tr>
             </thead>
             <tbody>
-              {users.length === 0 && (
-                <tr>
-                  <td colSpan={7} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
-                    No internal users match the current filters.
-                  </td>
-                </tr>
-              )}
-              {users.map((u) => {
+              {(() => {
+                const q = searchInput.trim().toLowerCase()
+                const visibleUsers = q
+                  ? users.filter((u) =>
+                      (u.email || '').toLowerCase().includes(q) ||
+                      (u.full_name || '').toLowerCase().includes(q))
+                  : users
+                if (visibleUsers.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
+                        No internal users match the current filters.
+                      </td>
+                    </tr>
+                  )
+                }
+                return visibleUsers.map((u) => {
                 const isSelf = u.id === selfId
                 return (
                   <tr key={u.id} style={{ borderTop: '1px solid #E5E7EB' }}>
@@ -495,7 +510,8 @@ export default function InternalUsers() {
                     </td>
                   </tr>
                 )
-              })}
+                })
+              })()}
             </tbody>
           </table>
         </div>

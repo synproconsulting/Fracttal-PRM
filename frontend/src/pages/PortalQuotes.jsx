@@ -34,11 +34,36 @@ export default function PortalQuotes() {
   const [statusFilter, setStatusFilter] = useState('')
   const [pipelineOnly, setPipelineOnly] = useState(false)
   const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+  const [exporting, setExporting] = useState(false)
 
   function toggleSort(field) {
     setSort((s) => s.field === field
       ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' }
       : { field, dir: 'asc' })
+  }
+
+  async function exportCSV() {
+    if (!partnerOrgId || !token) return
+    setExporting(true)
+    try {
+      const qs = new URLSearchParams({ export: 'csv' })
+      if (statusFilter) qs.set('status', statusFilter)
+      const r = await fetch(`${API}/partners/${partnerOrgId}/quotes?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'my_quotes_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('CSV export error:', e)
+      setError(e.message)
+    } finally {
+      setExporting(false)
+    }
   }
 
   useEffect(() => {
@@ -61,24 +86,25 @@ export default function PortalQuotes() {
 
   return (
     <div>
-      <div className="fp-page-header">
+      <div className="fp-page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <h1 className="fp-page-title">My Quotes</h1>
+        <button type="button" onClick={exportCSV} disabled={exporting}
+                style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>
+          {exporting ? 'Exporting...' : 'Export CSV'}
+        </button>
       </div>
 
       <section className="fp-card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 13, color: '#64748B', fontWeight: 600 }}>Status</span>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-              style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}>
-              <option value="">All</option>
-              <option value="draft">Draft</option>
-              <option value="sent">Sent</option>
-              <option value="accepted">Accepted</option>
-              <option value="expired">Expired</option>
-            </select>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="sent">Sent</option>
+            <option value="accepted">Accepted</option>
+            <option value="expired">Expired</option>
+          </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginLeft: 'auto' }}
                  title="Show only quotes currently counted toward the pipeline total">
             <input
               type="checkbox"
