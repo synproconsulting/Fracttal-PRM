@@ -2054,3 +2054,70 @@ Alembic head bumps from 026 → **028**.
 5. **Migrations stay sequential; admin data does not.** Story 4 added migration 028 for `addon_catalog_items` columns but did **not** seed categories — those flow through the pricing admin API per AD-25. The migration is the smallest possible thing that unblocks the UI; the taxonomy itself is admin-maintained data. Empty taxonomies show as "Other" in the quote form, which is acceptable until ops populates them.
 
 ---
+
+## Post-Sprint 20 UX & Workflow Fixes (PRs #128–#163)
+
+**Closed:** 2026-05-22
+**Migration head:** 028 → **033**
+**Tests:** 604 → **710**
+**Last PR merged in this session:** **#163**
+**No Jira ticket** — driven by direct browser testing of the Sprint 20 deliverables; the user opted to run polish as an unticketed session and reconcile docs in a follow-up sweep (this entry).
+
+### Why this session existed
+
+Sprint 20 closed clean on Alembic 028, but live partner-portal and internal-queue smoke tests surfaced a long tail of UX gaps and workflow holes: the deal form needed restructure for the SPICED assessment to be usable, list views had no sortable columns, the quote lifecycle was missing terminal states (cancelled / lost / withdrawn / won) and a retract path, commission rates needed an admin tab, pipeline values were drifting from the actual quoted state, and deal headers had stale single-quote assumptions. Rather than packaging into a new sprint, the user worked through the punch list directly with Claude Code, opening one PR at a time, each merged via the standard auto-merger before the next.
+
+### Key deliverables
+
+- **Deal form restructure** — Section A and Section B SPICED assessment laid out with a dedicated partner contact-information section; combobox for current systems fields (replacing free-form text); evenly split feature checkboxes.
+- **Internal deal creation by channel managers** — the partner-only `POST /deal-registrations` path opened to channel_manager / channel_ops_admin / system_admin (migration 027 had already added `created_on_behalf_of`; this session wired the UI's "New Deal" modal into the same partner pool).
+- **Add-on catalogue seeded** — 47 new add-on rows added via the AD-25 admin API (no migration).
+- **Migration 029** — license qty columns (`qty_transactional_users` / `qty_limited_tech_users`) finally land on `deal_registrations`. Was a Sprint 20 spec deviation; now corrected.
+- **Migration 030** — `customer_contact_position` hotfix (column missed under certain SQLite test paths in 029).
+- **Sortable columns** — `SortableTh` shared component (`frontend/src/components/SortableTh.jsx`) added and adopted across all 9 list views.
+- **Commission Rates admin tab** — new tab in Program Config powered by the new `/internal/config/commission-rates` endpoints; migration 031 adds `is_active` + timestamps to `commission_structures`. Per AD-25 commission catalogue entries are now admin-maintained.
+- **Conflict check rerun button** — `POST /internal/deals/{id}/conflict-check` exposed on `InternalDealDetail.jsx` so reviewers can re-run the checker after data changes without retransitioning the deal.
+- **Pipeline toggle + extended terminal statuses** — `quotes.include_in_pipeline` toggle (migration 032) plus deal terminal statuses `cancelled` / `lost` / `withdrawn` / `won`. The per-deal `pipeline_total` now reads `include_in_pipeline` exclusively.
+- **Quote document attachment + acceptance gate** — new `quote_documents` table (migration 033) and `POST/GET/GET(download)/DELETE /quotes/{id}/documents` endpoints. `PATCH /quotes/{id}/status` rejects `sent → accepted` unless a non-deleted `signed_acceptance` document exists.
+- **Deal Won with cascade quote cancellation** — `POST /internal/deals/{id}/won` requires at least one accepted quote on the deal and cascade-cancels every other non-terminal quote version on the same deal (audit per quote).
+- **system_admin approval break-glass bypass** — multi-step approval enforcement (AD-22) now treats system_admin as satisfying any `required_role`, unblocking emergency reviews without a Jira-ticketed workflow edit.
+- **Quote version lock on terminal states** — `accepted` / `expired` / `cancelled` quotes hide Add Version / Set as Active controls.
+- **Quote retract** — `accepted → sent` transition added to `PATCH /quotes/{id}/status`, **system_admin only** (the rest of the state machine unchanged).
+- **Portal pipeline values corrected** — `My Pipeline` summary cards and Kanban columns now reflect `pipeline_total` (sum of include_in_pipeline quotes) not `estimated_deal_value`.
+- **Deal header redesigned** — multi-quote model surfaces a Pipeline Value badge + Quote Accepted chip instead of the old single-quote summary.
+- **Deep link** — `/internal/quotes` row links open the quote modal directly on `/internal/deals/:id?openQuote=:quote_id`.
+- **Channel manager test user** — `cmtest@test.com / TestPass123!` (role `channel_manager`) created for ongoing validation; recorded in `RUNBOOK.md` §2.
+
+### Migrations added
+
+| Revision | File | Purpose |
+|---|---|---|
+| 029 | `029_add_license_qty_to_deal_registrations.py` | `qty_transactional_users` / `qty_limited_tech_users` columns on `deal_registrations` (closes Sprint 20 spec deviation) |
+| 030 | `030_add_customer_contact_position.py` | `customer_contact_position` column hotfix (idempotent — covers SQLite test paths missed by 029) |
+| 031 | `031_extend_commission_structures.py` | `is_active` + `created_at` + `updated_at` on `commission_structures` (unblocks Commission Rates admin tab) |
+| 032 | `032_pipeline_toggle_and_quote_composition.py` | `quotes.include_in_pipeline` + `quote_versions.includes_software` / `includes_services` |
+| 033 | `033_create_quote_documents.py` | New `quote_documents` table (acceptance-gate substrate) |
+
+Alembic head bumps from 028 → **033**.
+
+### Frontend design standards codified
+
+This session also produced a multi-page design consistency audit (`InternalQuotes.jsx` chosen as the reference template). Seven new ADs (**AD-26 through AD-32**) and a new **PROJECT_CONTEXT.md Section 7** lock the layout grammar: filter-bar layout, tinted status badges, `fp-table` standard, input/select styling, Export CSV placement, the summary-cards rule, and the `fp-card` wrapper convention. The corresponding code changes (standardising the seven non-conformant pages — InternalPartnerList, PartnerUserManagement, InternalUsers, ApplicationQueue, PortalQuotes, DealList, PartnerDocuments) ship as a second PR after this docs sync merges, per the user's "one PR at a time" rule.
+
+### Test count
+
+| Source | Count |
+|---|---|
+| Sprint 20 baseline | 604 |
+| Post-Sprint 20 net additions across PRs #128–#163 | +106 |
+| **Post-Sprint 20 total** | **710** |
+
+### Lessons
+
+1. **Unticketed sessions need a docs-sync follow-up.** Skipping Jira during a polish run is fine when the user is driving the punch list interactively, but the canonical project docs (CLAUDE.md / PROJECT_CONTEXT.md / CLAUDE_HISTORY.md / RUNBOOK.md) still need a single reconciliation PR at the end. This entry is that PR.
+2. **"Migration 028 only adds columns" is a load-bearing AD-25 corollary.** When the user added 47 new add-ons during this session, no migration was required — those are admin data per AD-25. The pattern keeps recurring; the migrations 029–033 in this session all touch *schema*, not catalogue rows, which is the correct distinction to maintain going forward.
+3. **The retract path is a system_admin-only operation by design.** Opening `accepted → sent` to channel_manager would invite accidental retract from partners-facing approvals. Keeping it system_admin-only matches the AD-22 break-glass spirit — high-blast-radius reversals stay narrow.
+4. **The acceptance gate belongs at the router, not the database.** A CHECK constraint on `quote_documents` would require knowing about quote status (cross-table) and would be hard to bypass for legitimate operational cases (e.g. importing a pre-signed acceptance from a paper contract via a backfill). Router-level enforcement keeps the rule visible alongside the transition code and easy to instrument.
+5. **Design audits work best as one read pass, one PR for docs, one PR for code.** The Section 7 + AD-26..32 docs land first so the standards are recorded and reviewable; the code changes that bring the seven non-conformant pages into compliance land as a separate, mechanical PR. The split keeps reviewers focused: "are the standards correct?" vs "does the code conform?"
+
+---
