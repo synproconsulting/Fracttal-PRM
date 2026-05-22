@@ -1639,6 +1639,8 @@ export default function InternalDealDetail() {
         dealId={deal.id}
         dealQtyTransactional={deal.qty_transactional_users ?? 1}
         dealQtyLimitedTech={deal.qty_limited_tech_users ?? 0}
+        currentUserRole={currentUserRole}
+        setToast={setToast}
       />
 
       <ChangeLogSection dealId={deal.id} reloadKey={reloadKey} />
@@ -1697,7 +1699,7 @@ export default function InternalDealDetail() {
 
 }
 
-function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech }) {
+function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, currentUserRole, setToast }) {
   const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
     || 'https://fracttal-prm-backend-production.up.railway.app'
   const token = localStorage.getItem('token')
@@ -1708,6 +1710,34 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech }) {
   const [viewQuoteId, setViewQuoteId] = useState(null)
   const [versionFormFor, setVersionFormFor] = useState(null) // {quoteId, initialValues}
   const [reloadKey, setReloadKey] = useState(0)
+  const [pipelineSaving, setPipelineSaving] = useState(() => new Set())
+  const canTogglePipeline = (
+    currentUserRole === 'system_admin'
+    || currentUserRole === 'channel_ops_admin'
+    || currentUserRole === 'channel_manager'
+  )
+
+  async function togglePipeline(q) {
+    const next = !q.include_in_pipeline
+    setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, include_in_pipeline: next } : x)))
+    setPipelineSaving((prev) => { const s = new Set(prev); s.add(q.id); return s })
+    try {
+      const r = await fetch(`${API}/quotes/${q.id}/pipeline-inclusion`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ include_in_pipeline: next }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    } catch (e) {
+      setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, include_in_pipeline: !next } : x)))
+      if (typeof setToast === 'function') {
+        setToast('Failed to update pipeline inclusion')
+        window.setTimeout(() => setToast(null), 4000)
+      }
+    } finally {
+      setPipelineSaving((prev) => { const s = new Set(prev); s.delete(q.id); return s })
+    }
+  }
 
   useEffect(() => {
     if (!dealId || !token) return
@@ -1735,6 +1765,7 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech }) {
 
   return (
     <section className="fp-card" style={{ marginTop: 24 }}>
+      <style>{`@keyframes fp-quote-pipeline-spin { to { transform: rotate(360deg); } }`}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h2 className="fp-section-title" style={{ margin: 0 }}>Quotes</h2>
         <button type="button" onClick={() => setShowForm(true)} className="fp-btn fp-btn--primary">
@@ -1756,6 +1787,7 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech }) {
               <th style={{ textAlign: 'left', padding: 8 }}>Currency</th>
               <th style={{ textAlign: 'right', padding: 8 }}>Active Ver.</th>
               <th style={{ textAlign: 'left', padding: 8 }}>Status</th>
+              <th style={{ textAlign: 'center', padding: 8 }}>Pipeline</th>
               <th style={{ textAlign: 'right', padding: 8 }}>Grand Total</th>
               <th style={{ textAlign: 'left', padding: 8 }}>Created</th>
               <th style={{ textAlign: 'right', padding: 8 }}>Actions</th>
@@ -1768,6 +1800,36 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech }) {
                 <td style={{ padding: 8 }}>{q.currency_code}</td>
                 <td style={{ padding: 8, textAlign: 'right' }}>v{q.active_version}</td>
                 <td style={{ padding: 8 }}>{q.status}</td>
+                <td style={{ padding: 8, textAlign: 'center' }}>
+                  {canTogglePipeline ? (
+                    pipelineSaving.has(q.id) ? (
+                      <span
+                        aria-label="Saving"
+                        style={{
+                          display: 'inline-block',
+                          width: 14,
+                          height: 14,
+                          border: '2px solid #CBD5E1',
+                          borderTopColor: '#1A6EBB',
+                          borderRadius: '50%',
+                          animation: 'fp-quote-pipeline-spin 0.8s linear infinite',
+                          verticalAlign: 'middle',
+                        }}
+                      />
+                    ) : (
+                      <input
+                        type="checkbox"
+                        checked={!!q.include_in_pipeline}
+                        onChange={() => togglePipeline(q)}
+                        aria-label="Include in pipeline"
+                      />
+                    )
+                  ) : (
+                    <span aria-label={q.include_in_pipeline ? 'In pipeline' : 'Not in pipeline'}>
+                      {q.include_in_pipeline ? '✅' : '—'}
+                    </span>
+                  )}
+                </td>
                 <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(q.grand_total_after_discount)}</td>
                 <td style={{ padding: 8 }}>{q.created_at ? new Date(q.created_at).toLocaleDateString() : '—'}</td>
                 <td style={{ padding: 8, textAlign: 'right' }}>
