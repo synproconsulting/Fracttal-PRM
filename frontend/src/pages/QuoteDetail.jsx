@@ -12,7 +12,7 @@ const STATUS_TONE = {
   cancelled: 'fp-badge--danger',
 }
 
-export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInPipeline, onPipelineChange }) {
+export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInPipeline, onPipelineChange, isReadOnly = false }) {
   const token = localStorage.getItem('token')
   const [quote, setQuote] = useState(null)
   const [versionsList, setVersionsList] = useState([])
@@ -287,26 +287,26 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {quote.status === 'draft' && (
+          {!isReadOnly && quote.status === 'draft' && (
             <button type="button" disabled={busy} onClick={markAsSent} className="fp-btn fp-btn--secondary">
               Mark as Sent
             </button>
           )}
-          {quote.status === 'sent' && (
+          {!isReadOnly && quote.status === 'sent' && (
             <button type="button" disabled={busy}
               onClick={() => setStatus('accepted', 'Quote marked as Accepted')}
               className="fp-btn fp-btn--success">
               Mark as Accepted
             </button>
           )}
-          {quote.status === 'sent' && (
+          {!isReadOnly && quote.status === 'sent' && (
             <button type="button" disabled={busy}
               onClick={() => setStatus('expired', 'Quote marked as Expired')}
               className="fp-btn fp-btn--ghost">
               Mark as Expired
             </button>
           )}
-          {(quote.status === 'draft' || quote.status === 'sent') && (
+          {!isReadOnly && (quote.status === 'draft' || quote.status === 'sent') && (
             <button type="button" disabled={busy}
               onClick={() => {
                 if (window.confirm('Cancel this quote? This cannot be undone.')) {
@@ -317,7 +317,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
               Cancel Quote
             </button>
           )}
-          {onAddVersion && !isTerminal && (
+          {!isReadOnly && onAddVersion && !isTerminal && (
             <button type="button" disabled={busy} onClick={() => onAddVersion(quote)} className="fp-btn fp-btn--primary">
               Add Version
             </button>
@@ -331,25 +331,27 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
 
       <section className="fp-card" style={{ marginBottom: 16 }}>
-        <h3 className="fp-section-title">Pipeline &amp; composition</h3>
+        <h3 className="fp-section-title">{isReadOnly ? 'Composition' : 'Pipeline & composition'}</h3>
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div style={{ flex: '1 1 240px' }}>
-            <div style={{ fontSize: 13, color: '#64748B', marginBottom: 6 }}>Pipeline inclusion</div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={pipelineIncluded}
-                disabled={busy}
-                onChange={togglePipelineInclusion}
-              />
-              <span style={{ fontWeight: 600, color: pipelineIncluded ? '#15803D' : '#64748B' }}>
-                {pipelineIncluded ? '✅ Included in pipeline' : '— Not included in pipeline'}
-              </span>
-            </label>
-            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>
-              Channel managers control whether this quote contributes to the cross-deal pipeline total.
+          {!isReadOnly && (
+            <div style={{ flex: '1 1 240px' }}>
+              <div style={{ fontSize: 13, color: '#64748B', marginBottom: 6 }}>Pipeline inclusion</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={pipelineIncluded}
+                  disabled={busy}
+                  onChange={togglePipelineInclusion}
+                />
+                <span style={{ fontWeight: 600, color: pipelineIncluded ? '#15803D' : '#64748B' }}>
+                  {pipelineIncluded ? '✅ Included in pipeline' : '— Not included in pipeline'}
+                </span>
+              </label>
+              <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>
+                Channel managers control whether this quote contributes to the cross-deal pipeline total.
+              </div>
             </div>
-          </div>
+          )}
           <div style={{ flex: '1 1 240px' }}>
             <div style={{ fontSize: 13, color: '#64748B', marginBottom: 6 }}>Quote composition</div>
             <div style={{ fontWeight: 600, color: '#1E293B' }}>
@@ -392,7 +394,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
             )
           })}
         </div>
-        {selectedVersion && selectedVersion.version_number !== activeVersionNum && !selectedVersion.is_deleted && !isTerminal && (
+        {!isReadOnly && selectedVersion && selectedVersion.version_number !== activeVersionNum && !selectedVersion.is_deleted && !isTerminal && (
           <button type="button" disabled={busy} onClick={() => setActive(selectedVersion.version_number)}
             className="fp-btn fp-btn--ghost" style={{ marginTop: 12 }}>
             Set as Active
@@ -432,7 +434,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
                     <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 14 }}>per year</div>
                     {isActive ? (
                       <div style={{ color: '#1A6EBB', fontWeight: 600, fontSize: 13 }}>✓ Selected</div>
-                    ) : (
+                    ) : !isReadOnly ? (
                       <button
                         type="button"
                         disabled={scenarioBusy}
@@ -442,7 +444,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
                       >
                         Select This Option
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               )
@@ -500,10 +502,12 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <h3 className="fp-section-title">PDF</h3>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" data-action="generate-pdf" disabled={pdfGenerating || !selectedVersion}
-            onClick={handleGeneratePdf} className="fp-btn fp-btn--secondary">
-            {pdfGenerating ? 'Generating…' : 'Generate PDF'}
-          </button>
+          {!isReadOnly && (
+            <button type="button" data-action="generate-pdf" disabled={pdfGenerating || !selectedVersion}
+              onClick={handleGeneratePdf} className="fp-btn fp-btn--secondary">
+              {pdfGenerating ? 'Generating…' : 'Generate PDF'}
+            </button>
+          )}
           <button type="button" data-action="download-pdf" disabled={!pdfAvailable}
             onClick={handleDownloadPdf} className="fp-btn fp-btn--primary">
             Download PDF
