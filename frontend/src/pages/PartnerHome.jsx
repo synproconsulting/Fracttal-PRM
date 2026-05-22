@@ -278,39 +278,63 @@ export default function PartnerHome() {
 
       <h2 className="fp-section-title">My pipeline</h2>
       <div className="fp-card" style={{ padding: 18, marginBottom: 24 }}>
-        {pipelineSummary ? (
-          <>
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Deals</div>
-                <div style={{ fontSize: 22, fontWeight: 700 }}>
-                  {Object.values(pipelineSummary).reduce((acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0)}
+        {pipelineSummary ? (() => {
+          // A deal counts toward the pipeline summary ONLY if it has at
+          // least one quote opted into the pipeline (server returns the
+          // sum as `pipeline_total`, null when there are no qualifying
+          // quotes — quotes in expired/cancelled are already filtered out
+          // server-side). Closed/inactive deal statuses are excluded too
+          // so the headline counts reflect *active work in progress*.
+          const ACTIVE_STATUSES = ['draft', 'submitted', 'under_review', 'approved', 'rejected', 'info_required']
+          const inPipeline = (d) => d && d.pipeline_total != null
+          const collectActive = (statuses) => {
+            const out = []
+            statuses.forEach((s) => (pipelineSummary[s] || []).forEach((d) => {
+              if (inPipeline(d)) out.push(d)
+            }))
+            return out
+          }
+          const totalActive = collectActive(ACTIVE_STATUSES)
+          const approvedActive = (pipelineSummary.approved || []).filter(inPipeline)
+          const inReviewActive = ((pipelineSummary.under_review || []).concat(pipelineSummary.submitted || [])).filter(inPipeline)
+          const infoRequiredActive = (pipelineSummary.info_required || []).filter(inPipeline)
+          return (
+            <>
+              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Deals</div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>
+                    {totalActive.length}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#22C55E' }}>
+                    {approvedActive.length}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>In Review</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#F59E0B' }}>
+                    {inReviewActive.length}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Info Required</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#8B5CF6' }}>
+                    {infoRequiredActive.length}
+                  </div>
                 </div>
               </div>
-              <div>
-                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: '#22C55E' }}>
-                  {(pipelineSummary.approved || []).length}
-                </div>
+              <div style={{ marginTop: 8, fontSize: 11, color: '#94A3B8' }}>
+                Counts include only deals with at least one quote opted into the pipeline (closed/won/lost/withdrawn deals excluded).
               </div>
-              <div>
-                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>In Review</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: '#F59E0B' }}>
-                  {(pipelineSummary.under_review || []).length + (pipelineSummary.submitted || []).length}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Info Required</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: '#8B5CF6' }}>
-                  {(pipelineSummary.info_required || []).length}
-                </div>
-              </div>
-            </div>
-            <Link to="/portal/deals?view=pipeline" style={{ display: 'inline-block', marginTop: 12, fontSize: 13, color: 'var(--fp-primary, #1A6EBB)', textDecoration: 'none', fontWeight: 600 }}>
-              View Pipeline →
-            </Link>
-          </>
-        ) : (
+              <Link to="/portal/deals?view=pipeline" style={{ display: 'inline-block', marginTop: 12, fontSize: 13, color: 'var(--fp-primary, #1A6EBB)', textDecoration: 'none', fontWeight: 600 }}>
+                View Pipeline →
+              </Link>
+            </>
+          )
+        })() : (
           <div style={{ color: 'var(--fp-text-secondary)' }}>No deals registered yet.</div>
         )}
       </div>
