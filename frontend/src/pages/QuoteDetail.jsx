@@ -12,7 +12,7 @@ const STATUS_TONE = {
   cancelled: 'fp-badge--danger',
 }
 
-export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInPipeline, onPipelineChange, isReadOnly = false }) {
+export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInPipeline, onPipelineChange, isReadOnly = false, onDealStatusChange }) {
   const token = localStorage.getItem('token')
   const [quote, setQuote] = useState(null)
   const [versionsList, setVersionsList] = useState([])
@@ -26,6 +26,9 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   // re-sync whenever the parent's value changes (e.g. after refresh()).
   const [pipelineIncluded, setPipelineIncluded] = useState(!!includeInPipeline)
   useEffect(() => { setPipelineIncluded(!!includeInPipeline) }, [includeInPipeline])
+  // Set when PATCH /quotes/{id}/status response signals suggest_mark_won — the
+  // banner with Yes / Not yet renders until the user resolves it.
+  const [showWonPrompt, setShowWonPrompt] = useState(false)
 
   const loadQuote = useCallback(async () => {
     setError(null)
@@ -136,6 +139,32 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       await loadQuote()
       showToast(toastMsg)
+      // Backend advises whether to prompt for Mark-as-Won (deal still
+      // approved AND no other draft/sent quotes pending). Never auto-close.
+      if (body && body.suggest_mark_won === true) {
+        setShowWonPrompt(true)
+      }
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleMarkWonFromPrompt() {
+    if (busy || !quote) return
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch(`${API}/internal/deals/${quote.deal_id}/won`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      showToast('Deal marked as Won — quotes updated')
+      setShowWonPrompt(false)
+      if (typeof onDealStatusChange === 'function') onDealStatusChange()
+      if (typeof onClose === 'function') onClose()
     } catch (e) {
       setError(e.message || String(e))
     } finally {
@@ -329,6 +358,20 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       </div>
 
       {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
+
+      {showWonPrompt && !isReadOnly && (
+        <div className="fp-alert fp-alert--success" role="status" style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+          <span><strong>Quote accepted.</strong> Would you like to mark this deal as Won?</span>
+          <span style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="fp-btn fp-btn--success" disabled={busy} onClick={handleMarkWonFromPrompt}>
+              Yes, Mark as Won
+            </button>
+            <button type="button" className="fp-btn fp-btn--ghost" disabled={busy} onClick={() => setShowWonPrompt(false)}>
+              Not yet
+            </button>
+          </span>
+        </div>
+      )}
 
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <h3 className="fp-section-title">{isReadOnly ? 'Composition' : 'Pipeline & composition'}</h3>
