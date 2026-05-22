@@ -98,7 +98,9 @@ export default function InternalQuotes() {
           <SummaryCard label="Draft" value={summary.draft} color="#64748B" />
           <SummaryCard label="Sent" value={summary.sent} color="#1A6EBB" />
           <SummaryCard label="Accepted" value={summary.accepted} color="#1B8743" />
-          <SummaryCard label="Pipeline Value" value={formatCurrency(summary.pipeline_total, 'USD')} />
+          <SummaryCard label="Won" value={summary.won_deals ?? 0} color="#1B8743" />
+          <SummaryCard label="Active Pipeline Value" value={formatCurrency(summary.pipeline_total, 'USD')} />
+          <SummaryCard label="Closed Won" value={formatCurrency(summary.closed_won_value ?? 0, 'USD')} color="#1B8743" />
         </div>
       )}
 
