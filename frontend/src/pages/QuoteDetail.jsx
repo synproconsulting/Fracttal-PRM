@@ -30,6 +30,59 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   // banner with Yes / Not yet renders until the user resolves it.
   const [showWonPrompt, setShowWonPrompt] = useState(false)
 
+  // Documents (migration 033). The list is shown to everyone; upload is
+  // channel_manager+ only; delete is channel_ops_admin / system_admin only.
+  // ``currentUserRole`` is fetched once on mount via /auth/me — the API is
+  // role-gated server-side anyway, this just keeps the UI from offering
+  // buttons the caller can't use.
+  const [documents, setDocuments] = useState([])
+  const [documentsLoading, setDocumentsLoading] = useState(false)
+  const [currentUserRole, setCurrentUserRole] = useState(null)
+  const [showAttachForm, setShowAttachForm] = useState(false)
+  const [attachType, setAttachType] = useState('quote_acceptance')
+  const [attachFile, setAttachFile] = useState(null)
+  const [attachNotes, setAttachNotes] = useState('')
+  const [attachError, setAttachError] = useState(null)
+  const [attachSaving, setAttachSaving] = useState(false)
+  const canUploadDocument = (
+    currentUserRole === 'system_admin'
+    || currentUserRole === 'channel_ops_admin'
+    || currentUserRole === 'channel_manager'
+  )
+  const canDeleteDocument = (
+    currentUserRole === 'system_admin' || currentUserRole === 'channel_ops_admin'
+  )
+  const hasAcceptanceDoc = documents.some((d) => d.document_type === 'quote_acceptance')
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => { if (me?.role) setCurrentUserRole(me.role) })
+      .catch(() => {})
+  }, [token])
+
+  const loadDocuments = useCallback(async () => {
+    if (!quoteId || !token) return
+    setDocumentsLoading(true)
+    try {
+      const r = await fetch(`${API}/quotes/${quoteId}/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) {
+        setDocuments([])
+        return
+      }
+      setDocuments(await r.json())
+    } catch {
+      setDocuments([])
+    } finally {
+      setDocumentsLoading(false)
+    }
+  }, [quoteId, token])
+
+  useEffect(() => { loadDocuments() }, [loadDocuments])
+
   const loadQuote = useCallback(async () => {
     setError(null)
     try {
@@ -270,6 +323,111 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
     }
   }
 
+  const _MAX_DOC_BYTES = 10 * 1024 * 1024
+
+  async function handleAttachDocument() {
+    setAttachError(null)
+    if (!attachFile) {
+      setAttachError('Choose a file to attach')
+      return
+    }
+    if (attachFile.size > _MAX_DOC_BYTES) {
+      setAttachError('File too large. Maximum upload size is 10 MB.')
+      return
+    }
+    setAttachSaving(true)
+    try {
+      // Read file as base64 client-side. FileReader.readAsDataURL returns
+      // a `data:...;base64,<payload>` URL — strip the prefix to get the
+      // raw base64 the backend expects (per AD-17).
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = () => reject(new Error('Could not read file'))
+        reader.readAsDataURL(attachFile)
+      })
+      const b64 = String(dataUrl).split(',', 2)[1] || ''
+      const r = await fetch(`${API}/quotes/${quoteId}/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          document_type: attachType,
+          file_name: attachFile.name,
+          file_data: b64,
+          file_size_bytes: attachFile.size,
+          notes: attachNotes || null,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      await loadDocuments()
+      setShowAttachForm(false)
+      setAttachFile(null)
+      setAttachNotes('')
+      setAttachType('quote_acceptance')
+      showToast('Document attached')
+    } catch (e) {
+      setAttachError(e.message || String(e))
+    } finally {
+      setAttachSaving(false)
+    }
+  }
+
+  async function handleDownloadDocument(doc) {
+    try {
+      const r = await fetch(`${API}/quotes/${quoteId}/documents/${doc.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = doc.file_name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message || String(e))
+    }
+  }
+
+  async function handleDeleteDocument(doc) {
+    if (!window.confirm(`Delete ${doc.file_name}? This cannot be undone.`)) return
+    try {
+      const r = await fetch(`${API}/quotes/${quoteId}/documents/${doc.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      }
+      await loadDocuments()
+      showToast('Document deleted')
+    } catch (e) {
+      setError(e.message || String(e))
+    }
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes == null) return '—'
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  const _DOC_TYPE_LABEL = {
+    quote_acceptance: 'Quote Acceptance',
+    purchase_order: 'Purchase Order',
+    signed_proposal: 'Signed Proposal',
+    other: 'Other',
+  }
+
   async function handleDownloadPdf() {
     if (!selectedVersion) return
     try {
@@ -322,7 +480,9 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
             </button>
           )}
           {!isReadOnly && quote.status === 'sent' && (
-            <button type="button" disabled={busy}
+            <button type="button"
+              disabled={busy || !hasAcceptanceDoc}
+              title={!hasAcceptanceDoc ? 'Attach proof of acceptance before marking as accepted' : undefined}
               onClick={() => setStatus('accepted', 'Quote marked as Accepted')}
               className="fp-btn fp-btn--success">
               Mark as Accepted
@@ -537,6 +697,120 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
                 <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(selectedVersion?.grand_total_before_discount, currency)}</td>
                 <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(selectedVersion?.grand_total_after_discount, currency)}</td>
               </tr>
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="fp-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h3 className="fp-section-title" style={{ margin: 0 }}>Documents</h3>
+          {!isReadOnly && canUploadDocument && !showAttachForm && (
+            <button type="button" className="fp-btn fp-btn--primary" onClick={() => setShowAttachForm(true)}>
+              + Attach Document
+            </button>
+          )}
+        </div>
+
+        {!isReadOnly && !hasAcceptanceDoc && (quote.status === 'draft' || quote.status === 'sent') && (
+          <div className="fp-alert fp-alert--warning" role="status" style={{ marginBottom: 12 }}>
+            ⚠️ Attach proof of acceptance before marking as accepted
+          </div>
+        )}
+
+        {!isReadOnly && showAttachForm && (
+          <div style={{ background: '#F8FAFC', border: '1px solid #E0E4EA', borderRadius: 6, padding: 12, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <label style={{ display: 'block', fontSize: 13 }}>
+                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Document type</span>
+                <select
+                  value={attachType}
+                  onChange={(e) => setAttachType(e.target.value)}
+                  style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA', minWidth: 220 }}
+                  disabled={attachSaving}
+                >
+                  <option value="quote_acceptance">Quote Acceptance</option>
+                  <option value="purchase_order">Purchase Order</option>
+                  <option value="signed_proposal">Signed Proposal</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label style={{ display: 'block', fontSize: 13 }}>
+                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>File (max 10 MB)</span>
+                <input
+                  type="file"
+                  onChange={(e) => setAttachFile(e.target.files?.[0] || null)}
+                  disabled={attachSaving}
+                />
+              </label>
+              <label style={{ display: 'block', fontSize: 13 }}>
+                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Notes (optional)</span>
+                <textarea
+                  value={attachNotes}
+                  onChange={(e) => setAttachNotes(e.target.value)}
+                  rows={2}
+                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}
+                  disabled={attachSaving}
+                />
+              </label>
+              {attachError && <div className="fp-alert fp-alert--danger" style={{ marginTop: 0 }}>{attachError}</div>}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="fp-btn fp-btn--primary" onClick={handleAttachDocument} disabled={attachSaving}>
+                  {attachSaving ? 'Uploading…' : 'Upload'}
+                </button>
+                <button type="button" className="fp-btn fp-btn--ghost"
+                  onClick={() => { setShowAttachForm(false); setAttachFile(null); setAttachNotes(''); setAttachError(null) }}
+                  disabled={attachSaving}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {documentsLoading ? (
+          <div style={{ color: '#64748B', fontSize: 13 }}>Loading documents…</div>
+        ) : documents.length === 0 ? (
+          <div style={{ color: '#94A3B8', fontSize: 13 }}>No documents attached yet.</div>
+        ) : (
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#F5F7FA', textAlign: 'left' }}>
+                <th style={{ padding: 8 }}>Type</th>
+                <th style={{ padding: 8 }}>File</th>
+                <th style={{ padding: 8 }}>Size</th>
+                <th style={{ padding: 8 }}>Uploaded</th>
+                <th style={{ padding: 8 }}>Notes</th>
+                <th style={{ padding: 8, textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {documents.map((doc) => (
+                <tr key={doc.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                  <td style={{ padding: 8 }}>
+                    <span className="fp-badge fp-badge--neutral">
+                      {_DOC_TYPE_LABEL[doc.document_type] || doc.document_type}
+                    </span>
+                  </td>
+                  <td style={{ padding: 8 }}>{doc.file_name}</td>
+                  <td style={{ padding: 8, color: '#64748B' }}>{formatFileSize(doc.file_size_bytes)}</td>
+                  <td style={{ padding: 8, color: '#64748B' }}>
+                    {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td style={{ padding: 8, color: '#64748B' }}>{doc.notes || '—'}</td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>
+                    <button type="button" onClick={() => handleDownloadDocument(doc)}
+                      className="fp-btn fp-btn--ghost" style={{ marginRight: 6 }}>
+                      Download
+                    </button>
+                    {!isReadOnly && canDeleteDocument && (
+                      <button type="button" onClick={() => handleDeleteDocument(doc)} className="fp-btn fp-btn--danger">
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

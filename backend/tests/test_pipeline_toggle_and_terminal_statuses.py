@@ -201,10 +201,20 @@ def test_sent_to_cancelled_allowed(client, db_session):
 
 
 def test_accepted_to_cancelled_not_allowed(client, db_session):
+    import base64 as _b64
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     qid = _make_quote(client, _deal(db_session, org.id).id)
     client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
+    # Migration 033 / acceptance-doc gate: a quote_acceptance document
+    # must exist before flipping to accepted.
+    _pdf = b"%PDF-1.4\n%%EOF"
+    client.post(f"/quotes/{qid}/documents", json={
+        "document_type": "quote_acceptance",
+        "file_name": "x.pdf",
+        "file_data": _b64.b64encode(_pdf).decode(),
+        "file_size_bytes": len(_pdf),
+    })
     client.patch(f"/quotes/{qid}/status", json={"status": "accepted"})
     r = client.patch(f"/quotes/{qid}/status", json={"status": "cancelled"})
     assert r.status_code == 422

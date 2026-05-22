@@ -1596,3 +1596,35 @@ class QuoteLineItem(Base):
     __table_args__ = (
         Index("ix_quote_line_items_version_id", "quote_version_id"),
     )
+
+
+class QuoteDocument(Base):
+    """Migration 033 -- evidence documents attached to a quote.
+
+    Pattern follows AD-17: file bytes stored as base64 in a ``Text`` column
+    rather than on disk, so the deployment stays self-contained and uploads
+    survive a Railway redeploy. ``document_type`` is a free-form string
+    (validated server-side against the spec list: ``quote_acceptance`` |
+    ``purchase_order`` | ``signed_proposal`` | ``other``) so the taxonomy
+    can be extended without a migration.
+
+    Acceptance gate: a quote cannot transition to ``accepted`` until at
+    least one document with ``document_type == 'quote_acceptance'`` is
+    attached -- enforced in the PATCH /quotes/{id}/status handler.
+    """
+
+    __tablename__ = "quote_documents"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    quote_id = Column(Uuid(as_uuid=True), ForeignKey("quotes.id"), nullable=False)
+    document_type = Column(String, nullable=False)
+    file_name = Column(String, nullable=False)
+    file_data = Column(Text, nullable=False)
+    file_size_bytes = Column(Integer, nullable=False)
+    uploaded_by = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_quote_documents_quote_id", "quote_id"),
+    )
