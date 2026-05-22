@@ -312,10 +312,13 @@ export default function ApplicationReview() {
         <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 16, marginBottom: 16 }}>
           <h3 style={{ margin: '0 0 12px 0' }}>Review actions</h3>
           {(() => {
+            // system_admin can satisfy any step's required_role server-side,
+            // so don't disable the button or show the tooltip for them.
             const roleMismatch = (
               a.approval_progress &&
               a.approval_progress.current_required_role &&
               currentUserRole &&
+              currentUserRole !== 'system_admin' &&
               currentUserRole !== a.approval_progress.current_required_role
             )
             const approveDisabled = isFinal || submitting || roleMismatch
