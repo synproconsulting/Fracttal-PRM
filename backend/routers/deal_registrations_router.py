@@ -1186,7 +1186,15 @@ def approve_deal(
                 status_code=422,
                 detail="All approval steps are already completed",
             )
-        if current_user.role != current_step.required_role:
+        # system_admin can satisfy any step's required_role -- it's the
+        # break-glass superuser role and not bypassing it here would leave
+        # admins unable to unblock workflows whose configured step requires
+        # a role they don't hold (the original FPRM-274 enforcement
+        # accidentally gated admins out of every multi-step workflow).
+        if (
+            current_user.role != "system_admin"
+            and current_user.role != current_step.required_role
+        ):
             raise HTTPException(
                 status_code=403,
                 detail=f"This step requires role: {current_step.required_role}",
