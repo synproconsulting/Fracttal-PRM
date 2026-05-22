@@ -31,6 +31,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -48,6 +49,8 @@ from models import (
     PartnerActivationChecklist,
     PartnerOrganization,
     PartnerStatus,
+    Quote,
+    QuoteVersion,
     User,
 )
 from approval_helpers import (
@@ -156,6 +159,37 @@ def _bulk_org_names(db: Session, org_ids):
         .all()
     )
     return {str(rid): name for rid, name in rows}
+
+
+def _pipeline_totals_for_deals(db: Session, deal_ids):
+    """Return ``{deal_id_str: float}`` with the sum of pipeline-included quote
+    totals per deal.
+
+    A deal's pipeline value is the sum of ``grand_total_after_discount`` of the
+    *active* (non-deleted) version of each quote where
+    ``include_in_pipeline=True`` and ``status NOT IN ('expired', 'cancelled')``.
+
+    Deals with no qualifying quotes are absent from the returned dict — callers
+    distinguish "no included quotes" (key missing → render '—' or fall back to
+    ``estimated_deal_value``) from "zero total" (key present, value 0.0).
+    """
+    if not deal_ids:
+        return {}
+    rows = (
+        db.query(Quote.deal_id, func.sum(QuoteVersion.grand_total_after_discount))
+        .join(
+            QuoteVersion,
+            (QuoteVersion.quote_id == Quote.id)
+            & (QuoteVersion.version_number == Quote.active_version)
+            & (QuoteVersion.is_deleted.is_(False)),
+        )
+        .filter(Quote.deal_id.in_(list(deal_ids)))
+        .filter(Quote.include_in_pipeline.is_(True))
+        .filter(~Quote.status.in_(["expired", "cancelled"]))
+        .group_by(Quote.deal_id)
+        .all()
+    )
+    return {str(deal_id): float(total) for deal_id, total in rows if total is not None}
 
 
 def _require_partner_admin(user: User) -> None:
@@ -443,11 +477,17 @@ def list_deals(
     )
     total = query.count()
     items = query.offset(offset).limit(limit).all()
+    pipeline_map = _pipeline_totals_for_deals(db, {d.id for d in items})
+    rows = []
+    for d in items:
+        body = _serialize(d)
+        body["pipeline_total"] = pipeline_map.get(str(d.id))
+        rows.append(body)
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "items": [_serialize(d) for d in items],
+        "items": rows,
     }
 
 
@@ -908,10 +948,12 @@ def list_internal_deals(
     items = query.offset(offset).limit(limit).all()
     # FPRM-143: include partner_legal_name on each row (bulk lookup, single query).
     name_map = _bulk_org_names(db, {d.partner_org_id for d in items if d.partner_org_id})
+    pipeline_map = _pipeline_totals_for_deals(db, {d.id for d in items})
     rows = []
     for d in items:
         body = _serialize(d)
         body["partner_legal_name"] = name_map.get(str(d.partner_org_id)) if d.partner_org_id else None
+        body["pipeline_total"] = pipeline_map.get(str(d.id))
         rows.append(body)
     return {
         "total": total,
