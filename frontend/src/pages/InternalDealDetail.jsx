@@ -525,6 +525,12 @@ export default function InternalDealDetail() {
     || currentUserRole === 'channel_manager'
   )
   const [conflictRerunning, setConflictRerunning] = useState(false)
+  // Mark as Won is gated on having at least one accepted quote on the deal —
+  // the backend enforces the same check and returns 422 if it's missing.
+  // Fetch the quotes list once on mount and on every reloadKey bump so the
+  // button enables/disables in step with quote-status changes inside the
+  // modal.
+  const [hasAcceptedQuote, setHasAcceptedQuote] = useState(false)
 
   useEffect(() => {
     if (!token) return
@@ -533,6 +539,16 @@ export default function InternalDealDetail() {
       .then((me) => { if (me?.role) setCurrentUserRole(me.role) })
       .catch(() => {})
   }, [token])
+
+  useEffect(() => {
+    if (!id || !token) return
+    fetch(`${API}/deals/${id}/quotes`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setHasAcceptedQuote(
+        Array.isArray(list) && list.some((q) => q.status === 'accepted')
+      ))
+      .catch(() => setHasAcceptedQuote(false))
+  }, [id, token, reloadKey])
 
 
 
@@ -1562,7 +1578,9 @@ export default function InternalDealDetail() {
 
                   <button type="button" className="fp-btn fp-btn--success"
 
-                          disabled={actionSaving}
+                          disabled={actionSaving || !hasAcceptedQuote}
+
+                          title={!hasAcceptedQuote ? 'Accept a quote before marking this deal as Won' : undefined}
 
                           onClick={() => {
 
