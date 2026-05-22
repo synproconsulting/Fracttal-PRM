@@ -872,6 +872,27 @@ def post_deal_won(
             ),
         )
 
+    # Won is closed-won — by definition there must be at least one accepted
+    # quote to attribute the win to. Without this guard, a reviewer could
+    # mark a deal Won with zero accepted quotes, leaving the
+    # ``closed_won_value`` summary at 0 while ``won_deals`` increments — the
+    # two numbers would silently disagree about what "closed-won" means.
+    has_accepted = (
+        db.query(Quote)
+        .filter(Quote.deal_id == deal.id)
+        .filter(Quote.status == "accepted")
+        .first()
+        is not None
+    )
+    if not has_accepted:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "A deal cannot be marked as Won without at least one "
+                "accepted quote. Please accept a quote first."
+            ),
+        )
+
     before_status = deal.status
     deal.status = "won"
     deal.updated_at = datetime.utcnow()
