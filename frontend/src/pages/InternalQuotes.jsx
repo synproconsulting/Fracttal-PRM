@@ -153,7 +153,7 @@ export default function InternalQuotes() {
               {items.map((q) => (
                 <tr key={q.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
                   <td style={{ padding: 10 }}>
-                    <Link to={`/internal/deals/${q.deal_id}`} style={{ color: '#1A6EBB', fontWeight: 600 }}>
+                    <Link to={`/internal/deals/${q.deal_id}?openQuote=${q.id}`} style={{ color: '#1A6EBB', fontWeight: 600 }}>
                       {q.quote_name}
                     </Link>
                     {q.active_scenario && (
