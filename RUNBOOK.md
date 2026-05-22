@@ -91,6 +91,7 @@ Note `%token%` (cmd syntax) — not `$token` (PowerShell syntax).
 | `s8test@partner.com` | `PartnerPass123!` | `partner_admin` | Sprint 8 test user. Linked to Sprint 8 Test Corp org (8b1dfc59-380a-4fc3-809e-949880cbb3b0). |
 | `phase3a-v2@testpartner.com` | `PartnerPass123!` | `partner_admin` | Phase 3A Test Partner Ltd — fully activated. Org `b223c3b0-623e-405c-b056-6f076811e518`. |
 | `conflicttest2@testpartner.com` | `PartnerPass123!` | `partner_admin` | Conflict Test Partner 2 — fully activated. Org `bf6dcf16-65e4-4ef9-b5e8-9a36608b82a8`. Use as second org for §13 conflict-detected path. |
+| `cmtest@test.com` | `TestPass123!` | `channel_manager` | Internal reviewer — no tenant scope. Created during post-Sprint-20 UX & workflow validation. Use for the channel-manager-only paths in §17 (conflict rerun, deal won, retract gate, pipeline toggle) and any future scenario that needs an internal reviewer below system_admin. |
 
 **Important:** If you need a fresh user with a specific role, always register a new user — do not try to update an existing user's role in the database. The `role` column is set at registration and not exposed via a patch endpoint.
 
@@ -974,7 +975,138 @@ Open https://fracttal-prm-frontend-production.up.railway.app:
 
 *Phase 5 complete: Sprint 18 closeout — May 2026.*
 
+---
+
+## 17. End-to-End Happy Path Validation — Phase 6 Post-Sprint-20 (UX & Workflow Fixes, PRs #128–#163)
+
+Run this after the post-Sprint-20 UX & workflow fixes session deploys settle on Railway. Exercises the four workflow capabilities added on top of Sprint 20: manual conflict-check rerun, Commission Rates admin tab, Deal Won with accepted-quote requirement, and quote document upload + acceptance gate.
+
+Use Command Prompt (`cmd`) with `%token%`. Substitute `<CHANNEL_MGR_TOKEN>` with a token for `cmtest@test.com` (channel_manager, from §2) and `<ADMIN_TOKEN>` for `admin2@test.com` (system_admin).
+
+### Step 1 — Manual conflict-check rerun
+
+Pick a deal whose `conflict_status` is stale or wrong (e.g. flipped to `clear` before a competing deal was registered). As an internal reviewer:
+
+```cmd
+set itoken=<CHANNEL_MGR_TOKEN>
+
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/<DEAL_ID>/conflict-check" -H "Authorization: Bearer %itoken%"
+```
+
+Expect `200` with the recomputed `conflict_status` + `conflict_checked_at` + `conflict_notes`. Confirm via `GET /deal-registrations/<DEAL_ID>` that the timestamp moved. Audit log gains a `deal_registration.conflict_rechecked` event. A `partner_admin` token must return `403`.
+
+### Step 2 — Commission Rates admin tab
+
+```cmd
+set token=<ADMIN_TOKEN>
+
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/internal/config/commission-rates" -H "Authorization: Bearer %token%"
+```
+
+Expect `200` with the active rows from `commission_structures` (24 seeded rows minimum, post-Sprint-20 admin edits on top). Each item now carries `is_active`, `created_at`, `updated_at` (migration 031).
+
+```cmd
+REM Create a new rate
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/config/commission-rates" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"partner_category_code\":\"reseller\",\"commission_type\":\"co_sell_shared\",\"year\":\"year_2_plus\",\"commission_pct\":15.0,\"notes\":\"Phase 6 validation rate\"}"
+REM Capture the returned id as %rate_id%
+
+REM Update it
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/internal/config/commission-rates/<rate_id>" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"commission_pct\":18.0}"
+
+REM Soft delete (system_admin only)
+curl -X DELETE "https://fracttal-prm-backend-production.up.railway.app/internal/config/commission-rates/<rate_id>" -H "Authorization: Bearer %token%"
+```
+
+Expect `201` / `200` / `204`. A `channel_manager` token must return `403` on POST and DELETE. The frontend `/internal/program-config` page shows the new **Commission Rates** tab with the seeded + ad-hoc rows; filtering by `is_active=false` surfaces the soft-deleted rate from the DELETE above.
+
+### Step 3 — Deal Won flow with accepted-quote requirement
+
+Pick an approved deal that has at least one quote.
+
+```cmd
+set deal_id=<APPROVED DEAL ID with at least one quote>
+set quote_id=<QUOTE ID on that deal>
+
+REM Attempt won without accepted quote (should fail)
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/won" -H "Authorization: Bearer %token%"
+```
+
+Expect `422` with detail mentioning "at least one accepted quote required". Now accept a quote:
+
+```cmd
+REM Move quote to sent then accepted (requires a signed_acceptance document — see Step 4 first if the quote has no document)
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/status" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"status\":\"sent\"}"
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/status" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"status\":\"accepted\"}"
+
+REM Retry won
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/internal/deals/%deal_id%/won" -H "Authorization: Bearer %token%"
+```
+
+Expect `200` with deal status `won`. Confirm via `GET /deal-registrations/%deal_id%` that any *other* non-terminal quote versions on the deal are now `cancelled` (cascade behaviour). Audit log gains `deal_registration.won` plus one `quote.cascade_cancelled` per cancelled quote.
+
+### Step 4 — Quote document upload + acceptance gate
+
+Pick a quote currently in `sent` status without a `signed_acceptance` document.
+
+```cmd
+set quote_id=<SENT QUOTE ID>
+
+REM Confirm acceptance is currently gated
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/status" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"status\":\"accepted\"}"
+```
+
+Expect `422` with detail mentioning the missing `signed_acceptance` document.
+
+```cmd
+REM Upload a signed_acceptance document (base64-encode a small PDF first)
+REM PowerShell oneliner to base64-encode: [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\acceptance.pdf"))
+curl -X POST "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/documents" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"document_type\":\"signed_acceptance\",\"document_name\":\"acceptance.pdf\",\"file_data_base64\":\"<BASE64>\",\"mime_type\":\"application/pdf\",\"file_size_bytes\":12345}"
+
+REM List + download to verify the round-trip
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/documents" -H "Authorization: Bearer %token%"
+set doc_id=<id from previous GET>
+curl -X GET "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/documents/%doc_id%/download" -H "Authorization: Bearer %token%" -o acceptance_roundtrip.pdf
+```
+
+Expect `201` upload, `200` list with one item (no base64 blob in the list response), `200` download with the original MIME and `Content-Disposition: attachment` header. Open the downloaded PDF to confirm it matches the source.
+
+```cmd
+REM Now the acceptance gate clears
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/status" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"status\":\"accepted\"}"
+```
+
+Expect `200` with status `accepted`. Audit `quote_document.uploaded` + `quote.status_changed`.
+
+```cmd
+REM Optional: retract test (system_admin only)
+curl -X PATCH "https://fracttal-prm-backend-production.up.railway.app/quotes/%quote_id%/status" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"status\":\"sent\"}"
+```
+
+Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token must return `403` on the same retract call.
+
+### Step 5 — Frontend smoke (browser)
+
+1. **Internal as channel_manager (cmtest)** → `/internal/deals/<id>` shows a "Re-run Conflict Check" button in the Conflict Check card; click → confirm toast + refreshed timestamp.
+2. **Internal as system_admin** → `/internal/program-config` shows a new **Commission Rates** tab between the existing program-config tabs; rows list with edit / soft-delete affordances.
+3. **Internal as system_admin** → `/internal/deals/<id>` on an approved deal with no accepted quote shows the **Mark as Won** button disabled with a tooltip explaining the accepted-quote requirement.
+4. **Internal as system_admin** → `/internal/deals/<id>` quote modal shows the new **Documents** section; upload a PDF; refresh and confirm the entry persists with a Download action.
+5. **Internal as system_admin** → on an `accepted` quote, the **Retract to Sent** action is visible (system_admin only); confirm it disappears for cmtest.
+6. **Partner portal** → `/portal/deals/<id>` shows the redesigned header: **Pipeline Value** badge + **Quote Accepted** chip when applicable; Sortable column headers on `/portal/deals` (List view) honour ↕/↑/↓ glyphs.
+7. **Pipeline toggle** → on `/internal/deals/<id>` quote modal, toggle the **Include in Pipeline** checkbox; refresh `/internal/quotes` and confirm the Pipeline column updates.
+
+### Known operational notes (post-Sprint-20)
+
+- **The acceptance gate is router-side.** The `quote_documents` table itself has no constraint linking documents to quote status. The router-level check is in `quotes_router.py` on the `PATCH /quotes/{id}/status` happy path. Future bulk-import paths must replicate the gate or bypass it explicitly.
+- **`accepted → sent` retract is system_admin only by design.** Opening it to channel_manager would invite accidental retract on partner-facing approvals. Keep this scope narrow — it is a break-glass operation.
+- **`POST /internal/deals/{id}/won` cascade-cancels every non-terminal quote on the deal.** Reviewers should verify the *correct* quote is `accepted` before calling /won — the cascade is irreversible without a system_admin retract on each cancelled quote.
+- **`/internal/config/commission-rates` is admin-maintained per AD-25.** No Alembic migration is required to add, deactivate, or adjust commission percentages. The quote engine continues to read rates live from `commission_structures` (AD-18 corollary).
+- **Conflict re-check is best-effort, same as submit-time.** A `conflict_checker` raise is caught and logged; the response still returns 200 with whatever conflict state survived. Monitor Railway backend logs after any deploy touching `conflict_checker.py`.
+
+---
+
+*Post-Sprint-20 UX & Workflow Fixes complete: PRs #128–#163 — 2026-05-22.*
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–18 closeout*
-*Last updated: Sprint 18 closeout / Phase 5 complete — 2026-05-19*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–20 closeout, post-Sprint-20 fix session.*
+*Last updated: Post-Sprint-20 UX & Workflow Fixes session — 2026-05-22.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

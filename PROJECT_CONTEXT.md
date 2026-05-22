@@ -228,6 +228,18 @@
 | PATCH | `/internal/config/pricing/addons/{addon_id}` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Update display_name / monthly_price / availability flags / is_active. Sprint 20 / FPRM-318 extended body with `category` (String, empty string clears to null) and `sort_order` (Integer, negatives clamped to 0; non-int → 422). Audit `pricing.addon_updated`. |
 | DELETE | `/internal/config/pricing/addons/{addon_id}` | system_admin only | Sprint 19 / FPRM-300. Soft delete (`is_active=False`). Audit `pricing.addon_deactivated`. |
 | GET | `/admin/audit-log` | system_admin (`user_management:read_all`) | Existing endpoint; Sprint 19 / FPRM-308 adds `?action_prefix=` (matches `action LIKE '{prefix}.%'`) and `?export=csv` (text/csv with `Content-Disposition: attachment`). Same Bearer-header auth as JSON path (AD-20). |
+| POST | `/internal/deals/{id}/conflict-check` | channel_manager / channel_ops_admin / system_admin | Post-Sprint-20 (PR #141). Manual re-run of `conflict_checker.check_deal_conflict` against an existing deal; updates `conflict_status`, `conflict_checked_at`, `conflict_notes`. Surface for internal users to refresh stale conflict state after data changes. Audit `deal_registration.conflict_rechecked`. |
+| GET | `/internal/config/commission-rates` | any internal role (read); channel_ops_admin / system_admin (writes) | Post-Sprint-20 (PR #142, migration 031). Admin CRUD over `commission_structures` rows. List supports `?partner_category_code=&commission_type=&is_active=` filters; rows include `is_active`, `created_at`, `updated_at`. |
+| POST | `/internal/config/commission-rates` | channel_ops_admin / system_admin | Post-Sprint-20 (PR #142). Create a commission rate. Body: `partner_category_code`, `commission_type`, `year`, `commission_pct`, `subpartner_uplift_pct?`, `applies_to_upsell?`, `notes?`, `is_active?`. Audit `commission_rate.created`. |
+| PATCH | `/internal/config/commission-rates/{id}` | channel_ops_admin / system_admin | Post-Sprint-20 (PR #142). Update mutable fields (`commission_pct`, `subpartner_uplift_pct`, `applies_to_upsell`, `notes`, `is_active`). Identity tuple (`partner_category_code`, `commission_type`, `year`) is immutable. Audit `commission_rate.updated`. |
+| DELETE | `/internal/config/commission-rates/{id}` | system_admin | Post-Sprint-20 (PR #142). Soft delete (sets `is_active=False`). Audit `commission_rate.deactivated`. |
+| POST | `/internal/deals/{id}/won` | channel_manager / channel_ops_admin / system_admin | Post-Sprint-20 (PRs #156 + #157, migration 032). Mark an approved deal as **won**. Requires at least one quote on the deal with `status='accepted'` (422 otherwise). Cascade-cancels any other non-terminal quote versions on the deal (engine state moves to `cancelled` with audit). Audit `deal_registration.won` + per-quote `quote.cascade_cancelled`. |
+| PATCH | `/quotes/{id}/status` | channel_manager / channel_ops_admin / system_admin (`sent → accepted` and `draft → sent`); **system_admin only** for `accepted → sent` (retract) | Post-Sprint-20 (PR #161). Extends Sprint 15 state machine with `accepted → sent` as a system_admin-only retract path; remaining transitions unchanged. Terminal states (`cancelled`, `expired`, `won`-bound) reject further mutation (422). Audit `quote.status_changed` (retains the original action; `before`/`after` columns capture the retract). |
+| PATCH | `/quotes/{id}/pipeline-inclusion` | channel_manager / channel_ops_admin / system_admin | Post-Sprint-20 (PRs #147 + #149 + #153, migration 032). Toggle `quotes.include_in_pipeline` (Boolean, default True). Drives the per-deal `pipeline_total` aggregation on `/internal/deals` and `/partners/{id}/pipeline`. Audit `quote.pipeline_inclusion_toggled`. |
+| POST | `/quotes/{id}/documents` | partner_admin (own org) + channel_manager / channel_ops_admin / system_admin | Post-Sprint-20 (PR #158, migration 033). Attach a document to a quote (e.g. signed acceptance PDF). Body: `{document_type, document_name, file_data_base64, mime_type?, file_size_bytes?}`. Only metadata + base64 blob are persisted (no external blob store — same constraint as AD-19). Audit `quote_document.uploaded`. |
+| GET | `/quotes/{id}/documents` | tenant-scoped | Post-Sprint-20 (PR #158). List attached documents for a quote (omits the base64 blob). |
+| GET | `/quotes/{id}/documents/{doc_id}/download` | tenant-scoped | Post-Sprint-20 (PR #158). Stream the attached document back as the original MIME with `Content-Disposition: attachment`. Same fetch+Blob client pattern as AD-20. |
+| DELETE | `/quotes/{id}/documents/{doc_id}` | channel_ops_admin / system_admin | Post-Sprint-20 (PR #158). Remove an attached document. Audit `quote_document.deleted`. Acceptance-gate logic re-evaluates on next status PATCH: when the partner attempts `sent → accepted`, the backend requires at least one non-deleted `QuoteDocument` of `document_type='signed_acceptance'` (422 otherwise). |
 
 
 
@@ -308,6 +320,11 @@
 | `quote_versions` | `024_create_quotes` | Sprint 15 / FPRM-239. Versioned pricing snapshot. Columns: `id` (UUID PK), `quote_id` (FK), `version_number` (Integer), `scenario_label` (nullable: `good`/`better`/`best`/null), `feature_plan` (string), `feature_plan_discount_pct` (Numeric(5,2) default 0), `qty_transactional_users`/`qty_limited_tech_users` (Integer), `selected_addons` (JSON list of addon_key strings), `grand_total_before_discount`/`grand_total_after_discount` (Numeric(12,2)), `pdf_artifact_path` (nullable — Sprint 16), `created_at`, `is_deleted` (bool default false — soft-delete). Unique constraint `(quote_id, version_number)`; index on `quote_id`. |
 | `quote_line_items` | `024_create_quotes` | Sprint 15 / FPRM-239. Individual line items computed by `quote_engine.calculate_quote`. Columns: `id` (UUID PK), `quote_version_id` (FK), `line_order` (Integer), `line_type` (`feature_pack`/`transactional_user`/`limited_tech_user`/`addon`/`free_allocation`), `description`, `quantity`, `unit_price` (Numeric(10,2)), `discount_pct` (Numeric(5,2) default 0), `total_before_discount`/`total_after_discount` (Numeric(12,2)), `addon_key` (nullable — set when `line_type == 'addon'`). Index on `quote_version_id`. |
 | `approval_step_records` | `026_create_approval_step_records` | Sprint 17 / FPRM-274 (AD-22). Per-step audit trail for the multi-step approval workflow. Columns: `id` (UUID PK), `workflow_type` (`partner_application` / `deal_registration`), `object_id` (UUID — polymorphic; no FK since it can reference either parent table), `step_order` (Integer), `step_name` (String — snapshotted at action time), `required_role` (String — snapshotted), `actor_id` (FK `users.id`), `action` (`approved` / `rejected` / `info_required`), `notes` (Text nullable), `actioned_at` (DateTime). Indexes on `object_id` and `(workflow_type, object_id)` for back-reference reads. |
+| `deal_registrations.qty_*` columns | `029_add_license_qty_to_deal_registrations` | Post-Sprint-20 (PRs #128–#163). Adds `qty_transactional_users` (Integer, nullable) and `qty_limited_tech_users` (Integer, nullable) to `deal_registrations` so the deal form can capture user counts at deal-creation time instead of only at quote time. Originally noted as a Sprint 20 spec deviation — addressed here. Backfill leaves existing rows null; the quote engine continues to read user counts from `quote_versions` (AD-18) so historical quotes are unaffected. The migration also confirms `customer_contact_position` lands on the model. |
+| `deal_registrations.customer_contact_position` | `030_add_customer_contact_position` | Post-Sprint-20 hotfix. Adds the `customer_contact_position` (String, nullable) column that migration 029 attempted but missed on certain SQLite test paths. Idempotent — uses `IF NOT EXISTS` guard. Carries no other schema changes. |
+| `commission_structures.is_active` + timestamps | `031_extend_commission_structures` | Post-Sprint-20 (PR #142). Adds `is_active` (Boolean NOT NULL, `server_default='true'` so the backfill flips existing rows to active) plus `created_at` / `updated_at` (DateTime, `server_default=NOW()`) to `commission_structures`. Unblocks the Commission Rates admin tab (soft-delete + audit timestamps). Per AD-25, commission catalogue entries are admin-maintained data after this migration; new migrations are not required to add or deactivate rates. |
+| `quotes.include_in_pipeline` + `quote_versions.includes_software` / `includes_services` | `032_pipeline_toggle_and_quote_composition` | Post-Sprint-20 (PRs #147 + #149 + #153). Adds `quotes.include_in_pipeline` (Boolean NOT NULL, `server_default='true'`) — every existing quote backfills to True so per-deal `pipeline_total` aggregations remain stable post-deploy. Also adds `quote_versions.includes_software` and `quote_versions.includes_services` (both Boolean NOT NULL, `server_default='true'` / `server_default='false'` respectively) so quotes can flag their composition for future services-quote work. The aggregation helper in `deal_registrations_router._compute_pipeline_total` reads `include_in_pipeline` exclusively — `estimated_deal_value` is no longer summed into pipeline totals. |
+| `quote_documents` | `033_create_quote_documents` | Post-Sprint-20 (PR #158). New table for documents attached to a quote (signed acceptance PDFs, addenda, supporting collateral). Columns: `id` (UUID PK), `quote_id` (UUID FK to `quotes.id`, indexed), `document_type` (String — open vocabulary; the acceptance gate matches `'signed_acceptance'`), `document_name` (String), `file_data_base64` (Text — base64-encoded blob per AD-19; large quotes may push toward S3 in a later phase), `mime_type` (String, nullable), `file_size_bytes` (Integer, nullable), `uploaded_by_user_id` (FK `users.id`), `uploaded_at` (DateTime), `is_deleted` (Boolean NOT NULL default false — soft delete). Index on `quote_id`. Acceptance gate (router-level, not a constraint): `PATCH /quotes/{id}/status` rejects `sent → accepted` unless at least one non-deleted `QuoteDocument` exists with `document_type='signed_acceptance'`. |
 
 
 
@@ -1045,6 +1062,159 @@ Three guardrails preserve quote-engine integrity:
 **Consequence:** Internal `QuoteForm.jsx` (new-version mode) greys out scenario labels already present on the quote and disables the dropdown once all three exist — preventing duplicate scenarios from being added without forcing a hard error. The PDF artefact and `PortalQuoteSection` both surface the *active* scenario by name when set; the partner-facing portal is read-only — only internal write roles can PATCH `/active-scenario`.
 
 **Do not:** Re-introduce a non-null FK between `quotes.active_scenario` and a specific `quote_versions.id` — the column is intentionally a free-form label so iteration is cheap. Do not validate that `active_version` matches the latest version of `active_scenario` — the two endpoints are independent by design. Do not extend scenario_label vocabulary without coordinating with the frontend canonical order (good → better → best).
+
+---
+
+### AD-26 — Filter bar layout standard
+
+**Decision:** All list pages must render filters in a **single horizontal `fp-card` filter bar**. Layout order: filter dropdowns LEFT, search text input RIGHT (`flex: 1`), action buttons (Export CSV, Pipeline-only toggle, etc.) FAR RIGHT. Never stack filters vertically. Never wrap individual filters in labelled flex-column blocks.
+
+**Why:** Mixed conventions (some pages vertical-stacked, some horizontal, some unwrapped) make the UI feel inconsistent and confuse the eye when bouncing between screens. The canonical layout — established by `InternalQuotes.jsx` — keeps scanning predictable: filters left, search right, actions far right.
+
+**Reference:** `frontend/src/pages/InternalQuotes.jsx`.
+
+**Do not:** Add a new list page with `flex-direction: column` filters. Do not split filters into multiple rows. Do not place Export CSV inside the filter bar.
+
+---
+
+### AD-27 — Status badge style standard
+
+**Decision:** All status badges use a **tinted-background scheme**, never solid/opaque backgrounds. The tint tokens are:
+
+| Family | Background | Foreground |
+|---|---|---|
+| approved / active | `#E6F4EA` | `#2E7D32` |
+| draft / pending | `#F5F7FA` | `#555` |
+| rejected / cancelled | `#FEECEC` | `#C62828` |
+
+Other semantic tones (sent / under_review / info_required) follow the same pattern (light-tinted background, dark accessible foreground) and are encoded in the shared `StatusBadge` component.
+
+**Why:** Solid-background badges (white text on saturated colour) are harder to scan in dense tables and clash with the muted Fracttal One palette. The tinted scheme — pioneered by `InternalQuotes.jsx` — keeps colour as semantic signal without overwhelming the row.
+
+**Reference:** `frontend/src/pages/InternalQuotes.jsx` (`StatusBadge` component).
+
+**Do not:** Hand-roll a status badge with `background: <solid colour>; color: white;`. Use the shared component (or replicate the tinted pattern exactly).
+
+---
+
+### AD-28 — Table implementation standard
+
+**Decision:** All data tables use the `fp-table` CSS class. Column headers use the shared `SortableTh` component wherever sorting is applicable. Inline `<table style={...}>` styles are not permitted for new pages and should be migrated when nearby code is touched.
+
+**Why:** Inline table styles fork the visual grammar — borders, header background, padding, row hover — and accumulate drift across pages. A single CSS class plus a shared sortable header component keeps tables interchangeable and lets a future restyle land in one place.
+
+**Reference:** `frontend/src/pages/DealQueue.jsx`, `frontend/src/pages/DealList.jsx`.
+
+**Do not:** Add new list pages with inline `<table style={...}>` blocks. Do not re-implement sortable column headers — extend `SortableTh` if a new sort behaviour is needed.
+
+---
+
+### AD-29 — Input and select styling standard
+
+**Decision:** All `<select>` and `<input>` elements inside filter bars share the same styling tokens:
+
+```js
+{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }
+```
+
+Date inputs use the same shape. Other inputs (form-level, modal, etc.) may use richer affordances (`fp-field` floating-label) but filter-bar controls stay on this baseline.
+
+**Why:** Mixed padding / border tones / border-radius across filter inputs is the most visible inconsistency in the codebase. Locking the four properties keeps every filter bar visually uniform without forcing a heavier component abstraction.
+
+**Reference:** `frontend/src/pages/InternalQuotes.jsx` (filter `<select>` / `<input>` elements).
+
+**Do not:** Introduce a filter-bar input with different padding, border colour, border-radius, or font size. Do not omit the border (filter inputs always carry a `1px solid #E0E4EA` border).
+
+---
+
+### AD-30 — Export CSV button standard
+
+**Decision:** Export CSV buttons always live **top-right in the page header**, alongside the page title or the primary action button. They are styled as discreet ghost-style buttons:
+
+```js
+{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', color: '#718096' }
+```
+
+The implementation uses the `fetch + Blob + URL.createObjectURL` pattern from AD-20 with the `Authorization: Bearer` header.
+
+**Why:** Putting CSV export in the filter bar gives it the same visual weight as a filter, which it is not. Top-right next to the title (or near the primary CTA) groups it with other page-level actions. Discreet styling signals "secondary affordance" — the export is occasional, not constant.
+
+**Reference:** `frontend/src/pages/InternalPartnerList.jsx` (`exportCSV` and header rendering).
+
+**Do not:** Put Export CSV inside the filter bar. Do not style it as a primary button. Do not fall back to `window.location.href = '...?export=csv'` — the token will not travel as a header and the endpoint will 401 (this also restates AD-20).
+
+---
+
+### AD-31 — Summary cards rule
+
+**Decision:** Summary metric cards (`SummaryCard`-style horizontal strip) belong on **data-aggregation pages** (Quotes, Deals pipeline) and are **legitimately absent** on roster / management pages (Users, Partner Users, Partners list).
+
+**Why:** Summary cards are useful when the page is about money or volume — quote totals, pipeline values, deal counts. On a Users list, a strip of "Total: 42, Active: 38" cards is noise. The distinction keeps cards meaningful: their presence telegraphs "this page summarises business state," their absence telegraphs "this page is a roster."
+
+**Reference:** `frontend/src/pages/InternalQuotes.jsx` (cards present), `frontend/src/pages/InternalUsers.jsx` (cards intentionally absent).
+
+**Do not:** Add summary cards to roster / management pages just for visual symmetry. Do not omit summary cards on a new aggregation page — the precedent is set.
+
+---
+
+### AD-32 — `fp-card` wrapper standard
+
+**Decision:** All filter bars, form sections, and content panels are wrapped in the `fp-card` CSS class. Raw `<div>` blocks with inline `border` / `padding` are not permitted for content panels — they fork the panel grammar (radius, shadow, spacing).
+
+**Why:** The `fp-card` class is the single Fracttal One panel primitive. Bare divs with hand-rolled padding don't match the radius / shadow / border-colour of nearby cards and read as "almost the same, slightly off." One class, one panel grammar.
+
+**Reference:** `frontend/src/pages/InternalQuotes.jsx`, `frontend/src/styles/tokens.css`.
+
+**Do not:** Introduce a panel-like block with `<div style={{ border: '1px solid …', borderRadius: 6, padding: 12 }}>`. Use `<section className="fp-card">` (or `<div className="fp-card">`) instead.
+
+---
+
+## Section 7 — Frontend Design Standards
+
+### Reference Implementation
+
+`frontend/src/pages/InternalQuotes.jsx` is the canonical reference for all list page layouts. When in doubt about a layout decision on a list page, mirror this file.
+
+### List Page Layout Template
+
+Every list page follows this structure:
+
+1. **Page header row** — title (left) + primary action + Export CSV (right).
+2. **Summary cards strip** (optional — data-aggregation pages only, per AD-31).
+3. **Filter bar** — single `fp-card`: dropdowns LEFT, search RIGHT (`flex: 1`), toggles FAR RIGHT (AD-26).
+4. **Data table** — `fp-table` class, `SortableTh` headers, tinted `StatusBadge`, consistent currency formatting (AD-28, AD-23).
+
+### Shared Components
+
+- `SortableTh` — sortable column header with ↕/↑/↓ glyph and `aria-sort` attribute. Source: `frontend/src/components/SortableTh.jsx`.
+- `StatusBadge` — tinted-background status chip (AD-27).
+- `formatCurrency(amount, currencyCode)` — currency formatting with symbol map. Source: `frontend/src/utils/currency.js`.
+- `formatMoney(amount)` — whole-dollar formatting for pipeline / deal values (the partner-portal variant; same module).
+
+### Color Tokens
+
+- Primary: `#1A6EBB`
+- Background: `#F5F7FA`
+- Border: `#E0E4EA`
+- Text muted: `#718096`
+- Success: `#2E7D32` (tint: `#E6F4EA`)
+- Warning: `#B7791F` (tint: `#FEFCE8`)
+- Danger: `#C62828` (tint: `#FEECEC`)
+- Font: Inter
+
+### CSS Classes
+
+- `fp-card` — content panel wrapper (AD-32).
+- `fp-table` — data table (AD-28).
+- `fp-btn--primary` — primary action (`#1A6EBB`).
+- `fp-btn--ghost` — secondary / outline.
+- `fp-btn--export-csv` — discreet export button (AD-30).
+
+### Page-Specific Exceptions
+
+- **`DealQueue.jsx`** — tab-based status filter (not a dropdown) is acceptable for workflow pages where the status transitions drive the user's attention.
+- **`DealList.jsx`** — dual Kanban / List view mode is a valid extension on top of the standard list table.
+- **Summary cards absent on `InternalUsers.jsx`, `PartnerUserManagement.jsx`, `InternalPartnerList.jsx`** — these are roster pages, not aggregation pages (AD-31).
 
 ---
 
