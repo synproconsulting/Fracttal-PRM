@@ -1603,6 +1603,7 @@ def list_partner_quotes(
             "feature_plan": version.feature_plan,
             "grand_total_after_discount": float(version.grand_total_after_discount),
             "status": quote.status,
+            "include_in_pipeline": bool(quote.include_in_pipeline),
             "active_version": quote.active_version,
             "active_scenario": quote.active_scenario,
             "created_at": quote.created_at.isoformat() if quote.created_at else None,
