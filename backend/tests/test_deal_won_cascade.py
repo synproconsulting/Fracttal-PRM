@@ -183,13 +183,53 @@ def _quote_total(client, quote_id):
 # ============================================================
 
 
+def _accept_one_quote(client, deal_id):
+    """Helper: create + transition a quote to ``accepted`` on the deal so
+    the won endpoint's "at least one accepted quote" guard is satisfied.
+    Returns the quote id."""
+    q = _make_quote(client, deal_id)
+    client.patch(f"/quotes/{q}/status", json={"status": "sent"})
+    client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
+    return q
+
+
 def test_approved_to_won_allowed(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id, status="approved")
+    _accept_one_quote(client, deal.id)
     r = client.post(f"/internal/deals/{deal.id}/won")
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "won"
+
+
+def test_cannot_mark_won_without_accepted_quote(client, db_session):
+    """A deal with zero accepted quotes must not be markable as Won — the
+    closed-won value would be 0 while won_deals would still increment, so
+    the two summary numbers would silently disagree."""
+    org = _org(db_session)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    deal = _deal(db_session, org.id, status="approved")
+    # No quotes at all
+    r = client.post(f"/internal/deals/{deal.id}/won")
+    assert r.status_code == 422
+    assert "accepted quote" in r.json()["detail"]
+
+    # Even with a draft + sent quote (no accepted), still 422.
+    q_draft = _make_quote(client, deal.id)
+    q_sent = _make_quote(client, deal.id)
+    client.patch(f"/quotes/{q_sent}/status", json={"status": "sent"})
+    r2 = client.post(f"/internal/deals/{deal.id}/won")
+    assert r2.status_code == 422
+    assert "accepted quote" in r2.json()["detail"]
+
+    # Deal status must be untouched.
+    deal_after = client.get(f"/deal-registrations/{deal.id}").json()
+    assert deal_after["status"] == "approved"
+    # And the draft/sent quotes must still be open — the guard fires before
+    # the cascade, so no quotes get cancelled on failure.
+    assert client.get(f"/quotes/{q_draft}").json()["status"] == "draft"
+    assert client.get(f"/quotes/{q_sent}").json()["status"] == "sent"
 
 
 def test_won_is_terminal_via_status_patch(client, db_session):
@@ -199,6 +239,7 @@ def test_won_is_terminal_via_status_patch(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id, status="approved")
+    _accept_one_quote(client, deal.id)
     client.post(f"/internal/deals/{deal.id}/won")
     for target in ("lost", "withdrawn"):
         r = client.patch(f"/deal-registrations/{deal.id}/status", json={"status": target})
@@ -249,6 +290,7 @@ def test_won_cascade_clears_include_in_pipeline(client, db_session):
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/pipeline-inclusion", json={"include_in_pipeline": True})
     assert client.get(f"/quotes/{q}").json()["include_in_pipeline"] is True
+    _accept_one_quote(client, deal.id)  # satisfies the new accepted-quote guard
 
     client.post(f"/internal/deals/{deal.id}/won")
     after = client.get(f"/quotes/{q}").json()
@@ -261,6 +303,7 @@ def test_won_cascade_emits_quote_cancelled_audit_with_note(client, db_session):
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id, status="approved")
     q = _make_quote(client, deal.id)
+    _accept_one_quote(client, deal.id)  # satisfies the new accepted-quote guard
 
     client.post(f"/internal/deals/{deal.id}/won")
     audit = (
