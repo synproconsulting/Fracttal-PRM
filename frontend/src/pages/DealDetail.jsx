@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import { formatCurrency as fmtMoney } from '../utils/currency.js'
+import QuoteDetail from './QuoteDetail.jsx'
+
+const QUOTE_STATUS_TONE = {
+  draft: 'fp-badge--neutral',
+  sent: 'fp-badge--info',
+  accepted: 'fp-badge--success',
+  expired: 'fp-badge--danger',
+  cancelled: 'fp-badge--danger',
+}
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -419,10 +428,10 @@ function PortalQuoteSection({ dealId }) {
   const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
     || 'https://fracttal-prm-backend-production.up.railway.app'
   const token = localStorage.getItem('token')
-  const [quote, setQuote] = useState(null)
-  const [scenarios, setScenarios] = useState([])
+  const [quotes, setQuotes] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [viewQuoteId, setViewQuoteId] = useState(null)
 
   useEffect(() => {
     if (!dealId || !token) return
@@ -435,147 +444,70 @@ function PortalQuoteSection({ dealId }) {
         }
         return r.json()
       })
-      .then(async (quotes) => {
-        if (!quotes || quotes.length === 0) { setQuote(null); setScenarios([]); return }
-        const picked = quotes[0] // most recent
-        const [detailRes, scenariosRes] = await Promise.all([
-          fetch(`${API}/quotes/${picked.id}`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API}/quotes/${picked.id}/scenarios`, { headers: { Authorization: `Bearer ${token}` } }),
-        ])
-        if (!detailRes.ok) {
-          const body = await detailRes.json().catch(() => ({}))
-          throw new Error(body.detail || `HTTP ${detailRes.status}`)
-        }
-        setQuote(await detailRes.json())
-        if (scenariosRes.ok) {
-          const data = await scenariosRes.json()
-          setScenarios(data.scenarios || [])
-        }
-      })
+      .then((list) => setQuotes(Array.isArray(list) ? list : []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [dealId, token])
 
-  // formatCurrency imported from ../utils/currency.js as fmtMoney
-
-  async function handleDownloadPdf() {
-    if (!quote?.active_version_data?.pdf_generated_at) return
-    try {
-      const r = await fetch(`${API}/quotes/${quote.id}/versions/${quote.active_version}/pdf`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}))
-        throw new Error(body.detail || `HTTP ${r.status}`)
-      }
-      const blob = await r.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `quote-v${quote.active_version}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
   if (loading) return null
   if (error) return <section className="fp-card" style={{ marginTop: 16 }}><div className="fp-alert fp-alert--danger">{error}</div></section>
-  if (!quote) {
-    return (
-      <section className="fp-card" style={{ marginTop: 16 }}>
-        <h2 className="fp-section-title">Quote</h2>
-        <div style={{ color: '#64748B', fontSize: 14 }}>No quote has been created for this deal yet.</div>
-      </section>
-    )
-  }
-
-  const v = quote.active_version_data
-  const currency = quote.currency_code || 'USD'
-  const items = v?.line_items || []
-  const pdfAvailable = !!v?.pdf_generated_at
 
   return (
     <section className="fp-card" style={{ marginTop: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <h2 className="fp-section-title" style={{ margin: 0 }}>Quote</h2>
-        <button type="button" onClick={handleDownloadPdf} disabled={!pdfAvailable} className="fp-btn fp-btn--primary">
-          Download Quote PDF
-        </button>
-      </div>
-      {quote.active_scenario && (
-        <div style={{
-          background: '#EBF4FF', border: '1px solid #1A6EBB', borderRadius: 8,
-          padding: '10px 14px', marginBottom: 12, fontSize: 14,
-        }}>
-          <strong>Your recommended option:</strong>{' '}
-          <span style={{ color: '#1A6EBB', fontWeight: 700, textTransform: 'capitalize' }}>
-            {quote.active_scenario}
-          </span>
-        </div>
-      )}
-      {scenarios.length > 1 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-          {scenarios.map((s) => {
-            const isActive = s.scenario_label === quote.active_scenario
-            return (
-              <div key={s.scenario_label}
-                title={isActive ? 'Currently selected' : 'Available alternative'}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 999,
-                  fontSize: 12,
-                  fontWeight: isActive ? 700 : 500,
-                  background: isActive ? '#1A6EBB' : '#F5F7FA',
-                  color: isActive ? '#fff' : '#475569',
-                  border: isActive ? 'none' : '1px solid #E0E4EA',
-                  textTransform: 'capitalize',
-                }}>
-                {isActive ? '⭐ ' : ''}{s.scenario_label} — {fmtMoney(s.grand_total_after_discount, currency)}
-              </div>
-            )
-          })}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 12, fontSize: 13, color: '#64748B' }}>
-        <div><strong>Plan:</strong> {v?.feature_plan || '—'}</div>
-        <div><strong>Currency:</strong> {currency}</div>
-        <div><strong>Version:</strong> v{quote.active_version}{v?.scenario_label ? ` (${v.scenario_label})` : ''}</div>
-      </div>
-      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#1A6EBB', color: '#fff' }}>
-            <th style={{ textAlign: 'left', padding: 8 }}>Description</th>
-            <th style={{ textAlign: 'right', padding: 8 }}>Qty</th>
-            <th style={{ textAlign: 'right', padding: 8 }}>Unit</th>
-            <th style={{ textAlign: 'right', padding: 8 }}>Discount</th>
-            <th style={{ textAlign: 'right', padding: 8 }}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((li) => (
-            <tr key={li.id || `${li.line_order}-${li.line_type}`} style={{
-              borderBottom: '1px solid #F1F5F9',
-              background: li.line_type === 'free_allocation' ? '#F0FDF4' : 'transparent',
-              color: li.line_type === 'free_allocation' ? '#15803D' : 'inherit',
-              fontStyle: li.line_type === 'free_allocation' ? 'italic' : 'normal',
-            }}>
-              <td style={{ padding: 8 }}>{li.description}</td>
-              <td style={{ padding: 8, textAlign: 'right' }}>{li.quantity}</td>
-              <td style={{ padding: 8, textAlign: 'right' }}>{Number(li.unit_price) > 0 ? fmtMoney(li.unit_price, currency) : '—'}</td>
-              <td style={{ padding: 8, textAlign: 'right' }}>{Number(li.discount_pct) > 0 ? `${Number(li.discount_pct).toFixed(0)}%` : '—'}</td>
-              <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(li.total_after_discount, currency)}</td>
+      <h2 className="fp-section-title" style={{ marginTop: 0, marginBottom: 12 }}>Quotes</h2>
+      {quotes.length === 0 ? (
+        <div style={{ color: '#64748B', fontSize: 14 }}>No quotes have been created for this deal yet.</div>
+      ) : (
+        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#F5F7FA' }}>
+              <th style={{ textAlign: 'left', padding: 8 }}>Quote Name</th>
+              <th style={{ textAlign: 'left', padding: 8 }}>Plan</th>
+              <th style={{ textAlign: 'right', padding: 8 }}>Active Version</th>
+              <th style={{ textAlign: 'left', padding: 8 }}>Status</th>
+              <th style={{ textAlign: 'right', padding: 8 }}>Grand Total</th>
+              <th style={{ textAlign: 'right', padding: 8 }}>Actions</th>
             </tr>
-          ))}
-          <tr style={{ borderTop: '2px solid #1A6EBB', background: '#F5F7FA', fontWeight: 700 }}>
-            <td style={{ padding: 8 }} colSpan={4}>Annual Total After Discount</td>
-            <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(v?.grand_total_after_discount, currency)}</td>
-          </tr>
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {quotes.map((q) => {
+              const currency = q.currency_code || 'USD'
+              const planRaw = q.feature_plan
+              const planLabel = planRaw ? planRaw.charAt(0).toUpperCase() + planRaw.slice(1) : '—'
+              return (
+                <tr key={q.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                  <td style={{ padding: 8 }}>{q.quote_name || 'Untitled'}</td>
+                  <td style={{ padding: 8 }}>{planLabel}</td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>v{q.active_version}</td>
+                  <td style={{ padding: 8 }}>
+                    <span className={`fp-badge ${QUOTE_STATUS_TONE[q.status] || 'fp-badge--neutral'}`}>
+                      {q.status ? q.status.charAt(0).toUpperCase() + q.status.slice(1) : '—'}
+                    </span>
+                  </td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>
+                    {q.grand_total_after_discount != null ? fmtMoney(q.grand_total_after_discount, currency) : '—'}
+                  </td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>
+                    <button type="button" onClick={() => setViewQuoteId(q.id)} className="fp-btn fp-btn--ghost">View</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {viewQuoteId && (
+        <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+          <div className="fp-modal" style={{ maxWidth: 1200, width: '90vw', maxHeight: '90vh', overflowY: 'auto' }}>
+            <QuoteDetail
+              quoteId={viewQuoteId}
+              isReadOnly
+              onClose={() => setViewQuoteId(null)}
+            />
+          </div>
+        </div>
+      )}
     </section>
   )
 }
