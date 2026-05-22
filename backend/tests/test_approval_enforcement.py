@@ -521,3 +521,77 @@ def test_get_deal_returns_progress_block(db_session):
     progress = r.json()["approval_progress"]
     assert progress["total_steps"] == 2
     assert progress["current_step_order"] == 1
+
+
+# ======================================================================
+# system_admin satisfies any step's required_role (break-glass superuser)
+# ======================================================================
+
+
+def test_system_admin_can_approve_deal_step_requiring_channel_manager(db_session):
+    """system_admin should be able to fulfil any required role on any step.
+    The original FPRM-274 enforcement gated admins out when the configured
+    required_role didn't match their own — this regression-tests that the
+    break-glass bypass works for the deal-registration approval endpoint."""
+    partner = _make_partner_for_deals(db_session)
+    deal = _make_deal_under_review(db_session, partner)
+    _make_step(db_session, "deal_registration", 1, "Mgr Approval", "channel_manager")
+    admin = _make_user(db_session, UserRole.system_admin)
+    _override(db_session, admin)
+    try:
+        r = TestClient(app).post(
+            f"/internal/deals/{deal.id}/approve",
+            json={"review_notes": "admin override on a CM-gated step"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200, r.text
+    db_session.refresh(deal)
+    assert deal.status == "approved"
+    rec = db_session.query(ApprovalStepRecord).filter_by(object_id=deal.id).one()
+    assert rec.action == "approved"
+    assert rec.required_role == "channel_manager"
+    assert str(rec.actor_id) == str(admin.id)
+
+
+def test_system_admin_can_approve_application_step_requiring_channel_ops_admin(db_session):
+    """Same bypass on the partner-application endpoint."""
+    appl = _make_application(db_session)
+    _make_step(db_session, "partner_application", 1, "Channel Ops Review", "channel_ops_admin")
+    admin = _make_user(db_session, UserRole.system_admin)
+    _override(db_session, admin)
+    try:
+        r = TestClient(app).post(f"/applications/{appl.id}/approve")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "approved"
+    rec = db_session.query(ApprovalStepRecord).filter_by(object_id=appl.id).one()
+    assert rec.action == "approved"
+    assert rec.required_role == "channel_ops_admin"
+    assert str(rec.actor_id) == str(admin.id)
+
+
+def test_channel_ops_admin_still_blocked_from_channel_manager_step(db_session):
+    """Regression: the system_admin bypass MUST NOT generalise to other
+    roles. channel_ops_admin still gets 403 when the step requires
+    channel_manager — role enforcement is preserved for everyone except the
+    break-glass superuser."""
+    partner = _make_partner_for_deals(db_session)
+    deal = _make_deal_under_review(db_session, partner)
+    _make_step(db_session, "deal_registration", 1, "Mgr Approval", "channel_manager")
+    ops = _make_user(db_session, UserRole.channel_ops_admin)
+    _override(db_session, ops)
+    try:
+        r = TestClient(app).post(
+            f"/internal/deals/{deal.id}/approve",
+            json={"review_notes": "ops trying to bypass"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 403
+    assert "channel_manager" in r.json()["detail"]
+    # And the deal must be untouched.
+    db_session.refresh(deal)
+    assert deal.status == "under_review"
+    assert db_session.query(ApprovalStepRecord).filter_by(object_id=deal.id).count() == 0
