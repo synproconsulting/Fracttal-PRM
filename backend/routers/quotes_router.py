@@ -1173,6 +1173,7 @@ def list_internal_quotes(
                 "active_scenario": quote.active_scenario,
                 "grand_total_after_discount": float(version.grand_total_after_discount),
                 "status": quote.status,
+                "include_in_pipeline": bool(quote.include_in_pipeline),
                 "created_at": quote.created_at.isoformat() if quote.created_at else None,
             }
         )

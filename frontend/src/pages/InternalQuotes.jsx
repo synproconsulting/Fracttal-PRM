@@ -141,12 +141,13 @@ export default function InternalQuotes() {
                 <th style={{ padding: 10 }}>Currency</th>
                 <SortableTh field="grand_total_after_discount" sort={sort} onSort={toggleSort} style={{ padding: 10 }} align="right">Grand Total</SortableTh>
                 <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Status</SortableTh>
+                <th style={{ padding: 10, textAlign: 'center' }}>Pipeline</th>
                 <SortableTh field="created_at" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Created</SortableTh>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
                   No quotes match the current filters.
                 </td></tr>
               )}
@@ -172,6 +173,11 @@ export default function InternalQuotes() {
                     {formatCurrency(q.grand_total_after_discount, q.currency_code)}
                   </td>
                   <td style={{ padding: 10 }}><StatusBadge status={q.status} /></td>
+                  <td style={{ padding: 10, textAlign: 'center' }}>
+                    <span aria-label={q.include_in_pipeline ? 'In pipeline' : 'Not in pipeline'}>
+                      {q.include_in_pipeline ? '✅' : '—'}
+                    </span>
+                  </td>
                   <td style={{ padding: 10, color: '#64748B' }}>
                     {q.created_at ? new Date(q.created_at).toLocaleDateString() : '—'}
                   </td>
