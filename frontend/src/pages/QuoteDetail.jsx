@@ -9,6 +9,7 @@ const STATUS_TONE = {
   sent: 'fp-badge--info',
   accepted: 'fp-badge--success',
   expired: 'fp-badge--danger',
+  cancelled: 'fp-badge--danger',
 }
 
 export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
@@ -111,6 +112,47 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
       if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       await loadQuote()
       showToast('Quote marked as Sent')
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function setStatus(newStatus, toastMsg) {
+    if (busy || !quote) return
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch(`${API}/quotes/${quoteId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      await loadQuote()
+      showToast(toastMsg)
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function togglePipelineInclusion() {
+    if (busy || !quote) return
+    setBusy(true); setError(null)
+    try {
+      const next = !quote.include_in_pipeline
+      const r = await fetch(`${API}/quotes/${quoteId}/pipeline-inclusion`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ include_in_pipeline: next }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      await loadQuote()
+      showToast(next ? 'Quote included in pipeline' : 'Quote removed from pipeline')
     } catch (e) {
       setError(e.message || String(e))
     } finally {
@@ -243,6 +285,31 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
               Mark as Sent
             </button>
           )}
+          {quote.status === 'sent' && (
+            <button type="button" disabled={busy}
+              onClick={() => setStatus('accepted', 'Quote marked as Accepted')}
+              className="fp-btn fp-btn--success">
+              Mark as Accepted
+            </button>
+          )}
+          {quote.status === 'sent' && (
+            <button type="button" disabled={busy}
+              onClick={() => setStatus('expired', 'Quote marked as Expired')}
+              className="fp-btn fp-btn--ghost">
+              Mark as Expired
+            </button>
+          )}
+          {(quote.status === 'draft' || quote.status === 'sent') && (
+            <button type="button" disabled={busy}
+              onClick={() => {
+                if (window.confirm('Cancel this quote? This cannot be undone.')) {
+                  setStatus('cancelled', 'Quote cancelled')
+                }
+              }}
+              className="fp-btn fp-btn--danger">
+              Cancel Quote
+            </button>
+          )}
           {onAddVersion && (
             <button type="button" disabled={busy} onClick={() => onAddVersion(quote)} className="fp-btn fp-btn--primary">
               Add Version
@@ -255,6 +322,45 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
       </div>
 
       {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
+
+      <section className="fp-card" style={{ marginBottom: 16 }}>
+        <h3 className="fp-section-title">Pipeline &amp; composition</h3>
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ flex: '1 1 240px' }}>
+            <div style={{ fontSize: 13, color: '#64748B', marginBottom: 6 }}>Pipeline inclusion</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!quote.include_in_pipeline}
+                disabled={busy}
+                onChange={togglePipelineInclusion}
+              />
+              <span style={{ fontWeight: 600, color: quote.include_in_pipeline ? '#15803D' : '#64748B' }}>
+                {quote.include_in_pipeline ? '✅ Included in pipeline' : '— Not included in pipeline'}
+              </span>
+            </label>
+            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>
+              Channel managers control whether this quote contributes to the cross-deal pipeline total.
+            </div>
+          </div>
+          <div style={{ flex: '1 1 240px' }}>
+            <div style={{ fontSize: 13, color: '#64748B', marginBottom: 6 }}>Quote composition</div>
+            <div style={{ fontWeight: 600, color: '#1E293B' }}>
+              {(() => {
+                const sw = !!selectedVersion?.includes_software
+                const sv = !!selectedVersion?.includes_services
+                if (sw && sv) return 'Software + Services'
+                if (sw) return 'Software only'
+                if (sv) return 'Services only'
+                return '—'
+              })()}
+            </div>
+            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>
+              Services quoting is read-only until the services pricing module ships.
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <h3 className="fp-section-title">Versions</h3>

@@ -86,10 +86,16 @@ def _filtered_deals_with_orgs(
     partner_category: Optional[str],
     tier: Optional[str],
 ):
-    """Return list of (deal, org) tuples matching the optional filters."""
+    """Return list of (deal, org) tuples matching the optional filters.
+
+    Deals in the terminal ``lost`` and ``withdrawn`` statuses are excluded
+    -- they should not contribute to pipeline counts, values, or conflict
+    rates because they no longer represent active opportunities.
+    """
     query = (
         db.query(DealRegistration, PartnerOrganization)
         .join(PartnerOrganization, PartnerOrganization.id == DealRegistration.partner_org_id)
+        .filter(DealRegistration.status.notin_(["lost", "withdrawn"]))
     )
     if from_date is not None:
         query = query.filter(DealRegistration.submitted_at >= datetime.combine(from_date, datetime.min.time()))

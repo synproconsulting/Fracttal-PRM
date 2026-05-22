@@ -212,6 +212,9 @@ def test_internal_quotes_summary_counts(client, db_session):
     client.patch(f"/quotes/{q_sent}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
+    # Migration 032: pipeline_total now requires explicit include_in_pipeline=True.
+    for qid in (q_draft, q_sent, q_acc):
+        client.patch(f"/quotes/{qid}/pipeline-inclusion", json={"include_in_pipeline": True})
     r = client.get("/internal/quotes")
     s = r.json()["summary"]
     assert s["total_quotes"] == 3
@@ -226,6 +229,9 @@ def test_internal_quotes_pipeline_excludes_expired(client, db_session):
     _auth(_user(db_session, UserRole.channel_manager.value))
     q1 = _quote(client, _deal(db_session, org.id).id, plan="starter", qty=1)  # ~1701
     q2 = _quote(client, _deal(db_session, org.id).id, plan="starter", qty=1)
+    # Migration 032: pipeline_total now requires explicit include_in_pipeline=True.
+    client.patch(f"/quotes/{q1}/pipeline-inclusion", json={"include_in_pipeline": True})
+    client.patch(f"/quotes/{q2}/pipeline-inclusion", json={"include_in_pipeline": True})
     # Move q2 to expired via sent -> expired
     client.patch(f"/quotes/{q2}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q2}/status", json={"status": "expired"})

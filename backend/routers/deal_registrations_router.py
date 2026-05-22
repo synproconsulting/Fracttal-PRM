@@ -648,6 +648,84 @@ def delete_deal(
     return None
 
 
+# -------------------- Lost / Withdrawn terminal statuses --------------------
+
+
+# Map of allowed deal status transitions for the dedicated terminal-status
+# endpoint. ``lost`` and ``withdrawn`` are both terminal -- absence as a key
+# means no transition out is permitted via this endpoint.
+_TERMINAL_STATUS_TRANSITIONS = {
+    "lost": {"approved"},
+    "withdrawn": {"approved", "submitted", "under_review"},
+}
+
+_TERMINAL_AUDIT_ACTIONS = {
+    "lost": "deal.lost",
+    "withdrawn": "deal.withdrawn",
+}
+
+
+@router.patch("/deal-registrations/{deal_id}/status")
+def patch_deal_status(
+    deal_id: uuid.UUID,
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Move a deal to a terminal status (``lost`` or ``withdrawn``).
+
+    Auth: channel_manager / channel_ops_admin / system_admin. Allowed
+    transitions:
+
+    * ``approved`` -> ``lost``
+    * ``approved`` -> ``withdrawn``
+    * ``submitted`` -> ``withdrawn``
+    * ``under_review`` -> ``withdrawn``
+
+    Both terminal statuses block any further transition through this
+    endpoint -- once a deal is lost or withdrawn it stays there. Each
+    transition emits a distinct audit action (``deal.lost`` /
+    ``deal.withdrawn``) so reporting can attribute pipeline shrinkage.
+    """
+    _require_review_role(current_user)
+    new_status = (payload.get("status") or "").strip() if payload else ""
+    if new_status not in _TERMINAL_STATUS_TRANSITIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of: {sorted(_TERMINAL_STATUS_TRANSITIONS)}",
+        )
+
+    deal = _get_deal_or_404(deal_id, db)
+    allowed_from = _TERMINAL_STATUS_TRANSITIONS[new_status]
+    if deal.status not in allowed_from:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Cannot transition deal from '{deal.status}' to '{new_status}'. "
+                f"Allowed source statuses: {sorted(allowed_from)}"
+            ),
+        )
+
+    before_status = deal.status
+    deal.status = new_status
+    deal.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(deal)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action=_TERMINAL_AUDIT_ACTIONS[new_status],
+        object_type="deal_registration",
+        object_id=deal.id,
+        before={"status": before_status},
+        after={"status": new_status},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(deal)
+
+
 # -------------------- Change log (post-Sprint 20 PR B) --------------------
 
 
