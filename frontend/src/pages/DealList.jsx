@@ -187,14 +187,32 @@ export default function DealList() {
   }
 
   const summary = useMemo(() => {
-    if (!pipeline) return { total: 0, totalValue: 0, approvedValue: 0, infoRequired: 0 }
+    if (!pipeline) return { total: 0, totalValue: 0, totalEstValue: 0, anyEstValue: false, approvedValue: 0, infoRequired: 0 }
     const all = []
+    // KANBAN_ORDER intentionally excludes lost/withdrawn/won/expired/cancelled
+    // — those buckets are absent here, so summing across `all` already
+    // honours the "exclude lost/withdrawn/won" rule the spec calls for.
     KANBAN_ORDER.forEach((s) => (pipeline[s] || []).forEach((d) => all.push(d)))
     const approved = pipeline.approved || []
     const infoRequired = (pipeline.info_required || []).length
     const totalValue = all.reduce((acc, d) => acc + dealPipelineValue(d), 0)
     const approvedValue = approved.reduce((acc, d) => acc + dealPipelineValue(d), 0)
-    return { total: all.length, totalValue, approvedValue, infoRequired }
+    // Partner-entered estimate. Distinct from pipeline value (which is
+    // derived from quotes); a deal can have one without the other. Track
+    // whether ANY deal in the visible set had a value so the card can
+    // render '—' when no estimates are set anywhere.
+    let totalEstValue = 0
+    let anyEstValue = false
+    for (const d of all) {
+      if (d?.estimated_deal_value != null) {
+        const v = Number(d.estimated_deal_value)
+        if (Number.isFinite(v)) {
+          totalEstValue += v
+          anyEstValue = true
+        }
+      }
+    }
+    return { total: all.length, totalValue, totalEstValue, anyEstValue, approvedValue, infoRequired }
   }, [pipeline])
 
   async function exportCSV() {
@@ -272,6 +290,7 @@ export default function DealList() {
         ) : (
           <>
             <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Deals</div><div style={{ fontSize: 20, fontWeight: 700 }}>{summary.total}</div></div>
+            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Est. Value</div><div style={{ fontSize: 20, fontWeight: 700 }}>{summary.anyEstValue ? formatMoney(summary.totalEstValue) : '—'}</div></div>
             <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Pipeline Value</div><div style={{ fontSize: 20, fontWeight: 700 }}>{formatMoney(summary.totalValue)}</div></div>
             <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved Pipeline</div><div style={{ fontSize: 20, fontWeight: 700, color: '#22C55E' }}>{formatMoney(summary.approvedValue)}</div></div>
             <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Info Required</div><div style={{ fontSize: 20, fontWeight: 700, color: '#8B5CF6' }}>{summary.infoRequired}</div></div>
