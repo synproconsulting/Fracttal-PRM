@@ -1728,6 +1728,7 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
         body: JSON.stringify({ include_in_pipeline: next }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      refresh()
     } catch (e) {
       setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, include_in_pipeline: !next } : x)))
       if (typeof setToast === 'function') {
@@ -1880,6 +1881,8 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
           <div className="fp-modal" style={{ maxWidth: 1200, width: '90vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <QuoteDetail
               quoteId={viewQuoteId}
+              includeInPipeline={!!quotes.find((x) => x.id === viewQuoteId)?.include_in_pipeline}
+              onPipelineChange={refresh}
               onClose={() => { setViewQuoteId(null); refresh() }}
               onAddVersion={(quote) => {
                 const active = quote.active_version_data

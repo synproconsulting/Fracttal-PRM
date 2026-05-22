@@ -12,7 +12,7 @@ const STATUS_TONE = {
   cancelled: 'fp-badge--danger',
 }
 
-export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
+export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInPipeline, onPipelineChange }) {
   const token = localStorage.getItem('token')
   const [quote, setQuote] = useState(null)
   const [versionsList, setVersionsList] = useState([])
@@ -22,6 +22,10 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
+  // Pipeline inclusion is owned by the parent quotes list — seed from prop and
+  // re-sync whenever the parent's value changes (e.g. after refresh()).
+  const [pipelineIncluded, setPipelineIncluded] = useState(!!includeInPipeline)
+  useEffect(() => { setPipelineIncluded(!!includeInPipeline) }, [includeInPipeline])
 
   const loadQuote = useCallback(async () => {
     setError(null)
@@ -141,9 +145,10 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
 
   async function togglePipelineInclusion() {
     if (busy || !quote) return
+    const next = !pipelineIncluded
     setBusy(true); setError(null)
+    setPipelineIncluded(next)
     try {
-      const next = !quote.include_in_pipeline
       const r = await fetch(`${API}/quotes/${quoteId}/pipeline-inclusion`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -151,9 +156,10 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
       })
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
-      await loadQuote()
       showToast(next ? 'Quote included in pipeline' : 'Quote removed from pipeline')
+      if (typeof onPipelineChange === 'function') onPipelineChange(next)
     } catch (e) {
+      setPipelineIncluded(!next)
       setError(e.message || String(e))
     } finally {
       setBusy(false)
@@ -332,12 +338,12 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion }) {
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
               <input
                 type="checkbox"
-                checked={!!quote.include_in_pipeline}
+                checked={pipelineIncluded}
                 disabled={busy}
                 onChange={togglePipelineInclusion}
               />
-              <span style={{ fontWeight: 600, color: quote.include_in_pipeline ? '#15803D' : '#64748B' }}>
-                {quote.include_in_pipeline ? '✅ Included in pipeline' : '— Not included in pipeline'}
+              <span style={{ fontWeight: 600, color: pipelineIncluded ? '#15803D' : '#64748B' }}>
+                {pipelineIncluded ? '✅ Included in pipeline' : '— Not included in pipeline'}
               </span>
             </label>
             <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>
