@@ -1654,8 +1654,6 @@ export default function InternalDealDetail() {
         dealId={deal.id}
         dealQtyTransactional={deal.qty_transactional_users ?? 1}
         dealQtyLimitedTech={deal.qty_limited_tech_users ?? 0}
-        currentUserRole={currentUserRole}
-        setToast={setToast}
         initialOpenQuoteId={pendingOpenQuoteId}
       />
 
@@ -1715,7 +1713,7 @@ export default function InternalDealDetail() {
 
 }
 
-function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, currentUserRole, setToast, initialOpenQuoteId }) {
+function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, initialOpenQuoteId }) {
   const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
     || 'https://fracttal-prm-backend-production.up.railway.app'
   const token = localStorage.getItem('token')
@@ -1726,34 +1724,20 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
   const [viewQuoteId, setViewQuoteId] = useState(initialOpenQuoteId || null)
   const [versionFormFor, setVersionFormFor] = useState(null) // {quoteId, initialValues}
   const [reloadKey, setReloadKey] = useState(0)
-  const [pipelineSaving, setPipelineSaving] = useState(() => new Set())
-  const canTogglePipeline = (
-    currentUserRole === 'system_admin'
-    || currentUserRole === 'channel_ops_admin'
-    || currentUserRole === 'channel_manager'
-  )
 
-  async function togglePipeline(q) {
-    const next = !q.include_in_pipeline
-    setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, include_in_pipeline: next } : x)))
-    setPipelineSaving((prev) => { const s = new Set(prev); s.add(q.id); return s })
-    try {
-      const r = await fetch(`${API}/quotes/${q.id}/pipeline-inclusion`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ include_in_pipeline: next }),
-      })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      refresh()
-    } catch (e) {
-      setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, include_in_pipeline: !next } : x)))
-      if (typeof setToast === 'function') {
-        setToast('Failed to update pipeline inclusion')
-        window.setTimeout(() => setToast(null), 4000)
-      }
-    } finally {
-      setPipelineSaving((prev) => { const s = new Set(prev); s.delete(q.id); return s })
+  // QuoteDetail is the single authoritative control for include_in_pipeline.
+  // The list column is read-only. When the modal toggles, it PATCHes and
+  // then calls this callback with the new boolean — we update the local
+  // quotes state immediately (so the list column updates before the refetch
+  // returns and the modal's `includeInPipeline` prop stays in sync) AND
+  // bump reloadKey to reconcile from the server.
+  function onModalPipelineChange(nextValue) {
+    if (viewQuoteId) {
+      setQuotes((prev) => prev.map((x) => (
+        x.id === viewQuoteId ? { ...x, include_in_pipeline: !!nextValue } : x
+      )))
     }
+    setReloadKey((k) => k + 1)
   }
 
   useEffect(() => {
@@ -1782,7 +1766,6 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
 
   return (
     <section className="fp-card" style={{ marginTop: 24 }}>
-      <style>{`@keyframes fp-quote-pipeline-spin { to { transform: rotate(360deg); } }`}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h2 className="fp-section-title" style={{ margin: 0 }}>Quotes</h2>
         <button type="button" onClick={() => setShowForm(true)} className="fp-btn fp-btn--primary">
@@ -1818,34 +1801,9 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
                 <td style={{ padding: 8, textAlign: 'right' }}>v{q.active_version}</td>
                 <td style={{ padding: 8 }}>{q.status}</td>
                 <td style={{ padding: 8, textAlign: 'center' }}>
-                  {canTogglePipeline ? (
-                    pipelineSaving.has(q.id) ? (
-                      <span
-                        aria-label="Saving"
-                        style={{
-                          display: 'inline-block',
-                          width: 14,
-                          height: 14,
-                          border: '2px solid #CBD5E1',
-                          borderTopColor: '#1A6EBB',
-                          borderRadius: '50%',
-                          animation: 'fp-quote-pipeline-spin 0.8s linear infinite',
-                          verticalAlign: 'middle',
-                        }}
-                      />
-                    ) : (
-                      <input
-                        type="checkbox"
-                        checked={!!q.include_in_pipeline}
-                        onChange={() => togglePipeline(q)}
-                        aria-label="Include in pipeline"
-                      />
-                    )
-                  ) : (
-                    <span aria-label={q.include_in_pipeline ? 'In pipeline' : 'Not in pipeline'}>
-                      {q.include_in_pipeline ? '✅' : '—'}
-                    </span>
-                  )}
+                  <span aria-label={q.include_in_pipeline ? 'In pipeline' : 'Not in pipeline'}>
+                    {q.include_in_pipeline ? '✅' : '—'}
+                  </span>
                 </td>
                 <td style={{ padding: 8, textAlign: 'right' }}>{fmtMoney(q.grand_total_after_discount)}</td>
                 <td style={{ padding: 8 }}>{q.created_at ? new Date(q.created_at).toLocaleDateString() : '—'}</td>
@@ -1898,7 +1856,7 @@ function QuotesSection({ dealId, dealQtyTransactional, dealQtyLimitedTech, curre
             <QuoteDetail
               quoteId={viewQuoteId}
               includeInPipeline={!!quotes.find((x) => x.id === viewQuoteId)?.include_in_pipeline}
-              onPipelineChange={refresh}
+              onPipelineChange={onModalPipelineChange}
               onClose={() => { setViewQuoteId(null); refresh() }}
               onAddVersion={(quote) => {
                 const active = quote.active_version_data
