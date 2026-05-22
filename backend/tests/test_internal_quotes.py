@@ -211,6 +211,15 @@ def test_internal_quotes_summary_counts(client, db_session):
     q_acc = _quote(client, _deal(db_session, org.id).id)
     client.patch(f"/quotes/{q_sent}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
+    # Migration 033: PATCH -> accepted now requires a quote_acceptance doc.
+    import base64 as _b64
+    _pdf = b"%PDF-1.4\n%%EOF"
+    client.post(f"/quotes/{q_acc}/documents", json={
+        "document_type": "quote_acceptance",
+        "file_name": "x.pdf",
+        "file_data": _b64.b64encode(_pdf).decode(),
+        "file_size_bytes": len(_pdf),
+    })
     client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
     # Migration 032: pipeline_total now requires explicit include_in_pipeline=True.
     for qid in (q_draft, q_sent, q_acc):
