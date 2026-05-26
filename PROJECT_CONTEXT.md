@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Post-Sprint 20 UX & Workflow Fixes — May 2026 (migration head 033, 711 tests, PR #167)
+> Last updated: Frontend Fix Session 2026-05-26 (PRs #169–#173, migration head 033, 711 tests)
 
 
 
@@ -214,7 +214,7 @@
 | PATCH | `/quotes/{quote_id}/active-scenario` | channel_manager / channel_ops_admin / system_admin | Sprint 18 / FPRM-283 (AD-24). Re-point `quotes.active_scenario`. Body `{scenario_label: "good"|"better"|"best"|null}`. 422 if the label has no non-deleted version on the quote. Null clears the selection. Audit `quote.scenario_selected`. |
 | GET | `/quotes/{quote_id}/scenarios` | tenant-scoped | Sprint 18 / FPRM-283 (AD-24). Returns `{scenarios: [{scenario_label, version_number, feature_plan, grand_total_after_discount, is_active}], active_scenario}`. Groups non-deleted versions by `scenario_label`, returns the latest version per label, in canonical good/better/best order. |
 | GET | `/internal/quotes` | channel_manager / channel_ops_admin / system_admin | Sprint 18 / FPRM-287. Cross-deal quote dashboard. Filters: `status` / `partner_org_id` / `feature_plan` / `search` (matches `quote_name` or `deal_name`). Pagination: `page` (>=1) / `page_size` (1–100, default 20). Returns `{items, total, page, page_size, summary}`. `summary` rolls up system-wide totals and pipeline value (expired excluded). Joins Quote → active QuoteVersion → DealRegistration → PartnerOrganization. |
-| GET | `/partners/{partner_org_id}/quotes` | partner_admin / partner_user (own org only) | Sprint 18 / FPRM-291. Partner-facing quote history scoped to the user's own org. Internal users are 403'd (use `/internal/quotes`). Optional `?status=` filter. Returns `{items: [{quote_name, deal_name, feature_plan, currency_code, grand_total_after_discount, status, active_version, active_scenario, ...}]}` with grand totals joined from the active non-deleted version. |
+| GET | `/partners/{partner_org_id}/quotes` | partner_admin / partner_user (own org only) | Sprint 18 / FPRM-291. Partner-facing quote history scoped to the user's own org. Internal users are 403'd (use `/internal/quotes`). Optional `?status=` filter. Returns `{items: [{quote_name, deal_name, feature_plan, currency_code, grand_total_after_discount, status, active_version, active_scenario, ...}]}` with grand totals joined from the active non-deleted version. Note: response missing `deal_status` field — needed for Won/Closed Won summary cards in `PortalQuotes.jsx`. Sprint 21 backlog (aligns with document repository work). |
 | GET | `/internal/config/pricing/plans` | any authenticated user; `?include_inactive=true` admin-only | Sprint 15; Sprint 19 / FPRM-300 (AD-25) extended with `?include_inactive=true` (admin-only) to surface deactivated + scheduled rows. Always includes `is_active` in the response. Ordered by `plan_code, effective_from DESC`. |
 | POST | `/internal/config/pricing/plans` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300 (AD-25). Create a new FeaturePlanPrice row. Required body: `plan_code` (starter/professional/enterprise), `feature_pack_annual`, `transactional_user_annual`, `limited_tech_user_annual`, `effective_from` (ISO date). Audit `pricing.plan_price_created`. |
 | PATCH | `/internal/config/pricing/plans/{plan_price_id}` | channel_ops_admin / system_admin | Sprint 19 / FPRM-300. Update price fields, effective_from, or is_active. Audit `pricing.plan_price_updated`. |
@@ -467,7 +467,7 @@ frontend/src/
     ├── QuoteForm.jsx                # Sprint 16 / FPRM-254 — quote create + new-version form with sticky live-preview panel; Sprint 18 / FPRM-283 — scenario selector greys out already-created labels in new-version mode and surfaces an "All 3 scenarios created" hint.
     ├── QuoteDetail.jsx              # Sprint 16 / FPRM-254 — version browser + line-item table + status state machine + PDF generate/download; Sprint 18 / FPRM-283 — scenario comparison panel between Versions and Line Items renders only when /quotes/{id}/scenarios returns at least one entry. "Select This Option" PATCHes /active-scenario then /active-version.
     ├── InternalQuotes.jsx           # Sprint 18 / FPRM-287 — cross-deal quote dashboard at /internal/quotes. Summary card row (Total / Draft / Sent / Accepted / Pipeline Value), status / plan / search filters, paginated table; row links to /internal/deals/:id. Uses shared `utils/currency.js` for amounts.
-    └── PortalQuotes.jsx             # Sprint 18 / FPRM-291 — partner-facing quote history at /portal/quotes inside PartnerPortalLayout. Read-only table with status filter; row links back to /portal/deals/:id. Internal users redirected by ProtectedRoute (partner roles only).
+    └── PortalQuotes.jsx             # Sprint 18 / FPRM-291 — partner-facing quote history at /portal/quotes inside PartnerPortalLayout. Read-only table with status filter; row links back to /portal/deals/:id. Internal users redirected by ProtectedRoute (partner roles only). Rebuilt PR #172 to match InternalQuotes.jsx design — 7 summary cards, full filter bar, SortableTh table, isReadOnly QuoteDetail modal, Partner column removed.
 
 ```
 

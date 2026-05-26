@@ -87,6 +87,23 @@ This discards any untracked files or locally-modified tracked files left by a pr
 
 **`git pull origin main` alone is not sufficient.** A `git pull` does not remove untracked files written by prior Claude Code sessions. Use `git reset --hard origin/main && git clean -fd --exclude=Documentation/` to guarantee a clean state without losing the local `Documentation/` reference folder.
 
+**Every Claude Code session must end with a post-flight sync after the final PR merges.** After the closeout report prints and the final PR is confirmed merged to `main`, execute this sequence before exiting:
+
+```cmd
+cd "C:\Johan\SynPro Consulting\Fracttal PRM"
+git fetch origin
+git reset --hard origin/main
+git clean -fd --exclude=Documentation/
+```
+
+This ensures the local working tree reflects the merged state on `origin/main` exactly, discards all session working files, and leaves the repo in a clean state for the next session. The post-flight sync is not optional — a session that ends without it leaves stale files that corrupt the next session's pre-flight read.
+
+**Canonical docs must travel in the same PR as the code change that caused them.** CLAUDE.md, CLAUDE_HISTORY.md, PROJECT_CONTEXT.md, and RUNBOOK.md must be updated in the same branch and same PR as the implementation change. No deferred docs PRs. No separate reconciliation sessions. The rule is: if a PR changes behaviour, schema, endpoints, or components, it is incomplete until the four canonical docs reflect it. The auto-merger merging the PR is the moment the docs should already be current — not after.
+
+This applies to every PR type: feature, fix, and docs. The only exception is a pure docs PR that corrects docs without any accompanying code change (e.g. adding an AD entry).
+
+**Claude chat must follow `PROMPT_TEMPLATE.md` when generating Claude Code prompts.** This file defines the mandatory structure (pre-flight sync, zero-PR check, canonical doc reads, source file reads, implementation, docs update, PR rules, closeout report, post-flight sync) that every prompt must contain. It governs Claude chat as prompt author; CLAUDE.md governs Claude Code as Dev Agent. No duplication — different audiences, different purposes.
+
 **Never run `git clean -fd` without `--exclude=Documentation/`.** The repo-root `Documentation/` folder is untracked but canonical — it holds RUNBOOK.md (read by every sprint prompt), every sprint's ClaudeCode prompt, partner contracts, and requirements docs. A bare `git clean -fd` deletes all of it including the prompt currently being executed.
 
 ---
