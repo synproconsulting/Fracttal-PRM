@@ -2121,3 +2121,46 @@ This session also produced a multi-page design consistency audit (`InternalQuote
 5. **Design audits work best as one read pass, one PR for docs, one PR for code.** The Section 7 + AD-26..32 docs land first so the standards are recorded and reviewable; the code changes that bring the seven non-conformant pages into compliance land as a separate, mechanical PR. The split keeps reviewers focused: "are the standards correct?" vs "does the code conform?"
 
 ---
+
+## Frontend Fix Session — 2026-05-26 (PRs #169–#173)
+
+**Date:** 2026-05-26
+**Migration head:** 033 (unchanged)
+**Tests:** 711 (unchanged — all PRs in this session are frontend/docs only)
+**Last PR merged:** #173
+
+### Context
+
+Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 deliverables identified 17 issues across portal and internal pages. This session addressed the frontend design standardisation items, nav reorder, and architectural decisions. Fix PR B (date filter bug, draft quote editability, Approved→Accepted label) follows as the next PR.
+
+### What landed on `main` in this session
+
+| PR | Branch type | Change |
+|---|---|---|
+| #169 | docs | AD-33 added to PROJECT_CONTEXT.md Section 6 and CLAUDE.md — centralised document repository: `partner_documents` as single source of truth, `document_references` join table, `quote_documents` retired in Sprint 21. SOC II / ISO 27001 tenant isolation boundary defined. |
+| #170 | fix | `docs/**` added to ci.yml push trigger branches — docs branch PRs now run full pytest matrix + bandit and are eligible for auto-merger. Fixes the manual-merge issue encountered on PR #169. |
+| #171 | fix | Frontend design standardisation pass A: `DealQueue.jsx` (AD-26 fp-card filter bar + free-text search); `DealList.jsx` (SortableTh all list columns + free-text search); `PartnerDocuments.jsx` (free-text search + SortableTh Name/Expires); `ApplicationQueue.jsx` (fp-table + fp-card); `InternalQuotes.jsx` (Export CSV placeholder per AD-30); `PartnerPortalLayout.jsx` (My Quotes nav item moved above Commissions). |
+| #172 | fix | `PortalQuotes.jsx` fully rebuilt to match `InternalQuotes.jsx` design: 7 summary cards (Total, Draft, Sent, Accepted, Won, Active Pipeline Value, Closed Won); full filter bar (status + plan + search + pipeline toggle); SortableTh on all 8 columns; Partner column removed; `isReadOnly={true}` QuoteDetail modal. TODO Sprint 21: `GET /partners/{id}/quotes` missing `deal_status` field. |
+| #173 | fix | `DealList.jsx` list view rebuilt to match `InternalQuotes.jsx` layout: 6 summary cards above filter bar (Total Deals, Total Est Value, Pipeline Value, Approved Pipeline, Won, Info Required); broken date pickers removed; clean filter bar (status + search + buttons); SortableTh on all 6 columns; "Accepted" label for `approved` status. Two new Hard Rules added to `CLAUDE.md`. `PROMPT_TEMPLATE.md` created as new canonical document. |
+
+### Architectural decisions recorded
+
+- **AD-33** — Centralised document repository (`partner_documents` single source of truth, `document_references` join table, `quote_documents` retired Sprint 21). Full entry in PROJECT_CONTEXT.md Section 6.
+
+### Process improvements introduced
+
+- **CI trigger extended** — `docs/**` branches now run full CI and auto-merge (PR #170).
+- **Two new Hard Rules in CLAUDE.md** — post-flight sync mandatory at end of every session; canonical docs must travel in the same PR as the code change that caused them.
+- **PROMPT_TEMPLATE.md created** — new canonical document in repo root defining the mandatory structure for every Claude Code prompt. Governs Claude chat as prompt author; complements CLAUDE.md which governs Claude Code as Dev Agent.
+
+### Remaining UI testing items (Fix PR B — next)
+
+- Date filter bug on portal/deals (broken date pickers removed in #173; backend filter fix still needed)
+- Draft quotes must remain fully editable (regression check)
+- "Approved" → "Accepted" display label rename across all deal status displays
+
+### Test count
+
+711 (unchanged — no backend changes in PRs #169–#173)
+
+---

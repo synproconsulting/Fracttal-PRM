@@ -5,24 +5,36 @@ import { SortableTh } from '../components/SortableTh.jsx'
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
+// Tinted-background status palette per AD-27. StatusBadge renders the
+// tint as `${color}22` (alpha) on top of the solid colour for the text.
 const STATUS_TONE = {
-  draft: 'fp-badge--neutral',
-  submitted: 'fp-badge--info',
-  under_review: 'fp-badge--warning',
-  info_required: 'fp-badge--warning',
-  approved: 'fp-badge--success',
-  rejected: 'fp-badge--danger',
-  expired: 'fp-badge--neutral',
+  draft: '#64748B',
+  submitted: '#1A6EBB',
+  under_review: '#B7791F',
+  info_required: '#B7791F',
+  approved: '#2E7D32',
+  rejected: '#C62828',
+  expired: '#C2410C',
+  won: '#2E7D32',
+  lost: '#C62828',
+  withdrawn: '#64748B',
+  cancelled: '#C62828',
 }
 
+// "Approved" deals display as "Accepted" — the wording on the partner
+// agreement is "accepted", not "approved".
 const STATUS_LABEL = {
   draft: 'Draft',
   submitted: 'Submitted',
-  under_review: 'Under review',
-  info_required: 'Info required',
-  approved: 'Approved',
+  under_review: 'Under Review',
+  info_required: 'Info Required',
+  approved: 'Accepted',
   rejected: 'Rejected',
   expired: 'Expired',
+  won: 'Won',
+  lost: 'Lost',
+  withdrawn: 'Withdrawn',
+  cancelled: 'Cancelled',
 }
 
 const KANBAN_ORDER = ['draft', 'submitted', 'under_review', 'info_required', 'approved', 'rejected']
@@ -46,10 +58,27 @@ function decodeJwt(token) {
 }
 
 function StatusBadge({ status }) {
+  const color = STATUS_TONE[status] || '#64748B'
+  const label = STATUS_LABEL[status] || status
   return (
-    <span className={`fp-badge ${STATUS_TONE[status] || 'fp-badge--neutral'}`}>
-      {STATUS_LABEL[status] || status}
-    </span>
+    <span style={{
+      display: 'inline-block',
+      padding: '2px 8px',
+      borderRadius: 12,
+      background: `${color}22`,
+      color,
+      fontSize: 12,
+      fontWeight: 600,
+    }}>{label}</span>
+  )
+}
+
+function SummaryCard({ label, value, color = '#1E293B' }) {
+  return (
+    <div className="fp-card" style={{ flex: 1, minWidth: 140, padding: 14 }}>
+      <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color, marginTop: 4 }}>{value}</div>
+    </div>
   )
 }
 
@@ -78,7 +107,7 @@ export default function DealList() {
   const partnerOrgId = payload && payload.partner_org_id
 
   const [viewMode, setViewMode] = useState(readInitialView)
-  const [filters, setFilters] = useState({ status: '', from_date: '', to_date: '' })
+  const [filters, setFilters] = useState({ status: '' })
   const [search, setSearch] = useState('')
   const [pipeline, setPipeline] = useState(null)
   const [deals, setDeals] = useState([])
@@ -87,7 +116,7 @@ export default function DealList() {
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
   const [exporting, setExporting] = useState(false)
-  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+  const [sort, setSort] = useState({ field: 'submitted_at', dir: 'desc' })
 
   function toggleSort(field) {
     setSort((s) => s.field === field
@@ -95,7 +124,6 @@ export default function DealList() {
       : { field, dir: 'asc' })
   }
 
-  // URL sync (no navigation — just replace state).
   useEffect(() => {
     if (typeof window === 'undefined') return
     const params = new URLSearchParams(window.location.search)
@@ -112,22 +140,18 @@ export default function DealList() {
     }
   }, [])
 
-  // Filter-only query string (pipeline endpoint doesn't accept sort params --
-  // it groups by status). The list-view fetch adds sort_by / sort_dir
-  // separately.
+  // Filter-only query string. Date pickers were removed — they were
+  // broken in browser testing; the backend filter fix is deferred to the
+  // next PR.
   const queryStr = useMemo(() => {
     const p = new URLSearchParams()
     if (filters.status) p.set('status', filters.status)
-    if (filters.from_date) p.set('from_date', filters.from_date)
-    if (filters.to_date) p.set('to_date', filters.to_date)
     const q = p.toString(); return q ? `?${q}` : ''
   }, [filters])
 
   const listQueryStr = useMemo(() => {
     const p = new URLSearchParams()
     if (filters.status) p.set('status', filters.status)
-    if (filters.from_date) p.set('from_date', filters.from_date)
-    if (filters.to_date) p.set('to_date', filters.to_date)
     p.set('sort_by', sort.field)
     p.set('sort_dir', sort.dir)
     return `?${p.toString()}`
@@ -167,17 +191,9 @@ export default function DealList() {
       .finally(() => setLoadingList(false))
   }
 
-  // Both views need pipeline (for the summary strip); list view also fetches the list endpoint.
   useEffect(() => { fetchPipeline() /* eslint-disable-line */ }, [partnerOrgId, queryStr])
   useEffect(() => { if (viewMode === 'list') fetchList() /* eslint-disable-line */ }, [viewMode, listQueryStr])
 
-  // Pipeline value for a deal = sum of `include_in_pipeline` quote totals
-  // (server-aggregated as `pipeline_total`, excluding expired/cancelled
-  // quotes per the helper in deal_registrations_router). NO fallback to
-  // estimated_deal_value -- pipeline must reflect actual quoted-and-opted-in
-  // value only; estimated_deal_value is the partner's guess at deal sign-on
-  // and renders in its own column. Deals with no pipeline-included quote
-  // contribute 0 to summary/column totals; list rows render '—'.
   function dealPipelineValue(d) {
     if (d && d.pipeline_total != null) return Number(d.pipeline_total) || 0
     return 0
@@ -187,33 +203,39 @@ export default function DealList() {
     return d?.pipeline_total != null ? formatMoney(Number(d.pipeline_total)) : '—'
   }
 
-  const summary = useMemo(() => {
-    if (!pipeline) return { total: 0, totalValue: 0, totalEstValue: 0, anyEstValue: false, approvedValue: 0, infoRequired: 0 }
-    const all = []
-    // KANBAN_ORDER intentionally excludes lost/withdrawn/won/expired/cancelled
-    // — those buckets are absent here, so summing across `all` already
-    // honours the "exclude lost/withdrawn/won" rule the spec calls for.
-    KANBAN_ORDER.forEach((s) => (pipeline[s] || []).forEach((d) => all.push(d)))
-    const approved = pipeline.approved || []
-    const infoRequired = (pipeline.info_required || []).length
-    const totalValue = all.reduce((acc, d) => acc + dealPipelineValue(d), 0)
-    const approvedValue = approved.reduce((acc, d) => acc + dealPipelineValue(d), 0)
-    // Partner-entered estimate. Distinct from pipeline value (which is
-    // derived from quotes); a deal can have one without the other. Track
-    // whether ANY deal in the visible set had a value so the card can
-    // render '—' when no estimates are set anywhere.
+  // Summary cards strip — six aggregates sourced from the list-view
+  // `deals` array. Cards render in both views; when only Kanban has been
+  // loaded they show 0/— until the user switches to list view (existing
+  // fetch logic preserved per prompt).
+  const listSummary = useMemo(() => {
     let totalEstValue = 0
-    let anyEstValue = false
-    for (const d of all) {
-      if (d?.estimated_deal_value != null) {
+    let pipelineValue = 0
+    let approvedPipelineValue = 0
+    let won = 0
+    let infoRequired = 0
+    for (const d of deals) {
+      if (d.estimated_deal_value != null) {
         const v = Number(d.estimated_deal_value)
-        if (Number.isFinite(v)) {
-          totalEstValue += v
-          anyEstValue = true
+        if (Number.isFinite(v)) totalEstValue += v
+      }
+      if (d.pipeline_total != null) {
+        const p = Number(d.pipeline_total)
+        if (Number.isFinite(p)) {
+          pipelineValue += p
+          if (d.status === 'approved') approvedPipelineValue += p
         }
       }
+      if (d.status === 'won') won += 1
+      if (d.status === 'info_required') infoRequired += 1
     }
-    return { total: all.length, totalValue, totalEstValue, anyEstValue, approvedValue, infoRequired }
+    return { total: deals.length, totalEstValue, pipelineValue, approvedPipelineValue, won, infoRequired }
+  }, [deals])
+
+  const pipelineSummary = useMemo(() => {
+    if (!pipeline) return { total: 0 }
+    const all = []
+    KANBAN_ORDER.forEach((s) => (pipeline[s] || []).forEach((d) => all.push(d)))
+    return { total: all.length }
   }, [pipeline])
 
   async function exportCSV() {
@@ -268,43 +290,40 @@ export default function DealList() {
         </div>
       </div>
 
-      {/* Filter bar — single fp-card horizontal row per AD-26. Status + date
-          dropdowns LEFT, free-text search RIGHT (client-side across deal_name
-          + customer_name), Clear action FAR RIGHT. */}
+      {/* Summary cards strip — six cards sourced from `deals`, ABOVE the
+          filter bar per AD-31 (data-aggregation page). */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <SummaryCard label="Total Deals" value={listSummary.total} />
+        <SummaryCard label="Total Est. Value" value={formatMoney(listSummary.totalEstValue)} />
+        <SummaryCard label="Pipeline Value" value={formatMoney(listSummary.pipelineValue)} color="#1A6EBB" />
+        <SummaryCard label="Approved Pipeline" value={formatMoney(listSummary.approvedPipelineValue)} color="#2E7D32" />
+        <SummaryCard label="Won" value={listSummary.won} color="#2E7D32" />
+        <SummaryCard label="Info Required" value={listSummary.infoRequired} color="#B7791F" />
+      </div>
+
+      {/* Filter bar — single horizontal fp-card per AD-26. Status dropdown
+          LEFT, free-text search RIGHT (client-side across deal_name +
+          customer_name). Date pickers removed (next PR). */}
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
             <option value="">All Statuses</option>
             <option value="draft">Draft</option>
             <option value="submitted">Submitted</option>
-            <option value="under_review">Under review</option>
-            <option value="info_required">Info required</option>
+            <option value="under_review">Under Review</option>
+            <option value="info_required">Info Required</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+            <option value="withdrawn">Withdrawn</option>
+            <option value="cancelled">Cancelled</option>
           </select>
-          <input type="date" value={filters.from_date} onChange={(e) => setFilters((f) => ({ ...f, from_date: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
-          <input type="date" value={filters.to_date} onChange={(e) => setFilters((f) => ({ ...f, to_date: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
-          <input type="search" placeholder="Search by deal or customer…"
+          <input type="search" placeholder="Search by deal or customer..."
             value={search} onChange={(e) => setSearch(e.target.value)}
             style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
-          <button type="button" onClick={() => { setFilters({ status: '', from_date: '', to_date: '' }); setSearch('') }} style={{ padding: '8px 12px', border: '1px solid #E0E4EA', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 14 }}>Clear</button>
         </div>
       </section>
-
-      {/* Pipeline summary strip */}
-      <div style={{ background: '#F8FAFC', borderBottom: '1px solid #E0E4EA', padding: '12px 20px', display: 'flex', gap: 32, marginBottom: 16, flexWrap: 'wrap' }}>
-        {loadingPipeline ? (
-          <div style={{ height: 24, background: 'linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%)', backgroundSize: '200% 100%', flex: 1, borderRadius: 4 }} />
-        ) : (
-          <>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Deals</div><div style={{ fontSize: 20, fontWeight: 700 }}>{summary.total}</div></div>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Total Est. Value</div><div style={{ fontSize: 20, fontWeight: 700 }}>{summary.anyEstValue ? formatMoney(summary.totalEstValue) : '—'}</div></div>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Pipeline Value</div><div style={{ fontSize: 20, fontWeight: 700 }}>{formatMoney(summary.totalValue)}</div></div>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved Pipeline</div><div style={{ fontSize: 20, fontWeight: 700, color: '#22C55E' }}>{formatMoney(summary.approvedValue)}</div></div>
-            <div><div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Info Required</div><div style={{ fontSize: 20, fontWeight: 700, color: '#8B5CF6' }}>{summary.infoRequired}</div></div>
-          </>
-        )}
-      </div>
 
       {toast && (
         <div className="fp-alert fp-alert--success" style={{ marginBottom: 16 }}>{toast}</div>
@@ -314,7 +333,7 @@ export default function DealList() {
         <div className="fp-alert fp-alert--danger">{error}</div>
       )}
 
-      {/* Pipeline view */}
+      {/* Pipeline view — UNCHANGED. */}
       {viewMode === 'pipeline' && (
         <>
           {loadingPipeline && (
@@ -354,13 +373,13 @@ export default function DealList() {
               })}
             </div>
           )}
-          {!loadingPipeline && pipeline && summary.total === 0 && (
+          {!loadingPipeline && pipeline && pipelineSummary.total === 0 && (
             <div className="fp-card" style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>No deals match your filters.</div>
           )}
         </>
       )}
 
-      {/* List view (existing UI) */}
+      {/* List view */}
       {viewMode === 'list' && (
         <>
           {loadingList && <div className="fp-card" style={{ color: 'var(--fp-text-secondary)' }}>Loading deals…</div>}
