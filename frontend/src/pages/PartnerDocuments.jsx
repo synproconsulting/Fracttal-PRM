@@ -249,6 +249,7 @@ export default function PartnerDocuments() {
   const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
   const [typeFilter, setTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [search, setSearch] = useState('')
 
   function toggleSort(field) {
     setSort((s) => s.field === field
@@ -354,6 +355,9 @@ export default function PartnerDocuments() {
             <option value="rejected">Rejected</option>
             <option value="expired">Expired</option>
           </select>
+          <input type="search" placeholder="Search by document name or type…"
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
         </div>
       </section>
 
@@ -378,9 +382,14 @@ export default function PartnerDocuments() {
       )}
 
       {!loading && docs.length > 0 && (() => {
+        const q = search.trim().toLowerCase()
         const visibleDocs = docs.filter((d) => {
           if (typeFilter && d.document_type !== typeFilter) return false
           if (statusFilter && d.status !== statusFilter) return false
+          if (q && !(
+            (d.document_name || '').toLowerCase().includes(q) ||
+            (d.document_type || '').toLowerCase().includes(q)
+          )) return false
           return true
         })
         if (visibleDocs.length === 0) {
@@ -395,10 +404,10 @@ export default function PartnerDocuments() {
           <thead>
             <tr>
               <SortableTh field="document_type" sort={sort} onSort={toggleSort}>Type</SortableTh>
-              <th>Name</th>
+              <SortableTh field="document_name" sort={sort} onSort={toggleSort}>Name</SortableTh>
               <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
               <SortableTh field="created_at" sort={sort} onSort={toggleSort}>Uploaded</SortableTh>
-              <th>Expires</th>
+              <SortableTh field="expiry_date" sort={sort} onSort={toggleSort}>Expires</SortableTh>
               {isInternal && <th>Actions</th>}
             </tr>
           </thead>

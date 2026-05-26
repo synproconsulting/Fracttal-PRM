@@ -158,44 +158,46 @@ export default function ApplicationQueue() {
       )}
 
       {!loading && !error && filtered.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <thead>
-            <tr style={{ background: '#f5f5f5', textAlign: 'left' }}>
-              <SortableTh field="company_name" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Company</SortableTh>
-              <th style={{ padding: 10 }}>Applicant</th>
-              <SortableTh field="contact_email" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Email</SortableTh>
-              <th style={{ padding: 10 }}>Categories</th>
-              <SortableTh field="submitted_at" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Submitted</SortableTh>
-              <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Status</SortableTh>
-              <th style={{ padding: 10 }}>Days</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((a) => (
-              <tr
-                key={a.id}
-                onClick={() => navigate(`/internal/applications/${a.id}`)}
-                style={{ cursor: 'pointer', borderBottom: '1px solid #eee' }}
-              >
-                <td style={{ padding: 10 }}>{a.legal_name || '—'}</td>
-                <td style={{ padding: 10 }}>{a.applicant_name || '—'}</td>
-                <td style={{ padding: 10 }}>{a.applicant_email || '—'}</td>
-                <td style={{ padding: 10 }}>
-                  {Array.isArray(a.requested_categories) && a.requested_categories.length > 0
-                    ? a.requested_categories.join(', ')
-                    : '—'}
-                </td>
-                <td style={{ padding: 10 }}>
-                  {a.submitted_at ? new Date(a.submitted_at).toLocaleDateString() : '—'}
-                </td>
-                <td style={{ padding: 10 }}>
-                  <StatusBadge status={a.status} />
-                </td>
-                <td style={{ padding: 10 }}>{daysSince(a.submitted_at)}</td>
+        <section className="fp-card">
+          <table className="fp-table">
+            <thead>
+              <tr>
+                <SortableTh field="company_name" sort={sort} onSort={toggleSort}>Company</SortableTh>
+                <SortableTh field="applicant_name" sort={sort} onSort={toggleSort}>Applicant</SortableTh>
+                <SortableTh field="contact_email" sort={sort} onSort={toggleSort}>Email</SortableTh>
+                <th>Categories</th>
+                <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
+                <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
+                <th>Days</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.map((a) => (
+                <tr
+                  key={a.id}
+                  onClick={() => navigate(`/internal/applications/${a.id}`)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td>{a.legal_name || '—'}</td>
+                  <td>{a.applicant_name || '—'}</td>
+                  <td>{a.applicant_email || '—'}</td>
+                  <td>
+                    {Array.isArray(a.requested_categories) && a.requested_categories.length > 0
+                      ? a.requested_categories.join(', ')
+                      : '—'}
+                  </td>
+                  <td>
+                    {a.submitted_at ? new Date(a.submitted_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td>
+                    <StatusBadge status={a.status} />
+                  </td>
+                  <td>{daysSince(a.submitted_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
       )}
     </div>
   )

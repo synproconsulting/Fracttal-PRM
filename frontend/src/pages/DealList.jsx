@@ -79,6 +79,7 @@ export default function DealList() {
 
   const [viewMode, setViewMode] = useState(readInitialView)
   const [filters, setFilters] = useState({ status: '', from_date: '', to_date: '' })
+  const [search, setSearch] = useState('')
   const [pipeline, setPipeline] = useState(null)
   const [deals, setDeals] = useState([])
   const [loadingPipeline, setLoadingPipeline] = useState(false)
@@ -267,7 +268,9 @@ export default function DealList() {
         </div>
       </div>
 
-      {/* Filter bar — single fp-card horizontal row per AD-26 */}
+      {/* Filter bar — single fp-card horizontal row per AD-26. Status + date
+          dropdowns LEFT, free-text search RIGHT (client-side across deal_name
+          + customer_name), Clear action FAR RIGHT. */}
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
@@ -281,7 +284,10 @@ export default function DealList() {
           </select>
           <input type="date" value={filters.from_date} onChange={(e) => setFilters((f) => ({ ...f, from_date: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
           <input type="date" value={filters.to_date} onChange={(e) => setFilters((f) => ({ ...f, to_date: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
-          <button type="button" onClick={() => setFilters({ status: '', from_date: '', to_date: '' })} style={{ padding: '8px 12px', border: '1px solid #E0E4EA', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 14 }}>Clear</button>
+          <input type="search" placeholder="Search by deal or customer…"
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          <button type="button" onClick={() => { setFilters({ status: '', from_date: '', to_date: '' }); setSearch('') }} style={{ padding: '8px 12px', border: '1px solid #E0E4EA', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 14 }}>Clear</button>
         </div>
       </section>
 
@@ -370,39 +376,57 @@ export default function DealList() {
             </div>
           )}
 
-          {!loadingList && deals.length > 0 && (
-            <table className="fp-table">
-              <thead>
-                <tr>
-                  <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
-                  <th>Customer</th>
-                  <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
-                  <th>Pipeline</th>
-                  <th>Estimated Value</th>
-                  <th>Submitted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deals.map((d) => {
-                  const linkTo = `/portal/deals/${d.id}`
-                  return (
-                    <tr key={d.id}>
-                      <td>
-                        <Link to={linkTo} style={{ color: 'var(--fp-primary)', fontWeight: 600, textDecoration: 'none' }}>
-                          {d.deal_name || '(unnamed)'}
-                        </Link>
-                      </td>
-                      <td>{d.customer_name || '—'}</td>
-                      <td><StatusBadge status={d.status} /></td>
-                      <td>{formatPipelineCell(d)}</td>
-                      <td>{d.estimated_deal_value != null ? formatMoney(Number(d.estimated_deal_value)) : '—'}</td>
-                      <td>{formatDate(d.submitted_at)}</td>
+          {!loadingList && deals.length > 0 && (() => {
+            const q = search.trim().toLowerCase()
+            const visibleDeals = q
+              ? deals.filter((d) => (
+                  (d.deal_name || '').toLowerCase().includes(q) ||
+                  (d.customer_name || '').toLowerCase().includes(q)
+                ))
+              : deals
+            if (visibleDeals.length === 0) {
+              return (
+                <div className="fp-card" style={{ textAlign: 'center', padding: 32, color: 'var(--fp-text-secondary)' }}>
+                  No deals match the current search.
+                </div>
+              )
+            }
+            return (
+              <section className="fp-card">
+                <table className="fp-table">
+                  <thead>
+                    <tr>
+                      <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
+                      <SortableTh field="customer_name" sort={sort} onSort={toggleSort}>Customer</SortableTh>
+                      <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
+                      <SortableTh field="pipeline_total" sort={sort} onSort={toggleSort}>Pipeline</SortableTh>
+                      <SortableTh field="estimated_deal_value" sort={sort} onSort={toggleSort}>Estimated Value</SortableTh>
+                      <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
+                  </thead>
+                  <tbody>
+                    {visibleDeals.map((d) => {
+                      const linkTo = `/portal/deals/${d.id}`
+                      return (
+                        <tr key={d.id}>
+                          <td>
+                            <Link to={linkTo} style={{ color: 'var(--fp-primary)', fontWeight: 600, textDecoration: 'none' }}>
+                              {d.deal_name || '(unnamed)'}
+                            </Link>
+                          </td>
+                          <td>{d.customer_name || '—'}</td>
+                          <td><StatusBadge status={d.status} /></td>
+                          <td>{formatPipelineCell(d)}</td>
+                          <td>{d.estimated_deal_value != null ? formatMoney(Number(d.estimated_deal_value)) : '—'}</td>
+                          <td>{formatDate(d.submitted_at)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </section>
+            )
+          })()}
         </>
       )}
     </div>

@@ -94,8 +94,12 @@ export default function InternalQuotes() {
 
   return (
     <div>
-      <div className="fp-page-header">
+      <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1 className="fp-page-title">Quotes</h1>
+        <button type="button" disabled title="CSV export coming soon"
+                style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#A0AEC0', cursor: 'not-allowed', fontWeight: 400 }}>
+          Export CSV
+        </button>
       </div>
 
       {summary && (
