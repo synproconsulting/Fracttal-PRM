@@ -191,6 +191,9 @@ Summary metric cards belong on data-aggregation pages (Quotes, Deals pipeline) a
 ### AD-32 · `fp-card` wrapper standard
 All filter bars, form sections, and content panels use the `fp-card` CSS class. No bare `<div style={{ border: …, padding: … }}>` for content panels.
 
+### AD-33 · Centralised document repository — `partner_documents` is the single source of truth for all partner-scoped files
+All file content is stored in exactly one row in `partner_documents` per file. Cross-record links (quote acceptance, deal attachments, etc.) are recorded in a separate `document_references` join table (`object_type` + `object_id` + `reference_type`). `partner_org_id` is the hard SOC II / ISO 27001 tenant isolation boundary — every endpoint enforces it without exception. `quote_documents` table retired in Sprint 21 and backfilled. Never create a second table that stores file content.
+
 ---
 
 ## Repository
