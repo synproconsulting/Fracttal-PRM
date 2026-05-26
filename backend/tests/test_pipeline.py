@@ -189,6 +189,73 @@ def test_pipeline_from_date_filter(client, db_session):
     assert len(body["approved"]) == 1
 
 
+def test_from_date_filter_excludes_older_deals(client, db_session):
+    """PR #175: from_date excludes deals submitted strictly before the date."""
+    org = _make_partner(db_session)
+    pa = _make_partner_admin(db_session, org.id)
+    app.dependency_overrides[get_current_user] = lambda: pa
+
+    older = datetime(2026, 5, 10, 12, 0, 0)
+    newer = datetime(2026, 5, 25, 12, 0, 0)
+    _make_deal(db_session, org.id, "approved", submitted_at=older)
+    _make_deal(db_session, org.id, "approved", submitted_at=newer)
+
+    # Cutoff falls between the two -- only the newer deal qualifies.
+    body = client.get(f"/partners/{org.id}/pipeline?from_date=2026-05-20").json()
+    submitted_dates = [d["submitted_at"][:10] for d in body["approved"]]
+    assert submitted_dates == ["2026-05-25"], submitted_dates
+
+
+def test_to_date_filter_excludes_newer_deals(client, db_session):
+    """PR #175: to_date is inclusive of the entire day (end-of-day cap)."""
+    org = _make_partner(db_session)
+    pa = _make_partner_admin(db_session, org.id)
+    app.dependency_overrides[get_current_user] = lambda: pa
+
+    older = datetime(2026, 5, 10, 12, 0, 0)
+    newer = datetime(2026, 5, 25, 12, 0, 0)
+    _make_deal(db_session, org.id, "approved", submitted_at=older)
+    _make_deal(db_session, org.id, "approved", submitted_at=newer)
+
+    body = client.get(f"/partners/{org.id}/pipeline?to_date=2026-05-20").json()
+    submitted_dates = [d["submitted_at"][:10] for d in body["approved"]]
+    assert submitted_dates == ["2026-05-10"], submitted_dates
+
+
+def test_from_date_to_date_range_returns_only_matching_deals(client, db_session):
+    """PR #175: combining from_date + to_date narrows to a window."""
+    org = _make_partner(db_session)
+    pa = _make_partner_admin(db_session, org.id)
+    app.dependency_overrides[get_current_user] = lambda: pa
+
+    earliest = datetime(2026, 5, 1, 12, 0, 0)
+    middle = datetime(2026, 5, 15, 12, 0, 0)
+    latest = datetime(2026, 5, 30, 12, 0, 0)
+    _make_deal(db_session, org.id, "approved", submitted_at=earliest)
+    _make_deal(db_session, org.id, "approved", submitted_at=middle)
+    _make_deal(db_session, org.id, "approved", submitted_at=latest)
+
+    # Window covering only the middle deal (same day both ends).
+    body = client.get(
+        f"/partners/{org.id}/pipeline?from_date=2026-05-15&to_date=2026-05-15"
+    ).json()
+    submitted_dates = [d["submitted_at"][:10] for d in body["approved"]]
+    assert submitted_dates == ["2026-05-15"], submitted_dates
+
+
+def test_invalid_date_format_returns_422(client, db_session):
+    """PR #175: malformed date strings return 422 rather than 500/silent-pass."""
+    org = _make_partner(db_session)
+    pa = _make_partner_admin(db_session, org.id)
+    app.dependency_overrides[get_current_user] = lambda: pa
+
+    r = client.get(f"/partners/{org.id}/pipeline?from_date=not-a-date")
+    assert r.status_code == 422
+
+    r = client.get(f"/partners/{org.id}/pipeline?to_date=2026/05/21")
+    assert r.status_code == 422
+
+
 def test_pipeline_unknown_partner_returns_404(client, db_session):
     fake_id = uuid.uuid4()
     org = _make_partner(db_session)

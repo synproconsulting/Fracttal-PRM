@@ -418,6 +418,8 @@ _PORTAL_DEAL_SORT = {
 def list_deals(
     status: Optional[str] = Query(default=None),
     partner_org_id: Optional[uuid.UUID] = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     export: Optional[str] = Query(default=None),
@@ -426,7 +428,13 @@ def list_deals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List deals. partner roles see own org only; internal roles see all (filterable)."""
+    """List deals. partner roles see own org only; internal roles see all (filterable).
+
+    ``from_date`` / ``to_date`` are ISO ``YYYY-MM-DD`` strings filtered against
+    ``submitted_at``. ``to_date`` is treated inclusively to end-of-day so a
+    same-day pair (``from_date=2026-05-21&to_date=2026-05-21``) returns every
+    deal submitted on that day. Bad strings return 422 (PR #175 fix).
+    """
     role = UserRole(current_user.role)
     query = db.query(DealRegistration)
 
@@ -442,6 +450,29 @@ def list_deals(
 
     if status:
         query = query.filter(DealRegistration.status == status)
+
+    if from_date:
+        try:
+            from_d = date.fromisoformat(from_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid date format for from_date. Use YYYY-MM-DD.",
+            )
+        query = query.filter(
+            DealRegistration.submitted_at >= datetime.combine(from_d, datetime.min.time())
+        )
+    if to_date:
+        try:
+            to_d = date.fromisoformat(to_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid date format for to_date. Use YYYY-MM-DD.",
+            )
+        query = query.filter(
+            DealRegistration.submitted_at <= datetime.combine(to_d, datetime.max.time())
+        )
 
     if export == "csv":
         rows_csv = (
