@@ -1371,3 +1371,114 @@ def test_change_log_endpoint_blocks_partner(db_session):
         assert r.status_code == 403
     finally:
         clear_overrides()
+
+
+# ------------------ PR #175 -- from_date / to_date filters on GET /deal-registrations ------------------
+
+
+def _make_deal_at(db, org_id, submitted_at: datetime) -> DealRegistration:
+    """Submitted deal stamped at a specific datetime -- used by the date-filter tests."""
+    deal = DealRegistration(
+        id=uuid.uuid4(),
+        partner_org_id=org_id,
+        status="submitted",
+        customer_name="Cust",
+        deal_name=f"D-{uuid.uuid4().hex[:6]}",
+        submitted_at=submitted_at,
+    )
+    db.add(deal)
+    db.commit()
+    db.refresh(deal)
+    return deal
+
+
+def test_from_date_filter_excludes_older_deals(db_session):
+    """PR #175: from_date excludes deals submitted strictly before the date."""
+    org = make_org(db_session)
+    older = datetime(2026, 5, 10, 12, 0, 0)
+    newer = datetime(2026, 5, 25, 12, 0, 0)
+    _make_deal_at(db_session, org.id, submitted_at=older)
+    _make_deal_at(db_session, org.id, submitted_at=newer)
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/deal-registrations?partner_org_id={org.id}&from_date=2026-05-20"
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        dates = sorted(it["submitted_at"][:10] for it in items)
+        assert dates == ["2026-05-25"], dates
+    finally:
+        clear_overrides()
+
+
+def test_to_date_filter_excludes_newer_deals(db_session):
+    """PR #175: to_date is inclusive of the entire day (end-of-day cap)."""
+    org = make_org(db_session)
+    older = datetime(2026, 5, 10, 12, 0, 0)
+    newer = datetime(2026, 5, 25, 12, 0, 0)
+    _make_deal_at(db_session, org.id, submitted_at=older)
+    _make_deal_at(db_session, org.id, submitted_at=newer)
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/deal-registrations?partner_org_id={org.id}&to_date=2026-05-20"
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        dates = sorted(it["submitted_at"][:10] for it in items)
+        assert dates == ["2026-05-10"], dates
+    finally:
+        clear_overrides()
+
+
+def test_from_date_to_date_range_returns_only_matching_deals(db_session):
+    """PR #175: combining from_date + to_date narrows to a window. Same-day
+    bounds must return the deal stamped that day (inclusive-inclusive)."""
+    org = make_org(db_session)
+    earliest = datetime(2026, 5, 1, 12, 0, 0)
+    middle = datetime(2026, 5, 15, 12, 0, 0)
+    latest = datetime(2026, 5, 30, 12, 0, 0)
+    _make_deal_at(db_session, org.id, submitted_at=earliest)
+    _make_deal_at(db_session, org.id, submitted_at=middle)
+    _make_deal_at(db_session, org.id, submitted_at=latest)
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/deal-registrations?partner_org_id={org.id}"
+            "&from_date=2026-05-15&to_date=2026-05-15"
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        dates = sorted(it["submitted_at"][:10] for it in items)
+        assert dates == ["2026-05-15"], dates
+    finally:
+        clear_overrides()
+
+
+def test_invalid_date_format_returns_422(db_session):
+    """PR #175: malformed date strings return 422 with a clear message."""
+    org = make_org(db_session)
+    user = make_user(UserRole.channel_manager)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/deal-registrations?partner_org_id={org.id}&from_date=not-a-date"
+        )
+        assert r.status_code == 422
+        assert "YYYY-MM-DD" in r.json()["detail"]
+
+        r = client.get(
+            f"/deal-registrations?partner_org_id={org.id}&to_date=2026/05/21"
+        )
+        assert r.status_code == 422
+        assert "YYYY-MM-DD" in r.json()["detail"]
+    finally:
+        clear_overrides()

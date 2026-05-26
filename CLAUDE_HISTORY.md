@@ -2126,8 +2126,8 @@ This session also produced a multi-page design consistency audit (`InternalQuote
 
 **Date:** 2026-05-26
 **Migration head:** 033 (unchanged)
-**Tests:** 711 (unchanged — all PRs in this session are frontend/docs only)
-**Last PR merged:** #174
+**Tests:** 719 (711 prior + 8 new in PR #175)
+**Last PR merged:** #175
 
 ### Context
 
@@ -2143,6 +2143,7 @@ Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 delivera
 | #172 | fix | `PortalQuotes.jsx` fully rebuilt to match `InternalQuotes.jsx` design: 7 summary cards (Total, Draft, Sent, Accepted, Won, Active Pipeline Value, Closed Won); full filter bar (status + plan + search + pipeline toggle); SortableTh on all 8 columns; Partner column removed; `isReadOnly={true}` QuoteDetail modal. TODO Sprint 21: `GET /partners/{id}/quotes` missing `deal_status` field. |
 | #173 | fix | `DealList.jsx` list view rebuilt to match `InternalQuotes.jsx` layout: 6 summary cards above filter bar (Total Deals, Total Est Value, Pipeline Value, Approved Pipeline, Won, Info Required); broken date pickers removed; clean filter bar (status + search + buttons); SortableTh on all 6 columns; "Accepted" label for `approved` status. Two new Hard Rules added to `CLAUDE.md`. `PROMPT_TEMPLATE.md` created as new canonical document. |
 | #174 | fix | Fix PR B1: draft quote version lock corrected (draft/sent no longer locked); PortalQuotes.jsx QuoteDetail renders as modal overlay not inline; Approved→Accepted label rename completed across DealQueue.jsx, InternalDealDetail.jsx, DealDetail.jsx, PartnerHome.jsx, InternalReports.jsx. |
+| #175 | fix | Fix PR B2: backend date filter bug — from_date/to_date params now applied as submitted_at filters in GET /partners/{id}/pipeline and GET /deal-registrations. End-of-day handling for to_date. 422 on malformed date strings. New tests added to test_pipeline.py and test_deal_registrations.py. |
 
 ### Architectural decisions recorded
 
@@ -2154,14 +2155,13 @@ Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 delivera
 - **Two new Hard Rules in CLAUDE.md** — post-flight sync mandatory at end of every session; canonical docs must travel in the same PR as the code change that caused them.
 - **PROMPT_TEMPLATE.md created** — new canonical document in repo root defining the mandatory structure for every Claude Code prompt. Governs Claude chat as prompt author; complements CLAUDE.md which governs Claude Code as Dev Agent.
 
-### Remaining UI testing items (Fix PR B — next)
+### Remaining UI testing items
 
-- Date filter re-added to filter bar + backend params fix (Fix PR B2 — next)
 - internal/deals full redesign to match portal/deals layout (Fix PR C)
 - Won card: sum of pipeline_total for won deals, not count (Fix PR C)
 
 ### Test count
 
-711 (unchanged — no backend changes in PRs #169–#173)
+719 (711 prior + 8 added in PR #175 — 4 in test_pipeline.py, 4 in test_deal_registrations.py)
 
 ---
