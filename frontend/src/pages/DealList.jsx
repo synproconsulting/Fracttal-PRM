@@ -211,7 +211,11 @@ export default function DealList() {
     let totalEstValue = 0
     let pipelineValue = 0
     let approvedPipelineValue = 0
-    let won = 0
+    // Won is the SUM of pipeline_total for won deals — not a count. PR #176.
+    // anyWonWithPipeline lets the card distinguish "no data" (render '—')
+    // from "every won deal has zero pipeline" (render $0).
+    let wonPipelineValue = 0
+    let anyWonWithPipeline = false
     let infoRequired = 0
     for (const d of deals) {
       if (d.estimated_deal_value != null) {
@@ -223,12 +227,23 @@ export default function DealList() {
         if (Number.isFinite(p)) {
           pipelineValue += p
           if (d.status === 'approved') approvedPipelineValue += p
+          if (d.status === 'won') {
+            wonPipelineValue += p
+            anyWonWithPipeline = true
+          }
         }
       }
-      if (d.status === 'won') won += 1
       if (d.status === 'info_required') infoRequired += 1
     }
-    return { total: deals.length, totalEstValue, pipelineValue, approvedPipelineValue, won, infoRequired }
+    return {
+      total: deals.length,
+      totalEstValue,
+      pipelineValue,
+      approvedPipelineValue,
+      wonPipelineValue,
+      anyWonWithPipeline,
+      infoRequired,
+    }
   }, [deals])
 
   const pipelineSummary = useMemo(() => {
@@ -296,8 +311,8 @@ export default function DealList() {
         <SummaryCard label="Total Deals" value={listSummary.total} />
         <SummaryCard label="Total Est. Value" value={formatMoney(listSummary.totalEstValue)} />
         <SummaryCard label="Pipeline Value" value={formatMoney(listSummary.pipelineValue)} color="#1A6EBB" />
-        <SummaryCard label="Approved Pipeline" value={formatMoney(listSummary.approvedPipelineValue)} color="#2E7D32" />
-        <SummaryCard label="Won" value={listSummary.won} color="#2E7D32" />
+        <SummaryCard label="Accepted Pipeline" value={formatMoney(listSummary.approvedPipelineValue)} color="#2E7D32" />
+        <SummaryCard label="Won" value={listSummary.anyWonWithPipeline ? formatMoney(listSummary.wonPipelineValue) : '—'} color="#2E7D32" />
         <SummaryCard label="Info Required" value={listSummary.infoRequired} color="#B7791F" />
       </div>
 
@@ -312,7 +327,7 @@ export default function DealList() {
             <option value="submitted">Submitted</option>
             <option value="under_review">Under Review</option>
             <option value="info_required">Info Required</option>
-            <option value="approved">Approved</option>
+            <option value="approved">Accepted</option>
             <option value="rejected">Rejected</option>
             <option value="won">Won</option>
             <option value="lost">Lost</option>
