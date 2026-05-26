@@ -29,7 +29,7 @@ const STATUS_LABEL = {
   submitted: 'Submitted',
   under_review: 'Under review',
   info_required: 'Info required',
-  approved: 'Approved',
+  approved: 'Accepted',
   rejected: 'Rejected',
   expired: 'Expired',
 }
@@ -39,7 +39,7 @@ const STATUS_OPTIONS = [
   { value: 'submitted', label: 'Submitted' },
   { value: 'under_review', label: 'Under review' },
   { value: 'info_required', label: 'Info required' },
-  { value: 'approved', label: 'Approved' },
+  { value: 'approved', label: 'Accepted' },
   { value: 'rejected', label: 'Rejected' },
 ]
 

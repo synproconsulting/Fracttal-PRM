@@ -340,7 +340,7 @@ export default function InternalReports() {
           <>
             <div className="fpr-tilerow" style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
               <Tile label="Total Deals" value={totals.total_deals} />
-              <Tile label="Approved" value={totals.approved} accent="#22C55E" />
+              <Tile label="Accepted" value={totals.approved} accent="#22C55E" />
               <Tile label="In Review" value={totals.under_review} accent="#3B82F6" />
               <Tile label="Rejected" value={totals.rejected} accent="#EF4444" />
               <Tile label="Total Value" value={formatCurrency(totals.total_value)} />
@@ -360,7 +360,7 @@ export default function InternalReports() {
                       <YAxis />
                       <Tooltip />
                       <Legend />
-                      <Bar dataKey="approved" stackId="a" fill="#22C55E" name="Approved" />
+                      <Bar dataKey="approved" stackId="a" fill="#22C55E" name="Accepted" />
                       <Bar dataKey="other" stackId="a" fill="#3B82F6" name="In Pipeline" />
                     </BarChart>
                   </ResponsiveContainer>
@@ -390,7 +390,7 @@ export default function InternalReports() {
                           <tr style={{ background: '#F8FAFC' }}>
                             <th className="fpr-th" style={{ padding: 8, textAlign: 'left' }} onClick={() => setSortKey('partner_name')}>Partner Name</th>
                             <th className="fpr-th" style={{ padding: 8, textAlign: 'right' }} onClick={() => setSortKey('total_deals')}>Total Deals</th>
-                            <th className="fpr-th" style={{ padding: 8, textAlign: 'right' }} onClick={() => setSortKey('approved')}>Approved</th>
+                            <th className="fpr-th" style={{ padding: 8, textAlign: 'right' }} onClick={() => setSortKey('approved')}>Accepted</th>
                             <th className="fpr-th" style={{ padding: 8, textAlign: 'right' }} onClick={() => setSortKey('total_value')}>Pipeline Value</th>
                           </tr>
                         </thead>

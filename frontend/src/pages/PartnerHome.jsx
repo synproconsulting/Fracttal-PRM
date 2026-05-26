@@ -9,7 +9,7 @@ const STATUS_LABEL = {
   draft: 'Draft',
   submitted: 'Submitted',
   under_review: 'Under Review',
-  approved: 'Approved',
+  approved: 'Accepted',
   rejected: 'Rejected',
   info_required: 'Info Required',
   expired: 'Expired',
@@ -308,7 +308,7 @@ export default function PartnerHome() {
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Approved</div>
+                  <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Accepted</div>
                   <div style={{ fontSize: 22, fontWeight: 700, color: '#22C55E' }}>
                     {approvedActive.length}
                   </div>

@@ -275,12 +275,16 @@ export default function PortalQuotes() {
       )}
 
       {openQuoteId && (
-        <QuoteDetail
-          quoteId={openQuoteId}
-          isReadOnly
-          onClose={() => setOpenQuoteId(null)}
-          includeInPipeline={items.find((q) => q.id === openQuoteId)?.include_in_pipeline}
-        />
+        <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+          <div className="fp-modal" style={{ maxWidth: 1200, width: '90vw', maxHeight: '90vh', overflowY: 'auto' }}>
+            <QuoteDetail
+              quoteId={openQuoteId}
+              isReadOnly
+              onClose={() => setOpenQuoteId(null)}
+              includeInPipeline={items.find((q) => q.id === openQuoteId)?.include_in_pipeline}
+            />
+          </div>
+        </div>
       )}
     </div>
   )
