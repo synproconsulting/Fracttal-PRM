@@ -34,12 +34,13 @@ const STATUS_LABEL = {
   expired: 'Expired',
 }
 
-const TABS = [
-  { key: 'all', label: 'All', filter: null },
-  { key: 'submitted', label: 'Submitted', filter: 'submitted' },
-  { key: 'under_review', label: 'Under review', filter: 'under_review' },
-  { key: 'approved', label: 'Approved', filter: 'approved' },
-  { key: 'rejected', label: 'Rejected', filter: 'rejected' },
+const STATUS_OPTIONS = [
+  { value: '', label: 'All statuses' },
+  { value: 'submitted', label: 'Submitted' },
+  { value: 'under_review', label: 'Under review' },
+  { value: 'info_required', label: 'Info required' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
 ]
 
 function StatusBadge({ status }) {
@@ -284,7 +285,8 @@ function NewDealModal({ token, onClose, onCreated }) {
 export default function DealQueue() {
   const token = localStorage.getItem('token')
   const navigate = useNavigate()
-  const [tab, setTab] = useState('submitted')
+  const [statusFilter, setStatusFilter] = useState('submitted')
+  const [search, setSearch] = useState('')
   const [deals, setDeals] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -300,14 +302,12 @@ export default function DealQueue() {
       : { field, dir: 'asc' })
   }
 
-  const activeFilter = useMemo(() => TABS.find((t) => t.key === tab)?.filter, [tab])
-
   function reload() {
     if (!token) return
     setLoading(true)
     setError(null)
     const qs = new URLSearchParams({ limit: '200', sort_by: sort.field, sort_dir: sort.dir })
-    if (activeFilter) qs.set('status', activeFilter)
+    if (statusFilter) qs.set('status', statusFilter)
     fetch(`${API}/internal/deals?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
@@ -321,7 +321,17 @@ export default function DealQueue() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { reload() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab, sort])
+  useEffect(() => { reload() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter, sort])
+
+  const visibleDeals = useMemo(() => {
+    if (!search) return deals
+    const q = search.toLowerCase()
+    return deals.filter((d) => (
+      (d.deal_name || '').toLowerCase().includes(q) ||
+      (d.customer_name || '').toLowerCase().includes(q) ||
+      (d.partner_legal_name || '').toLowerCase().includes(q)
+    ))
+  }, [deals, search])
 
   async function exportCSV() {
     setExporting(true)
@@ -381,28 +391,21 @@ export default function DealQueue() {
         <div className="fp-alert fp-alert--success" style={{ marginBottom: 12 }}>{toast}</div>
       )}
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--fp-border)' }}>
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              padding: '10px 16px',
-              cursor: 'pointer',
-              fontSize: 'var(--fp-fs-base)',
-              fontWeight: tab === t.key ? 'var(--fp-fw-semibold)' : 'var(--fp-fw-medium)',
-              color: tab === t.key ? 'var(--fp-primary)' : 'var(--fp-text-secondary)',
-              borderBottom: tab === t.key ? '2px solid var(--fp-primary)' : '2px solid transparent',
-              marginBottom: -1,
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Filter bar — single fp-card horizontal row per AD-26. Status dropdown
+          LEFT, free-text search RIGHT (client-side, across deal/customer/partner). */}
+      <section className="fp-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <input type="search" placeholder="Search by deal, customer, or partner…"
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+        </div>
+      </section>
 
       {error && <div className="fp-alert fp-alert--danger">{error}</div>}
 
@@ -414,60 +417,68 @@ export default function DealQueue() {
         </div>
       )}
 
-      {!loading && deals.length > 0 && (
-        <table className="fp-table">
-          <thead>
-            <tr>
-              <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
-              <SortableTh field="partner_org" sort={sort} onSort={toggleSort}>Partner org</SortableTh>
-              <SortableTh field="customer_name" sort={sort} onSort={toggleSort}>Customer</SortableTh>
-              <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
-              <SortableTh field="deal_value" sort={sort} onSort={toggleSort}>Est. value</SortableTh>
-              <th>Pipeline</th>
-              <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {deals.map((d) => (
-              <tr key={d.id}>
-                <td>
-                  <Link to={`/internal/deals/${d.id}`}
-                        style={{ color: 'var(--fp-primary)', fontWeight: 600, textDecoration: 'none' }}>
-                    {d.deal_name || '(unnamed)'}
-                  </Link>
-                </td>
-                <td style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
-                  {d.partner_legal_name || (d.partner_org_id ? `${d.partner_org_id.slice(0, 8)}…` : '—')}
-                </td>
-                <td>{d.customer_name || '—'}</td>
-                <td><StatusBadge status={d.status} /></td>
-                <td>{formatMoney(d.estimated_deal_value)}</td>
-                <td>{d.pipeline_total == null ? '—' : formatPipelineMoney(d.pipeline_total)}</td>
-                <td>{formatDate(d.submitted_at)}</td>
-                <td>
-                  {d.status === 'submitted' && (
-                    <button
-                      type="button"
-                      className="fp-btn fp-btn--primary fp-btn--sm"
-                      disabled={actionSaving}
-                      onClick={() => startReview(d)}
-                    >
-                      Start review
-                    </button>
-                  )}
-                  {d.status !== 'submitted' && (
-                    <Link to={`/internal/deals/${d.id}`}
-                          className="fp-btn fp-btn--ghost fp-btn--sm"
-                          style={{ textDecoration: 'none' }}>
-                      Open
-                    </Link>
-                  )}
-                </td>
+      {!loading && deals.length > 0 && visibleDeals.length === 0 && (
+        <div className="fp-card" style={{ textAlign: 'center', padding: 32, color: 'var(--fp-text-secondary)' }}>
+          No deals match the current search.
+        </div>
+      )}
+
+      {!loading && visibleDeals.length > 0 && (
+        <section className="fp-card">
+          <table className="fp-table">
+            <thead>
+              <tr>
+                <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
+                <SortableTh field="partner_org" sort={sort} onSort={toggleSort}>Partner org</SortableTh>
+                <SortableTh field="customer_name" sort={sort} onSort={toggleSort}>Customer</SortableTh>
+                <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
+                <SortableTh field="deal_value" sort={sort} onSort={toggleSort}>Est. value</SortableTh>
+                <SortableTh field="pipeline_total" sort={sort} onSort={toggleSort}>Pipeline</SortableTh>
+                <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visibleDeals.map((d) => (
+                <tr key={d.id}>
+                  <td>
+                    <Link to={`/internal/deals/${d.id}`}
+                          style={{ color: 'var(--fp-primary)', fontWeight: 600, textDecoration: 'none' }}>
+                      {d.deal_name || '(unnamed)'}
+                    </Link>
+                  </td>
+                  <td style={{ fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+                    {d.partner_legal_name || (d.partner_org_id ? `${d.partner_org_id.slice(0, 8)}…` : '—')}
+                  </td>
+                  <td>{d.customer_name || '—'}</td>
+                  <td><StatusBadge status={d.status} /></td>
+                  <td>{formatMoney(d.estimated_deal_value)}</td>
+                  <td>{d.pipeline_total == null ? '—' : formatPipelineMoney(d.pipeline_total)}</td>
+                  <td>{formatDate(d.submitted_at)}</td>
+                  <td>
+                    {d.status === 'submitted' && (
+                      <button
+                        type="button"
+                        className="fp-btn fp-btn--primary fp-btn--sm"
+                        disabled={actionSaving}
+                        onClick={() => startReview(d)}
+                      >
+                        Start review
+                      </button>
+                    )}
+                    {d.status !== 'submitted' && (
+                      <Link to={`/internal/deals/${d.id}`}
+                            className="fp-btn fp-btn--ghost fp-btn--sm"
+                            style={{ textDecoration: 'none' }}>
+                        Open
+                      </Link>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
       )}
 
       {newDealOpen && (
