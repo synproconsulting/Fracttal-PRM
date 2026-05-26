@@ -2127,7 +2127,7 @@ This session also produced a multi-page design consistency audit (`InternalQuote
 **Date:** 2026-05-26
 **Migration head:** 033 (unchanged)
 **Tests:** 719 (711 prior + 8 new in PR #175)
-**Last PR merged:** #175
+**Last PR merged:** #176
 
 ### Context
 
@@ -2144,6 +2144,7 @@ Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 delivera
 | #173 | fix | `DealList.jsx` list view rebuilt to match `InternalQuotes.jsx` layout: 6 summary cards above filter bar (Total Deals, Total Est Value, Pipeline Value, Approved Pipeline, Won, Info Required); broken date pickers removed; clean filter bar (status + search + buttons); SortableTh on all 6 columns; "Accepted" label for `approved` status. Two new Hard Rules added to `CLAUDE.md`. `PROMPT_TEMPLATE.md` created as new canonical document. |
 | #174 | fix | Fix PR B1: draft quote version lock corrected (draft/sent no longer locked); PortalQuotes.jsx QuoteDetail renders as modal overlay not inline; Approved→Accepted label rename completed across DealQueue.jsx, InternalDealDetail.jsx, DealDetail.jsx, PartnerHome.jsx, InternalReports.jsx. |
 | #175 | fix | Fix PR B2: backend date filter bug — from_date/to_date params now applied as submitted_at filters in GET /partners/{id}/pipeline and GET /deal-registrations. End-of-day handling for to_date. 422 on malformed date strings. New tests added to test_pipeline.py and test_deal_registrations.py. |
+| #176 | fix | Fix PR C: DealQueue.jsx rebuilt to match portal/deals layout — summary cards (Total Deals, Total Est Value, Pipeline Value, Accepted Pipeline, Won $, Info Required), date filter inputs re-added (from_date/to_date wired to PR #175 backend fix), fp-table + SortableTh all columns, Actions column removed, deal name as link, title "Deals". DealList.jsx: Won card changed from count to sum of pipeline_total; "Approved Pipeline" → "Accepted Pipeline" label; filter dropdown "Approved" → "Accepted". InternalHome.jsx: "Approved This Month" → "Accepted This Month". |
 
 ### Architectural decisions recorded
 
@@ -2157,8 +2158,7 @@ Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 delivera
 
 ### Remaining UI testing items
 
-- internal/deals full redesign to match portal/deals layout (Fix PR C)
-- Won card: sum of pipeline_total for won deals, not count (Fix PR C)
+All UI testing items from the pre-Sprint-21 session resolved. Ready for Sprint 21 planning.
 
 ### Test count
 

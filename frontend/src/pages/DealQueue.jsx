@@ -14,40 +14,59 @@ const _FEATURE_PLAN_OPTIONS = [
   { value: 'enterprise',   label: 'Enterprise' },
 ]
 
+// Tinted-background status palette per AD-27 — matches DealList.jsx so
+// portal/deals and internal/deals render badges identically.
 const STATUS_TONE = {
-  draft: 'fp-badge--neutral',
-  submitted: 'fp-badge--info',
-  under_review: 'fp-badge--warning',
-  info_required: 'fp-badge--warning',
-  approved: 'fp-badge--success',
-  rejected: 'fp-badge--danger',
-  expired: 'fp-badge--neutral',
+  draft: '#64748B',
+  submitted: '#1A6EBB',
+  under_review: '#B7791F',
+  info_required: '#B7791F',
+  approved: '#2E7D32',
+  rejected: '#C62828',
+  expired: '#C2410C',
+  won: '#2E7D32',
+  lost: '#C62828',
+  withdrawn: '#64748B',
+  cancelled: '#C62828',
 }
 
+// "Approved" deals display as "Accepted" — matches partner-portal vocabulary.
 const STATUS_LABEL = {
   draft: 'Draft',
   submitted: 'Submitted',
-  under_review: 'Under review',
-  info_required: 'Info required',
+  under_review: 'Under Review',
+  info_required: 'Info Required',
   approved: 'Accepted',
   rejected: 'Rejected',
   expired: 'Expired',
+  won: 'Won',
+  lost: 'Lost',
+  withdrawn: 'Withdrawn',
+  cancelled: 'Cancelled',
 }
 
-const STATUS_OPTIONS = [
-  { value: '', label: 'All statuses' },
-  { value: 'submitted', label: 'Submitted' },
-  { value: 'under_review', label: 'Under review' },
-  { value: 'info_required', label: 'Info required' },
-  { value: 'approved', label: 'Accepted' },
-  { value: 'rejected', label: 'Rejected' },
-]
-
 function StatusBadge({ status }) {
+  const color = STATUS_TONE[status] || '#64748B'
+  const label = STATUS_LABEL[status] || status
   return (
-    <span className={`fp-badge ${STATUS_TONE[status] || 'fp-badge--neutral'}`}>
-      {STATUS_LABEL[status] || status}
-    </span>
+    <span style={{
+      display: 'inline-block',
+      padding: '2px 8px',
+      borderRadius: 12,
+      background: `${color}22`,
+      color,
+      fontSize: 12,
+      fontWeight: 600,
+    }}>{label}</span>
+  )
+}
+
+function SummaryCard({ label, value, color = '#1E293B' }) {
+  return (
+    <div className="fp-card" style={{ flex: 1, minWidth: 140, padding: 14 }}>
+      <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color, marginTop: 4 }}>{value}</div>
+    </div>
   )
 }
 
@@ -56,13 +75,6 @@ function formatMoney(value) {
   const num = Number(value)
   if (!Number.isFinite(num)) return '—'
   return `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-}
-
-function formatPipelineMoney(value) {
-  if (value === null || value === undefined || value === '') return '—'
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '—'
-  return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatDate(value) {
@@ -285,16 +297,17 @@ function NewDealModal({ token, onClose, onCreated }) {
 export default function DealQueue() {
   const token = localStorage.getItem('token')
   const navigate = useNavigate()
-  const [statusFilter, setStatusFilter] = useState('submitted')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [search, setSearch] = useState('')
   const [deals, setDeals] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [actionSaving, setActionSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [newDealOpen, setNewDealOpen] = useState(false)
   const [toast, setToast] = useState(null)
-  const [sort, setSort] = useState({ field: 'created_at', dir: 'desc' })
+  const [sort, setSort] = useState({ field: 'submitted_at', dir: 'desc' })
 
   function toggleSort(field) {
     setSort((s) => s.field === field
@@ -308,6 +321,8 @@ export default function DealQueue() {
     setError(null)
     const qs = new URLSearchParams({ limit: '200', sort_by: sort.field, sort_dir: sort.dir })
     if (statusFilter) qs.set('status', statusFilter)
+    if (fromDate) qs.set('from_date', fromDate)
+    if (toDate) qs.set('to_date', toDate)
     fetch(`${API}/internal/deals?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
@@ -321,7 +336,7 @@ export default function DealQueue() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { reload() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter, sort])
+  useEffect(() => { reload() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter, fromDate, toDate, sort])
 
   const visibleDeals = useMemo(() => {
     if (!search) return deals
@@ -332,6 +347,45 @@ export default function DealQueue() {
       (d.partner_legal_name || '').toLowerCase().includes(q)
     ))
   }, [deals, search])
+
+  // Summary cards source from the fetched `deals` array. Won is the SUM of
+  // pipeline_total for won deals (not a count); when no won deal has a
+  // pipeline_total the card renders '—' to distinguish "no data" from "$0".
+  const listSummary = useMemo(() => {
+    let totalEstValue = 0
+    let pipelineValue = 0
+    let approvedPipelineValue = 0
+    let wonPipelineValue = 0
+    let anyWonWithPipeline = false
+    let infoRequired = 0
+    for (const d of deals) {
+      if (d.estimated_deal_value != null) {
+        const v = Number(d.estimated_deal_value)
+        if (Number.isFinite(v)) totalEstValue += v
+      }
+      if (d.pipeline_total != null) {
+        const p = Number(d.pipeline_total)
+        if (Number.isFinite(p)) {
+          pipelineValue += p
+          if (d.status === 'approved') approvedPipelineValue += p
+          if (d.status === 'won') {
+            wonPipelineValue += p
+            anyWonWithPipeline = true
+          }
+        }
+      }
+      if (d.status === 'info_required') infoRequired += 1
+    }
+    return {
+      total: deals.length,
+      totalEstValue,
+      pipelineValue,
+      approvedPipelineValue,
+      wonPipelineValue,
+      anyWonWithPipeline,
+      infoRequired,
+    }
+  }, [deals])
 
   async function exportCSV() {
     setExporting(true)
@@ -353,55 +407,62 @@ export default function DealQueue() {
     }
   }
 
-  async function startReview(deal) {
-    setActionSaving(true)
-    try {
-      const r = await fetch(`${API}/internal/deals/${deal.id}/start-review`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}))
-        throw new Error(body.detail || `HTTP ${r.status}`)
-      }
-      reload()
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setActionSaving(false)
-    }
-  }
-
   return (
     <div className="fp-page">
-      <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 className="fp-page-title">Deal Queue</h1>
+      <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <h1 className="fp-page-title">Deals</h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="fp-btn fp-btn--primary" onClick={() => setNewDealOpen(true)}>
-            + New Deal
-          </button>
           <button type="button" onClick={exportCSV} disabled={exporting}
                   style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: 'pointer', fontWeight: 400 }}>
             {exporting ? 'Exporting...' : 'Export CSV'}
           </button>
+          <button type="button" className="fp-btn fp-btn--primary" onClick={() => setNewDealOpen(true)}>
+            + New Deal
+          </button>
         </div>
+      </div>
+
+      {/* Summary cards strip — six aggregates sourced from `deals` (AD-31). */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <SummaryCard label="Total Deals" value={listSummary.total} />
+        <SummaryCard label="Total Est. Value" value={formatMoney(listSummary.totalEstValue)} />
+        <SummaryCard label="Pipeline Value" value={formatMoney(listSummary.pipelineValue)} color="#1A6EBB" />
+        <SummaryCard label="Accepted Pipeline" value={formatMoney(listSummary.approvedPipelineValue)} color="#2E7D32" />
+        <SummaryCard label="Won" value={listSummary.anyWonWithPipeline ? formatMoney(listSummary.wonPipelineValue) : '—'} color="#2E7D32" />
+        <SummaryCard label="Info Required" value={listSummary.infoRequired} color="#B7791F" />
       </div>
 
       {toast && (
         <div className="fp-alert fp-alert--success" style={{ marginBottom: 12 }}>{toast}</div>
       )}
 
-      {/* Filter bar — single fp-card horizontal row per AD-26. Status dropdown
-          LEFT, free-text search RIGHT (client-side, across deal/customer/partner). */}
+      {/* Filter bar — single horizontal fp-card per AD-26. Status + dates LEFT,
+          free-text search RIGHT (client-side across deal/customer/partner).
+          Dates are wired to the backend's from_date / to_date params (fixed
+          in PR #175). */}
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
-            {STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
+            <option value="">All Statuses</option>
+            <option value="draft">Draft</option>
+            <option value="submitted">Submitted</option>
+            <option value="under_review">Under Review</option>
+            <option value="info_required">Info Required</option>
+            <option value="approved">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+            <option value="withdrawn">Withdrawn</option>
+            <option value="cancelled">Cancelled</option>
           </select>
-          <input type="search" placeholder="Search by deal, customer, or partner…"
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+            title="From date — filters submitted_at"
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+            title="To date — filters submitted_at"
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          <input type="search" placeholder="Search by deal, customer, or partner..."
             value={search} onChange={(e) => setSearch(e.target.value)}
             style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
         </div>
@@ -429,13 +490,12 @@ export default function DealQueue() {
             <thead>
               <tr>
                 <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
-                <SortableTh field="partner_org" sort={sort} onSort={toggleSort}>Partner org</SortableTh>
+                <SortableTh field="partner_org" sort={sort} onSort={toggleSort}>Partner Org</SortableTh>
                 <SortableTh field="customer_name" sort={sort} onSort={toggleSort}>Customer</SortableTh>
                 <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
-                <SortableTh field="deal_value" sort={sort} onSort={toggleSort}>Est. value</SortableTh>
                 <SortableTh field="pipeline_total" sort={sort} onSort={toggleSort}>Pipeline</SortableTh>
+                <SortableTh field="deal_value" sort={sort} onSort={toggleSort}>Est. Value</SortableTh>
                 <SortableTh field="submitted_at" sort={sort} onSort={toggleSort}>Submitted</SortableTh>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -452,28 +512,9 @@ export default function DealQueue() {
                   </td>
                   <td>{d.customer_name || '—'}</td>
                   <td><StatusBadge status={d.status} /></td>
+                  <td>{d.pipeline_total == null ? '—' : formatMoney(d.pipeline_total)}</td>
                   <td>{formatMoney(d.estimated_deal_value)}</td>
-                  <td>{d.pipeline_total == null ? '—' : formatPipelineMoney(d.pipeline_total)}</td>
                   <td>{formatDate(d.submitted_at)}</td>
-                  <td>
-                    {d.status === 'submitted' && (
-                      <button
-                        type="button"
-                        className="fp-btn fp-btn--primary fp-btn--sm"
-                        disabled={actionSaving}
-                        onClick={() => startReview(d)}
-                      >
-                        Start review
-                      </button>
-                    )}
-                    {d.status !== 'submitted' && (
-                      <Link to={`/internal/deals/${d.id}`}
-                            className="fp-btn fp-btn--ghost fp-btn--sm"
-                            style={{ textDecoration: 'none' }}>
-                        Open
-                      </Link>
-                    )}
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -491,8 +532,6 @@ export default function DealQueue() {
             setToast(`Draft created: ${label}`)
             setTimeout(() => setToast(null), 4000)
             reload()
-            // Optional handoff: navigate the channel manager straight to the
-            // detail page so they can keep editing collaboration / quotes.
             if (deal?.id) navigate(`/internal/deals/${deal.id}`)
           }}
         />

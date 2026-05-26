@@ -446,9 +446,9 @@ frontend/src/
 
     ├── CommissionRates.jsx          # Sprint 10 / FPRM-158 — partner-facing commission table at /portal/commissions inside PartnerPortalLayout. Pulls `GET /partners/{id}/commission-rates` using the JWT's partner_org_id and renders a Fracttal One table (Commission Type | Year | Rate | Notes). Header reads "Your Commission Rates — [Partner Category]". Empty state: "No commission rates found for your partner category.".
 
-    ├── DealList.jsx                 # Sprint 8 / FPRM-131 — partner pipeline at /portal/deals. Status badge chips (draft=grey, submitted=blue, under_review/info_required=yellow, approved=green, rejected=red, expired=grey), USD-formatted value, link to edit. Empty state with CTA, success toast on first render after submit.
+    ├── DealList.jsx                 # Sprint 8 / FPRM-131 — partner pipeline at /portal/deals. Status badge chips (draft=grey, submitted=blue, under_review/info_required=yellow, approved=green, rejected=red, expired=grey), USD-formatted value, link to edit. Empty state with CTA, success toast on first render after submit. Won card updated to sum of pipeline_total (PR #176). Accepted Pipeline label corrected (PR #176).
 
-    ├── DealQueue.jsx                # Sprint 8 / FPRM-134 → Sprint 9 / FPRM-141+143. Internal deal queue at /internal/deals. Filter tabs (All / Submitted / Under review / Approved / Rejected), table with partner_legal_name (FPRM-143 backend join). Deal name links to `/internal/deals/:id`. Inline `Start review` for submitted rows; all other actions live on the detail page (FPRM-141 moved Approve/Reject modals to the detail panel).
+    ├── DealQueue.jsx                # Sprint 8 / FPRM-134 → Sprint 9 / FPRM-141+143. Internal deals page at /internal/deals. Rebuilt PR #176 to match portal/deals layout — summary cards, date filter bar, fp-table, Accepted labels, Won card dollar value. Deal name links to `/internal/deals/:id`. Actions column removed — all per-deal actions live on the detail page.
 
     ├── DealDetail.jsx               # Sprint 9 / FPRM-140 — partner-facing read-only deal detail at /portal/deals/:id. Customer + deal field display, status-specific banner, collaboration thread, info_required → message + Resubmit panel. Draft state shows "Edit draft" routing to DealRegistrationForm.
 

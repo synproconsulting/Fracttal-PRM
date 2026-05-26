@@ -163,12 +163,12 @@ export default function InternalHome() {
         <KpiTile
           label="Pipeline Value"
           value={formatCurrency(deals.total_pipeline_value)}
-          sub="Submitted, in review, or approved"
+          sub="Submitted, in review, or accepted"
         />
         <KpiTile
-          label="Approved This Month"
+          label="Accepted This Month"
           value={deals.approved_this_month ?? 0}
-          sub="Reviewed and approved"
+          sub="Reviewed and accepted"
         />
         <KpiTile
           label="Applications This Month"
