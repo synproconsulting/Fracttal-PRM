@@ -2059,8 +2059,8 @@ Alembic head bumps from 026 → **028**.
 
 **Closed:** 2026-05-22
 **Migration head:** 028 → **033**
-**Tests:** 604 → **710**
-**Last PR merged in this session:** **#163**
+**Tests:** 604 → **711**
+**Last PR merged in this session:** **#167**
 **No Jira ticket** — driven by direct browser testing of the Sprint 20 deliverables; the user opted to run polish as an unticketed session and reconcile docs in a follow-up sweep (this entry).
 
 ### Why this session existed
@@ -2109,8 +2109,8 @@ This session also produced a multi-page design consistency audit (`InternalQuote
 | Source | Count |
 |---|---|
 | Sprint 20 baseline | 604 |
-| Post-Sprint 20 net additions across PRs #128–#163 | +106 |
-| **Post-Sprint 20 total** | **710** |
+| Post-Sprint 20 net additions across PRs #128–#167 | +107 |
+| **Post-Sprint 20 total** | **711** |
 
 ### Lessons
 

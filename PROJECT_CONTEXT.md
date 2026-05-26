@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 8 (Deal registration foundation — Phase 3 underway)
+> Last updated: Post-Sprint 20 UX & Workflow Fixes — May 2026 (migration head 033, 711 tests, PR #167)
 
 
 
