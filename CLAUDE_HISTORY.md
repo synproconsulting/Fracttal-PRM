@@ -2127,7 +2127,7 @@ This session also produced a multi-page design consistency audit (`InternalQuote
 **Date:** 2026-05-26
 **Migration head:** 033 (unchanged)
 **Tests:** 711 (unchanged — all PRs in this session are frontend/docs only)
-**Last PR merged:** #173
+**Last PR merged:** #174
 
 ### Context
 
@@ -2142,6 +2142,7 @@ Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 delivera
 | #171 | fix | Frontend design standardisation pass A: `DealQueue.jsx` (AD-26 fp-card filter bar + free-text search); `DealList.jsx` (SortableTh all list columns + free-text search); `PartnerDocuments.jsx` (free-text search + SortableTh Name/Expires); `ApplicationQueue.jsx` (fp-table + fp-card); `InternalQuotes.jsx` (Export CSV placeholder per AD-30); `PartnerPortalLayout.jsx` (My Quotes nav item moved above Commissions). |
 | #172 | fix | `PortalQuotes.jsx` fully rebuilt to match `InternalQuotes.jsx` design: 7 summary cards (Total, Draft, Sent, Accepted, Won, Active Pipeline Value, Closed Won); full filter bar (status + plan + search + pipeline toggle); SortableTh on all 8 columns; Partner column removed; `isReadOnly={true}` QuoteDetail modal. TODO Sprint 21: `GET /partners/{id}/quotes` missing `deal_status` field. |
 | #173 | fix | `DealList.jsx` list view rebuilt to match `InternalQuotes.jsx` layout: 6 summary cards above filter bar (Total Deals, Total Est Value, Pipeline Value, Approved Pipeline, Won, Info Required); broken date pickers removed; clean filter bar (status + search + buttons); SortableTh on all 6 columns; "Accepted" label for `approved` status. Two new Hard Rules added to `CLAUDE.md`. `PROMPT_TEMPLATE.md` created as new canonical document. |
+| #174 | fix | Fix PR B1: draft quote version lock corrected (draft/sent no longer locked); PortalQuotes.jsx QuoteDetail renders as modal overlay not inline; Approved→Accepted label rename completed across DealQueue.jsx, InternalDealDetail.jsx, DealDetail.jsx, PartnerHome.jsx, InternalReports.jsx. |
 
 ### Architectural decisions recorded
 
@@ -2155,9 +2156,9 @@ Pre-Sprint-21 UI testing session. Browser testing of the post-Sprint-20 delivera
 
 ### Remaining UI testing items (Fix PR B — next)
 
-- Date filter bug on portal/deals (broken date pickers removed in #173; backend filter fix still needed)
-- Draft quotes must remain fully editable (regression check)
-- "Approved" → "Accepted" display label rename across all deal status displays
+- Date filter re-added to filter bar + backend params fix (Fix PR B2 — next)
+- internal/deals full redesign to match portal/deals layout (Fix PR C)
+- Won card: sum of pipeline_total for won deals, not count (Fix PR C)
 
 ### Test count
 

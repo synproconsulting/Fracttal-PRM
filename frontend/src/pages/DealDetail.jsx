@@ -29,7 +29,7 @@ const STATUS_LABEL = {
   submitted: 'Submitted',
   under_review: 'Under review',
   info_required: 'Info required',
-  approved: 'Approved',
+  approved: 'Accepted',
   rejected: 'Rejected',
   expired: 'Expired',
 }
@@ -39,7 +39,7 @@ const BANNERS = {
   submitted: { tone: 'fp-alert--info', text: 'Your deal has been submitted and is awaiting review.' },
   under_review: { tone: 'fp-alert--warning', text: 'Your deal is currently being reviewed by the Fracttal team.' },
   info_required: { tone: 'fp-alert--warning', text: 'Additional information is required. Please respond below and resubmit.' },
-  approved: { tone: 'fp-alert--success', text: 'Your deal has been approved.' },
+  approved: { tone: 'fp-alert--success', text: 'Your deal has been accepted.' },
   rejected: { tone: 'fp-alert--danger', text: 'Your deal was not approved.' },
   expired: { tone: 'fp-alert--neutral', text: 'This deal has expired.' },
 }

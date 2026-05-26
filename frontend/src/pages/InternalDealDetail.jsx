@@ -49,7 +49,7 @@ const STATUS_LABEL = {
 
   info_required: 'Info required',
 
-  approved: 'Approved',
+  approved: 'Accepted',
 
   rejected: 'Rejected',
 
