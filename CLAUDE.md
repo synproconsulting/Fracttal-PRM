@@ -13,7 +13,7 @@ A new Partner Relationship Management (PRM) system to onboard and manage Fractta
 
 **Owner:** Johan Wessels — SynPro Consulting
 **Started:** May 2026
-**Current state:** **Post-Sprint 20 UX and Workflow fixes complete.** Sprint 20 closed on Alembic head 028 (Deal Enhancements — see CLAUDE_HISTORY.md). PRs #128–#163 followed as an unticketed UX & workflow polish session driven by browser testing: deal form Section A + Section B SPICED restructure (combobox current-systems, evenly-split feature checkboxes, partner contact-information section), sortable columns across all 9 list views via the shared `SortableTh` component, deal multi-status lifecycle (cancelled / lost / withdrawn / won), pipeline-inclusion toggle on quotes, quote document attachment + acceptance gate, system_admin break-glass approval bypass, quote retract (accepted → sent) for system_admin, quote version lock on terminal states, conflict-check manual rerun button, Commission Rates admin tab in Program Config, deep-link from `/internal/quotes` to the quote modal, deal-header redesign for the multi-quote model, and 47 new add-on catalogue items seeded via the admin API. **Five new migrations land in this session** (029 license qty columns + 030 customer_contact_position hotfix + 031 commission_structures is_active/timestamps + 032 quotes.include_in_pipeline / quote_versions.includes_software / includes_services / 033 quote_documents table), bumping Alembic head from 028 to **033**. **710 backend tests passing.** Last PR merged in this session: **#163**. Channel manager test user created for ongoing validation: `cmtest@test.com / TestPass123!`. **Frontend design standards codified** in PROJECT_CONTEXT.md Section 7 (canonical reference: `InternalQuotes.jsx`) plus seven new ADs (AD-26 through AD-32) covering filter-bar layout, tinted status badges, the `fp-table` standard, input/select styling, Export CSV placement, summary-card rule, and the `fp-card` wrapper convention. Phase 6 epic **FPRM-299** — Pricing Admin, Services Quote & Partner Enablement. Sprint history in CLAUDE_HISTORY.md.
+**Current state:** **Post-Sprint 20 UX and Workflow fixes complete.** Sprint 20 closed on Alembic head 028 (Deal Enhancements — see CLAUDE_HISTORY.md). PRs #128–#163 followed as an unticketed UX & workflow polish session driven by browser testing: deal form Section A + Section B SPICED restructure (combobox current-systems, evenly-split feature checkboxes, partner contact-information section), sortable columns across all 9 list views via the shared `SortableTh` component, deal multi-status lifecycle (cancelled / lost / withdrawn / won), pipeline-inclusion toggle on quotes, quote document attachment + acceptance gate, system_admin break-glass approval bypass, quote retract (accepted → sent) for system_admin, quote version lock on terminal states, conflict-check manual rerun button, Commission Rates admin tab in Program Config, deep-link from `/internal/quotes` to the quote modal, deal-header redesign for the multi-quote model, and 47 new add-on catalogue items seeded via the admin API. **Five new migrations land in this session** (029 license qty columns + 030 customer_contact_position hotfix + 031 commission_structures is_active/timestamps + 032 quotes.include_in_pipeline / quote_versions.includes_software / includes_services / 033 quote_documents table), bumping Alembic head from 028 to **033**. **711 backend tests passing.** Last PR merged in this session: **#167**. Channel manager test user created for ongoing validation: `cmtest@test.com / TestPass123!`. **Frontend design standards codified** in PROJECT_CONTEXT.md Section 7 (canonical reference: `InternalQuotes.jsx`) plus seven new ADs (AD-26 through AD-32) covering filter-bar layout, tinted status badges, the `fp-table` standard, input/select styling, Export CSV placement, summary-card rule, and the `fp-card` wrapper convention. Phase 6 epic **FPRM-299** — Pricing Admin, Services Quote & Partner Enablement. Sprint history in CLAUDE_HISTORY.md.
 
 ---
 
@@ -142,6 +142,54 @@ Per-application `draft_token` query param authorises public partner-application 
 
 ### AD-25 · Pricing catalogue is admin-maintainable
 After Sprint 19, all pricing changes (plan prices, volume discount tiers, add-on catalogue) are data operations via the `/internal/config/pricing/*` admin API — never write a new Alembic migration to change a price. The quote engine reads pricing live from the DB at runtime (per AD-18) so changes take effect immediately for all new quotes; existing quote versions are not recalculated.
+
+### AD-16 · Authenticated CSV downloads use fetch + Blob, never `window.location.href`
+CSV and authenticated file downloads use `fetch` with `Authorization: Bearer`, `response.blob()`, `URL.createObjectURL`, and a temporary `<a>` click. Tokens in URLs leak via referrer and logs.
+
+### AD-17 · Report aggregations are computed at query time, not pre-aggregated
+`/internal/reports/*` endpoints compute all metrics inline from live rows. No pre-aggregated rollup tables exist. Acceptable through Phase 5; revisit if deal volumes exceed ~50k.
+
+### AD-18 · `quote_engine.calculate_quote` is the single source of truth for software pricing
+All Fracttal pricing arithmetic lives in `backend/quote_engine.py` — a pure module with no FastAPI imports. The router is the only caller; it converts `ValueError` to HTTP 422. Never inline pricing in a router.
+
+### AD-19 · PDF artefacts are stored as base64-encoded text on the DB row
+Generated quote PDFs are stored in `quote_versions.pdf_artifact_data` (Text column, base64). Railway has no persistent local storage across deploys; DB storage keeps PDFs durable and atomically tied to their `QuoteVersion`.
+
+### AD-20 · Authenticated file downloads use fetch + Blob + `URL.createObjectURL`
+Same pattern as AD-16 — codified as the canonical standard for every authenticated download (CSV, PDF, quote documents).
+
+### AD-21 · Dynamic activation criteria resolved at runtime from `activation_checklist_config`
+`recalculate_activation` derives required criteria by querying `activation_checklist_config` for the partner's category + tier. Falls back to the hardcoded four-flag rule when no config rows match. Never re-hardcode criterion lists in a router.
+
+### AD-22 · Multi-step approval enforcement reads `approval_workflow_steps` at runtime
+`POST /applications/{id}/approve` and `POST /internal/deals/{id}/approve` are step-gated. Shared helpers in `backend/approval_helpers.py`. Single-step legacy behaviour preserved when no steps are configured. system_admin satisfies any `required_role` as a break-glass bypass.
+
+### AD-23 · Multi-currency display is render-time formatting; numeric storage is currency-agnostic
+`quotes.currency_code` is a display label only. All monetary columns store plain `Numeric`. `frontend/src/utils/currency.js` `formatCurrency(amount, code)` applies the symbol at render time. No FX conversion.
+
+### AD-24 · Quote scenario selection is independent of version selection; latest version per label wins
+`quotes.active_scenario` and `quotes.active_version` are independent fields. `GET /quotes/{id}/scenarios` groups versions by `scenario_label` and returns the highest-numbered version per label.
+
+### AD-26 · Filter bar layout standard
+All list pages render filters in a single horizontal `fp-card` filter bar: dropdowns LEFT, search RIGHT, actions FAR RIGHT. Never stack filters vertically. Reference: `InternalQuotes.jsx`.
+
+### AD-27 · Status badge style standard
+All status badges use a tinted-background scheme (never solid/opaque). `approved/active` → `#E6F4EA` / `#2E7D32`; `draft/pending` → `#F5F7FA` / `#555`; `rejected/cancelled` → `#FEECEC` / `#C62828`. Use the shared `StatusBadge` component.
+
+### AD-28 · Table implementation standard
+All data tables use the `fp-table` CSS class. Column headers use `SortableTh` wherever sorting applies. No inline `<table style={...}>` for new pages.
+
+### AD-29 · Input and select styling standard
+All filter-bar `<select>` and `<input>` elements: `{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }`. Reference: `InternalQuotes.jsx`.
+
+### AD-30 · Export CSV button standard
+Export CSV always lives top-right in the page header. Discreet ghost style: `{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', color: '#718096' }`. Never inside the filter bar.
+
+### AD-31 · Summary cards rule
+Summary metric cards belong on data-aggregation pages (Quotes, Deals pipeline) and are absent on roster/management pages (Users, Partners list, Partner Users). Cards signal "this page summarises business state."
+
+### AD-32 · `fp-card` wrapper standard
+All filter bars, form sections, and content panels use the `fp-card` CSS class. No bare `<div style={{ border: …, padding: … }}>` for content panels.
 
 ---
 
