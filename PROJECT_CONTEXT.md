@@ -1169,6 +1169,22 @@ The implementation uses the `fetch + Blob + URL.createObjectURL` pattern from AD
 
 ---
 
+### AD-33 — Centralised document repository
+
+**Decision:** `partner_documents` stores the binary as base64 `file_data` (Text) following the AD-19 pattern, plus `partner_org_id` (FK, NOT NULL), `uploaded_by` (FK → users.id), `document_type` (String — free-form, not enum-constrained), `document_name`, `file_size_bytes`, `mime_type`, `notes` (nullable), `uploaded_at`, and the existing review/approval fields (`status`, `review_notes`, `reviewed_by`, `reviewed_at`, `expiry_date`).
+
+The legacy `quote_documents` table (migration 033) is retired in Sprint 21: existing rows are backfilled into `partner_documents` + `document_references`, then the table is dropped.
+
+**Tenant isolation (SOC II / ISO 27001 boundary):** `partner_org_id` on `partner_documents` is the hard isolation boundary. Every endpoint — read, write, download, delete — enforces `document.partner_org_id == current_user.partner_org_id` for partner roles. Internal roles may read documents scoped to an explicit `partner_id` route parameter; no endpoint ever returns documents without a `partner_org_id` filter. The `document_references` join rows are always accessed through a document that has already passed the tenant check — they never expose cross-partner data. Every document read, write, download, and delete emits an audit log event.
+
+**Why:** Prior to Sprint 21, the system had two independent file-storage tables (`partner_documents` with a placeholder `file_path` string, and `quote_documents` with base64 `file_data`) with no cross-reference. This meant a file uploaded to a quote was invisible in the partner's document list, a document already on file could not be reused on a quote without re-uploading, and the portal/documents view was incomplete. A single repository with a reference table eliminates duplication, provides a complete document history per partner, and ensures the isolation boundary is enforced in exactly one place.
+
+**Consequence:** The quote acceptance gate (originally on `quote_documents`) moves to `document_references`: `PATCH /quotes/{id}/status` with `status=accepted` checks for a `document_references` row with `object_type="quote"`, `object_id=<quote_id>`, `reference_type="quote_acceptance"` that resolves to a non-deleted `partner_documents` row. Uploading a document for a quote is a two-step operation: `POST /partners/{partner_org_id}/documents` (creates the file), then `POST /document-references` (links it to the quote). The picker in `QuoteDetail.jsx` can therefore show existing partner documents alongside a "Upload new" option — no re-upload required.
+
+**Do not:** Create any new table that stores file content (`file_data` or `file_path`) outside of `partner_documents`. Do not access `document_references` rows without first verifying the parent `partner_documents.partner_org_id` against the current user's org. Do not hard-delete `partner_documents` rows that have references — soft-delete only (add `is_deleted` bool + `deleted_at` timestamp, enforce in queries). Do not add `document_type` as a Postgres ENUM — the free-string column accommodates both KYC types and transaction evidence types in one table without a migration per new type.
+
+---
+
 ## Section 7 — Frontend Design Standards
 
 ### Reference Implementation
