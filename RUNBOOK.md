@@ -1146,7 +1146,31 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 21 (2026-05-27): Centralised document repository implementation — migrations 034–036, 10 new endpoints, 4 legacy quote-document endpoints retired, 738 tests (up from 723).*
 
+---
+
+## Sprint 21 Hotfix operational notes (2026-05-27)
+
+- **If "Mark as Accepted" fails silently:** check that a `document_references`
+  row exists with `entity_type='quote'` and `entity_id=<quote_id>` linked to a
+  non-deleted `partner_documents` row. The Sprint 21 hotfix (FPRM-353)
+  **removed** the `status='approved'` requirement on the partner document --
+  the attachment itself is sufficient evidence. If the gate is still firing,
+  query both tables directly to confirm the row chain is intact.
+- **`/internal/quotes` payload includes `deal_status` per row** (Sprint 21
+  hotfix FPRM-357). External consumers that parse by column position should
+  re-index.
+- **Document attachment from a quote offers two paths in one panel**
+  (Upload New / Pick Existing). Pick Existing only creates a
+  `document_references` row -- the underlying `partner_documents` row is
+  unchanged. Removing the attachment from the quote (the Delete button on
+  the attached-docs list) removes the reference only; the underlying file
+  survives for use on other quotes / deals / records.
+
+---
+
+*Sprint 21 Hotfix (2026-05-27): FPRM-353/354/355/356/357 -- acceptance gate relaxed (no longer requires approved status), QuoteDetail document section gains Pick Existing tab, internal partner-documents page uses full-width layout, deal_status surfaced on `/internal/quotes` and rendered in both quotes tables. +2 tests (738 → 740).*
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–21 closeout, post-Sprint-20 fix session.*
-*Last updated: Sprint 21 — 2026-05-27.*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–21 closeout, Sprint 21 hotfix.*
+*Last updated: Sprint 21 Hotfix — 2026-05-27.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

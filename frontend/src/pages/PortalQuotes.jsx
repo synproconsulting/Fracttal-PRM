@@ -15,6 +15,22 @@ const STATUS_TONE = {
   cancelled: '#C62828',
 }
 
+// Sprint 21 hotfix FPRM-357: deal lifecycle tones for the new Deal Status
+// column. Same palette InternalQuotes uses so the two views stay in sync.
+const DEAL_STATUS_TONE = {
+  draft: '#64748B',
+  submitted: '#1A6EBB',
+  under_review: '#B7791F',
+  info_required: '#B7791F',
+  approved: '#1B8743',
+  won: '#1B8743',
+  rejected: '#C62828',
+  cancelled: '#C62828',
+  lost: '#C62828',
+  withdrawn: '#94A3B8',
+  expired: '#94A3B8',
+}
+
 function StatusBadge({ status }) {
   const color = STATUS_TONE[status] || '#64748B'
   return (
@@ -23,6 +39,18 @@ function StatusBadge({ status }) {
       background: `${color}22`, color, fontSize: 12, fontWeight: 600,
       textTransform: 'capitalize',
     }}>{status}</span>
+  )
+}
+
+function DealStatusBadge({ status }) {
+  if (!status) return <span style={{ color: '#94A3B8' }}>—</span>
+  const color = DEAL_STATUS_TONE[status] || '#64748B'
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 8px', borderRadius: 12,
+      background: `${color}22`, color, fontSize: 12, fontWeight: 600,
+      textTransform: 'capitalize',
+    }}>{status.replace(/_/g, ' ')}</span>
   )
 }
 
@@ -226,13 +254,14 @@ export default function PortalQuotes() {
                 <th style={{ padding: 10 }}>Currency</th>
                 <SortableTh field="grand_total_after_discount" sort={sort} onSort={toggleSort} style={{ padding: 10 }} align="right">Grand Total</SortableTh>
                 <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Status</SortableTh>
+                <th style={{ padding: 10 }}>Deal Status</th>
                 <th style={{ padding: 10, textAlign: 'center' }}>Pipeline</th>
                 <SortableTh field="created_at" sort={sort} onSort={toggleSort} style={{ padding: 10 }}>Created</SortableTh>
               </tr>
             </thead>
             <tbody>
               {visibleItems.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>No quotes found</div>
                   <div style={{ fontSize: 12 }}>Quotes will appear here once your deals have quotes created.</div>
                 </td></tr>
@@ -259,6 +288,7 @@ export default function PortalQuotes() {
                     {formatCurrency(q.grand_total_after_discount, q.currency_code)}
                   </td>
                   <td style={{ padding: 10 }}><StatusBadge status={q.status} /></td>
+                  <td style={{ padding: 10 }}><DealStatusBadge status={q.deal_status} /></td>
                   <td style={{ padding: 10, textAlign: 'center' }}>
                     <span aria-label={q.include_in_pipeline ? 'In pipeline' : 'Not in pipeline'}>
                       {q.include_in_pipeline ? '✅' : '—'}

@@ -171,6 +171,21 @@ def test_internal_quotes_returns_paginated_list(client, db_session):
     assert {it["quote_name"] for it in body["items"]} == {"Q1", "Q2", "Q3"}
 
 
+def test_internal_quotes_list_includes_deal_status(client, db_session):
+    """Sprint 21 hotfix FPRM-357: each row in GET /internal/quotes must
+    carry the parent deal's lifecycle status so the dashboard column can
+    render it."""
+    org = _org(db_session)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    _quote(client, _deal(db_session, org.id).id, name="approved-deal")
+    r = client.get("/internal/quotes")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert len(items) == 1
+    assert "deal_status" in items[0]
+    assert items[0]["deal_status"] == "approved"
+
+
 def test_internal_quotes_filter_by_status(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))

@@ -462,6 +462,52 @@ def _accept_a_quote(client, deal_id, db_session):
     return qid
 
 
+def test_accept_quote_with_pending_review_document_succeeds(client, db_session):
+    """Sprint 21 hotfix FPRM-353: the acceptance gate must accept a
+    document_references row even when the underlying PartnerDocument is
+    still ``pending_review``. Channel managers attach quote evidence
+    directly through the quote modal; the document arrives as
+    ``pending_review`` by default and there is no UI to flip it to
+    ``approved``. Requiring approved status caused the gate to fail
+    silently in production."""
+    org = _org(db_session)
+    _auth(_user(db_session, UserRole.channel_manager.value))
+    deal = _deal(db_session, org.id, status="approved")
+    qid = _make_quote(client, deal.id)
+    client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
+
+    # Seed the doc + reference but leave status at the model default
+    # (pending_review) -- mirrors what the upload endpoint actually
+    # produces for new attachments.
+    quote = db_session.query(Quote).filter(Quote.id == uuid.UUID(qid)).first()
+    uploader = db_session.query(User).first()
+    doc = PartnerDocument(
+        id=uuid.uuid4(),
+        partner_org_id=quote.partner_org_id,
+        document_type="quote_acceptance",
+        document_name="acceptance.pdf",
+        file_data="JVBERi0xLjQKJSVFT0Y=",
+        file_size_bytes=14,
+        mime_type="application/pdf",
+        uploaded_by_user_id=uploader.id,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    assert doc.status == DocumentStatus.pending_review
+    db_session.add(DocumentReference(
+        id=uuid.uuid4(),
+        document_id=doc.id,
+        entity_type="quote",
+        entity_id=uuid.UUID(qid),
+        label="quote_acceptance",
+    ))
+    db_session.commit()
+
+    r = client.patch(f"/quotes/{qid}/status", json={"status": "accepted"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "accepted"
+
+
 def test_system_admin_can_retract_accepted_quote(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))

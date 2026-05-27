@@ -39,11 +39,20 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   const [documentsLoading, setDocumentsLoading] = useState(false)
   const [currentUserRole, setCurrentUserRole] = useState(null)
   const [showAttachForm, setShowAttachForm] = useState(false)
+  // Sprint 21 hotfix FPRM-355: two-path attach flow. 'upload' lets the user
+  // upload a brand-new file and attach it in one step; 'pick' lets them
+  // pick an existing partner_document and attach a reference only.
+  const [attachMode, setAttachMode] = useState('upload')
   const [attachType, setAttachType] = useState('quote_acceptance')
   const [attachFile, setAttachFile] = useState(null)
   const [attachNotes, setAttachNotes] = useState('')
   const [attachError, setAttachError] = useState(null)
   const [attachSaving, setAttachSaving] = useState(false)
+  // Pick-existing tab state
+  const [pickList, setPickList] = useState([])
+  const [pickLoading, setPickLoading] = useState(false)
+  const [pickSearch, setPickSearch] = useState('')
+  const [pickAttachingId, setPickAttachingId] = useState(null)
   const canUploadDocument = (
     currentUserRole === 'system_admin'
     || currentUserRole === 'channel_ops_admin'
@@ -491,6 +500,74 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  // Sprint 21 hotfix FPRM-355: list existing partner documents available
+  // to attach. We fetch the full list so the user can pick any document on
+  // file (not just approved ones); the gate on quote.status='accepted' no
+  // longer requires approved status per FPRM-353.
+  const loadPickList = useCallback(async () => {
+    if (!quote?.partner_org_id || !token) return
+    setPickLoading(true)
+    try {
+      const r = await fetch(
+        `${API}/partners/${quote.partner_org_id}/documents`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!r.ok) {
+        setPickList([])
+        return
+      }
+      const body = await r.json()
+      const items = Array.isArray(body) ? body : body.items || []
+      // Hide docs already attached to this quote.
+      const attached = new Set(documents.map((d) => d.id))
+      setPickList(items.filter((d) => !attached.has(d.id)))
+    } catch {
+      setPickList([])
+    } finally {
+      setPickLoading(false)
+    }
+  }, [quote, token, documents])
+
+  // Refresh the pick list whenever the user opens the pick tab or the set
+  // of already-attached documents changes.
+  useEffect(() => {
+    if (showAttachForm && attachMode === 'pick') {
+      loadPickList()
+    }
+  }, [showAttachForm, attachMode, loadPickList])
+
+  async function handleAttachExistingDocument(doc) {
+    if (!quote?.partner_org_id) return
+    setAttachError(null)
+    setPickAttachingId(doc.id)
+    try {
+      const r = await fetch(
+        `${API}/partners/${quote.partner_org_id}/documents/${doc.id}/references`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            entity_type: 'quote',
+            entity_id: quoteId,
+            label: doc.document_type || 'quote_acceptance',
+          }),
+        },
+      )
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      }
+      await loadDocuments()
+      setShowAttachForm(false)
+      setAttachMode('upload')
+      showToast('Document attached')
+    } catch (e) {
+      setAttachError(e.message || String(e))
+    } finally {
+      setPickAttachingId(null)
+    }
+  }
+
   const _DOC_TYPE_LABEL = {
     quote_acceptance: 'Quote Acceptance',
     purchase_order: 'Purchase Order',
@@ -812,51 +889,171 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
 
         {!isReadOnly && showAttachForm && (
           <div style={{ background: '#F8FAFC', border: '1px solid #E0E4EA', borderRadius: 6, padding: 12, marginBottom: 12 }}>
-            <div style={{ display: 'grid', gap: 8 }}>
-              <label style={{ display: 'block', fontSize: 13 }}>
-                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Document type</span>
-                <select
-                  value={attachType}
-                  onChange={(e) => setAttachType(e.target.value)}
-                  style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA', minWidth: 220 }}
-                  disabled={attachSaving}
-                >
-                  <option value="quote_acceptance">Quote Acceptance</option>
-                  <option value="purchase_order">Purchase Order</option>
-                  <option value="signed_proposal">Signed Proposal</option>
-                  <option value="other">Other</option>
-                </select>
-              </label>
-              <label style={{ display: 'block', fontSize: 13 }}>
-                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>File (max 10 MB)</span>
-                <input
-                  type="file"
-                  onChange={(e) => setAttachFile(e.target.files?.[0] || null)}
-                  disabled={attachSaving}
-                />
-              </label>
-              <label style={{ display: 'block', fontSize: 13 }}>
-                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Notes (optional)</span>
-                <textarea
-                  value={attachNotes}
-                  onChange={(e) => setAttachNotes(e.target.value)}
-                  rows={2}
-                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}
-                  disabled={attachSaving}
-                />
-              </label>
-              {attachError && <div className="fp-alert fp-alert--danger" style={{ marginTop: 0 }}>{attachError}</div>}
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="fp-btn fp-btn--primary" onClick={handleAttachDocument} disabled={attachSaving}>
-                  {attachSaving ? 'Uploading…' : 'Upload'}
-                </button>
-                <button type="button" className="fp-btn fp-btn--ghost"
-                  onClick={() => { setShowAttachForm(false); setAttachFile(null); setAttachNotes(''); setAttachError(null) }}
-                  disabled={attachSaving}>
-                  Cancel
-                </button>
-              </div>
+            {/* Sprint 21 hotfix FPRM-355: two-path attach — Upload New or Pick Existing. */}
+            <div role="tablist" style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '1px solid #E0E4EA' }}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={attachMode === 'upload'}
+                onClick={() => { setAttachMode('upload'); setAttachError(null) }}
+                disabled={attachSaving || pickAttachingId !== null}
+                style={{
+                  padding: '8px 14px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: attachMode === 'upload' ? 700 : 500,
+                  color: attachMode === 'upload' ? '#1A6EBB' : '#64748B',
+                  borderBottom: attachMode === 'upload' ? '2px solid #1A6EBB' : '2px solid transparent',
+                  marginBottom: -1,
+                }}
+              >
+                Upload New
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={attachMode === 'pick'}
+                onClick={() => { setAttachMode('pick'); setAttachError(null) }}
+                disabled={attachSaving || pickAttachingId !== null}
+                style={{
+                  padding: '8px 14px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: attachMode === 'pick' ? 700 : 500,
+                  color: attachMode === 'pick' ? '#1A6EBB' : '#64748B',
+                  borderBottom: attachMode === 'pick' ? '2px solid #1A6EBB' : '2px solid transparent',
+                  marginBottom: -1,
+                }}
+              >
+                Pick Existing
+              </button>
             </div>
+
+            {attachMode === 'upload' && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <label style={{ display: 'block', fontSize: 13 }}>
+                  <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Document type</span>
+                  <select
+                    value={attachType}
+                    onChange={(e) => setAttachType(e.target.value)}
+                    style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA', minWidth: 220 }}
+                    disabled={attachSaving}
+                  >
+                    <option value="quote_acceptance">Quote Acceptance</option>
+                    <option value="purchase_order">Purchase Order</option>
+                    <option value="signed_proposal">Signed Proposal</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label style={{ display: 'block', fontSize: 13 }}>
+                  <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>File (max 10 MB)</span>
+                  <input
+                    type="file"
+                    onChange={(e) => setAttachFile(e.target.files?.[0] || null)}
+                    disabled={attachSaving}
+                  />
+                </label>
+                <label style={{ display: 'block', fontSize: 13 }}>
+                  <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Notes (optional)</span>
+                  <textarea
+                    value={attachNotes}
+                    onChange={(e) => setAttachNotes(e.target.value)}
+                    rows={2}
+                    style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA' }}
+                    disabled={attachSaving}
+                  />
+                </label>
+                {attachError && <div className="fp-alert fp-alert--danger" style={{ marginTop: 0 }}>{attachError}</div>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="fp-btn fp-btn--primary" onClick={handleAttachDocument} disabled={attachSaving}>
+                    {attachSaving ? 'Uploading…' : 'Upload'}
+                  </button>
+                  <button type="button" className="fp-btn fp-btn--ghost"
+                    onClick={() => { setShowAttachForm(false); setAttachFile(null); setAttachNotes(''); setAttachError(null); setAttachMode('upload') }}
+                    disabled={attachSaving}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {attachMode === 'pick' && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <input
+                  type="search"
+                  placeholder="Search by document name or type…"
+                  value={pickSearch}
+                  onChange={(e) => setPickSearch(e.target.value)}
+                  disabled={pickAttachingId !== null}
+                  style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA', fontSize: 13 }}
+                />
+                {attachError && <div className="fp-alert fp-alert--danger" style={{ marginTop: 0 }}>{attachError}</div>}
+                {pickLoading ? (
+                  <div style={{ color: '#64748B', fontSize: 13, padding: 8 }}>Loading existing documents…</div>
+                ) : (() => {
+                  const q = pickSearch.trim().toLowerCase()
+                  const filtered = pickList.filter((d) => !q || (
+                    (d.document_name || '').toLowerCase().includes(q) ||
+                    (d.document_type || '').toLowerCase().includes(q)
+                  ))
+                  if (filtered.length === 0) {
+                    return (
+                      <div style={{ color: '#94A3B8', fontSize: 13, padding: 8, textAlign: 'center' }}>
+                        {pickList.length === 0
+                          ? 'No existing partner documents available to attach.'
+                          : 'No documents match the search.'}
+                      </div>
+                    )
+                  }
+                  return (
+                    <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#F1F5F9', textAlign: 'left' }}>
+                          <th style={{ padding: 6 }}>Name</th>
+                          <th style={{ padding: 6 }}>Type</th>
+                          <th style={{ padding: 6 }}>Status</th>
+                          <th style={{ padding: 6 }}>Uploaded</th>
+                          <th style={{ padding: 6, textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map((d) => (
+                          <tr key={d.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                            <td style={{ padding: 6 }}>{d.document_name}</td>
+                            <td style={{ padding: 6, color: '#64748B' }}>{d.document_type}</td>
+                            <td style={{ padding: 6, color: '#64748B' }}>{d.status}</td>
+                            <td style={{ padding: 6, color: '#64748B' }}>
+                              {d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}
+                            </td>
+                            <td style={{ padding: 6, textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="fp-btn fp-btn--primary"
+                                disabled={pickAttachingId !== null}
+                                onClick={() => handleAttachExistingDocument(d)}
+                              >
+                                {pickAttachingId === d.id ? 'Attaching…' : 'Attach'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )
+                })()}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="fp-btn fp-btn--ghost"
+                    onClick={() => { setShowAttachForm(false); setAttachError(null); setAttachMode('upload'); setPickSearch('') }}
+                    disabled={pickAttachingId !== null}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
