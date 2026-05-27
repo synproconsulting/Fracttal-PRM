@@ -108,6 +108,8 @@ export default function DealList() {
 
   const [viewMode, setViewMode] = useState(readInitialView)
   const [filters, setFilters] = useState({ status: '' })
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [search, setSearch] = useState('')
   const [pipeline, setPipeline] = useState(null)
   const [deals, setDeals] = useState([])
@@ -140,22 +142,27 @@ export default function DealList() {
     }
   }, [])
 
-  // Filter-only query string. Date pickers were removed — they were
-  // broken in browser testing; the backend filter fix is deferred to the
-  // next PR.
+  // Filter-only query string for the pipeline endpoint. Both backends
+  // support from_date / to_date applied to submitted_at (pipeline has had
+  // them since Sprint 14; deal-registrations since PR #175). Date pickers
+  // were re-added to the filter bar in PR #177.
   const queryStr = useMemo(() => {
     const p = new URLSearchParams()
     if (filters.status) p.set('status', filters.status)
+    if (fromDate) p.set('from_date', fromDate)
+    if (toDate) p.set('to_date', toDate)
     const q = p.toString(); return q ? `?${q}` : ''
-  }, [filters])
+  }, [filters, fromDate, toDate])
 
   const listQueryStr = useMemo(() => {
     const p = new URLSearchParams()
     if (filters.status) p.set('status', filters.status)
+    if (fromDate) p.set('from_date', fromDate)
+    if (toDate) p.set('to_date', toDate)
     p.set('sort_by', sort.field)
     p.set('sort_dir', sort.dir)
     return `?${p.toString()}`
-  }, [filters, sort])
+  }, [filters, fromDate, toDate, sort])
 
   function fetchPipeline() {
     if (!token || !partnerOrgId) return
@@ -316,9 +323,11 @@ export default function DealList() {
         <SummaryCard label="Info Required" value={listSummary.infoRequired} color="#B7791F" />
       </div>
 
-      {/* Filter bar — single horizontal fp-card per AD-26. Status dropdown
+      {/* Filter bar — single horizontal fp-card per AD-26. Status + dates
           LEFT, free-text search RIGHT (client-side across deal_name +
-          customer_name). Date pickers removed (next PR). */}
+          customer_name). Date pickers re-added in PR #177, wired to
+          GET /partners/{id}/pipeline (already supported the params) and
+          GET /deal-registrations (gained them in PR #175). */}
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
@@ -334,6 +343,12 @@ export default function DealList() {
             <option value="withdrawn">Withdrawn</option>
             <option value="cancelled">Cancelled</option>
           </select>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+            title="From date — filters submitted_at"
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+            title="To date — filters submitted_at"
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
           <input type="search" placeholder="Search by deal or customer..."
             value={search} onChange={(e) => setSearch(e.target.value)}
             style={{ flex: 1, minWidth: 200, padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />

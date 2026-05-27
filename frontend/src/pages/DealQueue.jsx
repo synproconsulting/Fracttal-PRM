@@ -321,6 +321,12 @@ export default function DealQueue() {
     setError(null)
     const qs = new URLSearchParams({ limit: '200', sort_by: sort.field, sort_dir: sort.dir })
     if (statusFilter) qs.set('status', statusFilter)
+    // TODO: GET /internal/deals (list_internal_deals) does not yet support
+    // from_date / to_date — PR #175 added the filters to the partner-facing
+    // GET /deal-registrations (list_deals) only. The params below are sent
+    // but silently ignored until the backend list_internal_deals endpoint
+    // adopts the same date-filter shape. Frontend wiring is intentionally
+    // already in place so re-enabling becomes a single backend change.
     if (fromDate) qs.set('from_date', fromDate)
     if (toDate) qs.set('to_date', toDate)
     fetch(`${API}/internal/deals?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -408,7 +414,7 @@ export default function DealQueue() {
   }
 
   return (
-    <div className="fp-page">
+    <div>
       <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <h1 className="fp-page-title">Deals</h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -486,7 +492,7 @@ export default function DealQueue() {
 
       {!loading && visibleDeals.length > 0 && (
         <section className="fp-card">
-          <table className="fp-table">
+          <table className="fp-table" style={{ width: '100%' }}>
             <thead>
               <tr>
                 <SortableTh field="deal_name" sort={sort} onSort={toggleSort}>Deal</SortableTh>
