@@ -10,6 +10,8 @@ const TABS = [
   { key: 'criteria',   label: 'Activation Checklist' },
   { key: 'pricing',    label: 'Pricing' },
   { key: 'commission', label: 'Commission Rates' },
+  // Sprint 22 / FPRM-377 -- system_admin-only tab
+  { key: 'doc_rules',  label: 'Document Rules', adminOnly: true },
 ]
 
 const ROLE_OPTIONS = [
@@ -1364,7 +1366,7 @@ export default function ProgramConfig() {
       </p>
 
       <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid #E5E7EB', marginTop: 20 }}>
-        {TABS.map((t) => (
+        {TABS.filter((t) => !t.adminOnly || ctx?.payload?.role === 'system_admin').map((t) => (
           <button
             key={t.key}
             type="button"
@@ -1397,6 +1399,7 @@ export default function ProgramConfig() {
         {active === 'criteria'   && <ActivationTab       token={token} onUpdate={onUpdate} onError={onError} />}
         {active === 'pricing'    && <PricingTab          token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
         {active === 'commission' && <CommissionRatesTab  token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
+        {active === 'doc_rules'  && <DocumentRulesTab    token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
       </div>
 
       <Toast message={toast} />
@@ -1787,6 +1790,285 @@ function CommissionRatesTab({ token, role, onUpdate, onError }) {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+
+
+// ---- Tab 6 - Document Rules (Sprint 22 / FPRM-377) -----------------------
+//
+// Admin UI for ``document_type_rules`` -- decides which document types auto-
+// approve on upload and which require manual approval. system_admin only;
+// channel_manager / channel_ops_admin can read via the Document Rules tab
+// hidden from their tab list (the API allows read access; we just don't
+// surface it elsewhere yet).
+
+function DocumentRulesTab({ token, role, onUpdate, onError }) {
+  const [rules, setRules] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(null) // null | 'new' | { ...rule }
+  const [form, setForm] = useState({
+    document_type: '', requires_approval: true, auto_approve: false, description: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await fetch(`${API}/admin/document-type-rules`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      setRules(await r.json())
+    } catch (e) {
+      onError?.(e.message || String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [token, onError])
+
+  useEffect(() => { reload() }, [reload])
+
+  function openNew() {
+    setForm({ document_type: '', requires_approval: true, auto_approve: false, description: '' })
+    setFormError(null)
+    setEditing('new')
+  }
+
+  function openEdit(rule) {
+    setForm({
+      document_type: rule.document_type,
+      requires_approval: rule.requires_approval,
+      auto_approve: rule.auto_approve,
+      description: rule.description || '',
+    })
+    setFormError(null)
+    setEditing(rule)
+  }
+
+  function toggleAutoApprove(next) {
+    // auto_approve=true implies no manual approval needed
+    setForm((f) => ({
+      ...f,
+      auto_approve: next,
+      requires_approval: next ? false : f.requires_approval,
+    }))
+  }
+
+  async function save() {
+    setSaving(true); setFormError(null)
+    try {
+      const isNew = editing === 'new'
+      const url = isNew
+        ? `${API}/admin/document-type-rules`
+        : `${API}/admin/document-type-rules/${editing.id}`
+      const body = isNew
+        ? form
+        : {
+            requires_approval: form.requires_approval,
+            auto_approve: form.auto_approve,
+            description: form.description,
+          }
+      const r = await fetch(url, {
+        method: isNew ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (r.status === 409) {
+        setFormError(data.detail || 'A rule for this document type already exists')
+        return
+      }
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
+      setEditing(null)
+      reload()
+      onUpdate?.(isNew ? 'Rule created' : 'Rule updated')
+    } catch (e) {
+      setFormError(e.message || String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function remove(rule) {
+    if (!confirm(`Delete rule for "${rule.document_type}"? This cannot be undone.`)) return
+    try {
+      const r = await fetch(`${API}/admin/document-type-rules/${rule.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (r.status === 409) {
+        const data = await r.json().catch(() => ({}))
+        alert(data.detail || 'Document type in use -- cannot delete rule.')
+        return
+      }
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${r.status}`)
+      }
+      reload()
+      onUpdate?.('Rule deleted')
+    } catch (e) {
+      onError?.(e.message || String(e))
+    }
+  }
+
+  const total = rules.length
+  const autoApproveCount = rules.filter((r) => r.auto_approve).length
+  const requiresApprovalCount = rules.filter((r) => r.requires_approval).length
+  const canWrite = role === 'system_admin'
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <SummaryCard label="Total Rules" value={total} />
+        <SummaryCard label="Auto-Approve" value={autoApproveCount} color="#1B8743" />
+        <SummaryCard label="Requires Approval" value={requiresApprovalCount} color="#B7791F" />
+      </div>
+
+      <div className="fp-card" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <p style={{ margin: 0, color: '#5A6478', fontSize: 13 }}>
+          Document type rules govern the approval workflow for partner document uploads.
+          ``auto_approve`` flips the partner_documents.status to approved on upload.
+        </p>
+        {canWrite && (
+          <button type="button" onClick={openNew} className="fp-btn fp-btn--primary">
+            + Add Rule
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ color: '#64748B', padding: 12 }}>Loading rules…</div>
+      ) : rules.length === 0 ? (
+        <div className="fp-card" style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
+          No document rules configured yet.
+        </div>
+      ) : (
+        <table className="fp-table">
+          <thead>
+            <tr>
+              <th>Document Type</th>
+              <th>Requires Approval</th>
+              <th>Auto-Approve</th>
+              <th>Description</th>
+              <th style={{ textAlign: 'right' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rules.map((rule) => (
+              <tr key={rule.id}>
+                <td><strong>{rule.document_type}</strong></td>
+                <td>
+                  <span style={{
+                    display: 'inline-block', padding: '2px 8px', borderRadius: 12,
+                    background: rule.requires_approval ? '#FEFCE822' : '#F5F7FA',
+                    color: rule.requires_approval ? '#B7791F' : '#64748B',
+                    fontSize: 12, fontWeight: 600,
+                  }}>
+                    {rule.requires_approval ? 'Yes' : 'No'}
+                  </span>
+                </td>
+                <td>
+                  <span style={{
+                    display: 'inline-block', padding: '2px 8px', borderRadius: 12,
+                    background: rule.auto_approve ? '#E6F4EA' : '#F5F7FA',
+                    color: rule.auto_approve ? '#2E7D32' : '#64748B',
+                    fontSize: 12, fontWeight: 600,
+                  }}>
+                    {rule.auto_approve ? 'Yes' : 'No'}
+                  </span>
+                </td>
+                <td style={{ color: '#64748B', maxWidth: 360 }}>{rule.description || '-'}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {canWrite && (
+                    <>
+                      <button type="button" onClick={() => openEdit(rule)}
+                        className="fp-btn fp-btn--ghost fp-btn--sm" style={{ marginRight: 6 }}>
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => remove(rule)}
+                        className="fp-btn fp-btn--danger fp-btn--sm">
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {editing !== null && (
+        <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+          <div className="fp-modal" style={{ maxWidth: 540, width: '90vw' }}>
+            <h3 className="fp-modal__title">
+              {editing === 'new' ? 'Add Document Rule' : `Edit "${editing.document_type}"`}
+            </h3>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <label style={{ display: 'block', fontSize: 13 }}>
+                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Document type</span>
+                <input
+                  type="text"
+                  value={form.document_type}
+                  onChange={(e) => setForm({ ...form, document_type: e.target.value })}
+                  disabled={editing !== 'new' || saving}
+                  style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={form.auto_approve}
+                  onChange={(e) => toggleAutoApprove(e.target.checked)}
+                  disabled={saving} />
+                <span>Auto-approve on upload</span>
+              </label>
+              {form.auto_approve && (
+                <div style={{ fontSize: 12, color: '#64748B', marginLeft: 24 }}>
+                  Auto-approve implies no manual approval step is required.
+                </div>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={form.requires_approval}
+                  onChange={(e) => setForm({ ...form, requires_approval: e.target.checked })}
+                  disabled={saving || form.auto_approve} />
+                <span>Requires approval to count as evidence</span>
+              </label>
+              <label style={{ display: 'block', fontSize: 13 }}>
+                <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Description (optional)</span>
+                <textarea rows={3}
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  disabled={saving}
+                  style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+              </label>
+              {formError && <div className="fp-alert fp-alert--danger">{formError}</div>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" onClick={() => setEditing(null)} disabled={saving}
+                  className="fp-btn fp-btn--ghost">
+                  Cancel
+                </button>
+                <button type="button" onClick={save} disabled={saving || !form.document_type.trim()}
+                  className="fp-btn fp-btn--primary">
+                  {saving ? 'Saving...' : (editing === 'new' ? 'Create' : 'Save')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function SummaryCard({ label, value, color = '#1A6EBB' }) {
+  return (
+    <div className="fp-card" style={{ flex: 1, minWidth: 140, padding: 14 }}>
+      <div style={{ fontSize: 11, color: '#64748B', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color, marginTop: 4 }}>{value}</div>
     </div>
   )
 }

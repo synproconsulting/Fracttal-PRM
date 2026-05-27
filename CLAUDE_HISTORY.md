@@ -2333,3 +2333,79 @@ PATCH endpoint) but is decoupled from the quote acceptance gate.
    load-bearing (rename it to advertise that) or vestigial (delete it).
 
 ---
+
+## Sprint 22 -- Document Repository v2 (Phase 6)
+
+**Started:** 2026-05-27
+**Closed:** 2026-05-27
+**Fix Version ID:** 10901
+**Native Sprint ID:** 874
+**Phase 6 Epic:** FPRM-299
+
+**Stories:** 6 | **Subtasks:** 18 | **Points:** 25
+**Migration head:** 036 -> **038**
+**Tests:** 740 -> **765** (+25 new Sprint 22 cases)
+**New AD:** AD-34 (partner_documents.file_data deprecation)
+
+### Why this sprint
+
+Sprint 21 collapsed the file-storage layer into a single `partner_documents`
+store but left three rough edges that the post-sprint UI testing surfaced:
+documents could not be versioned (any "upload again" was a brand-new file),
+preview required a download round trip, and the approval workflow was hard-
+coded in Python instead of admin-maintainable. Sprint 22 closes all three
+plus the smaller items deferred from the hotfix: partner self-service delete
+and surfacing the uploader's name in list views.
+
+### What landed on `main` (single PR)
+
+| Layer | File | Change |
+|---|---|---|
+| Migration 037 | `037_document_versions.py` | Create `document_versions` (id, document_id FK CASCADE, version_number, file_data Text, file_size_bytes, mime_type, uploaded_by FK SET NULL, uploaded_at, notes, is_current); UNIQUE(document_id, version_number); ix_doc_versions_document; Postgres partial index ix_doc_versions_current. Add `current_version_number` (Integer nullable) and `version_count` (Integer NOT NULL DEFAULT 1) to `partner_documents`. Backfill every existing row with non-null `file_data` into a v1 `document_versions` row with `is_current=true`. Idempotent column/table checks. |
+| Migration 038 | `038_document_type_rules.py` | Create `document_type_rules` (id, document_type UNIQUE, requires_approval, auto_approve, description, created_at, updated_at). Seed rows: `quote_acceptance` (auto-approve, no manual approval) and `contract` (requires approval). Postgres uses `ON CONFLICT DO NOTHING`; sqlite path uses NOT EXISTS sub-select. |
+| Models | `backend/models.py` | New `DocumentVersion` model with `versions` relationship on `PartnerDocument`. New `DocumentTypeRule` model. `PartnerDocument.file_data` flagged DEPRECATED in the column comment (AD-34) -- column retained, never written by new code. New columns `current_version_number`, `version_count`. |
+| Backend router | `backend/routers/documents_router.py` | Upload endpoint now writes the file bytes to a v1 `document_versions` row (NEVER to `partner_documents.file_data`) and looks up `document_type_rules` for the `auto_approve` shortcut. Download / preview endpoints resolve via `document_versions where is_current=true` and fall back to `partner_documents.file_data` for legacy rows. New endpoints: POST/GET `/partners/{id}/documents/{doc_id}/versions`, GET `/partners/{id}/documents/{doc_id}/versions/{vid}/download`, POST `/partners/{id}/documents/{doc_id}/versions/{vid}/revert` (internal only), GET `/partners/{id}/documents/{doc_id}/preview` (inline disposition for PDF/image, attachment otherwise). New separate router `rules_router` registered at `/admin/document-type-rules` (GET/POST/PATCH/DELETE; 409 on delete-in-use). Upload accepts any document_type that matches an admin rule, in addition to the legacy DocumentType enum + DocumentTypeConfig table. `uploaded_by_name` joined into list responses. Partner-admin delete (Sprint 22 / FPRM-370) is now a soft-delete with a `document_references` 409 reference check. |
+| Backend router | `backend/routers/quotes_router.py` | Acceptance gate now consults `DocumentTypeRule.requires_approval` for the `quote_acceptance` type. The seed row has `requires_approval=false`, so the FPRM-353 hotfix behaviour is preserved by default; admins flipping the rule to true reinstates the `PartnerDocument.status='approved'` check without code changes. |
+| Tests | `backend/tests/test_document_repo_v2.py` (new) | 25 cases covering upload-writes-to-versions, auto_approve flow, new-version increment, is_current flip, status reset after re-upload, version list excludes file_data, per-version download bytes, revert with internal-only gate, rules CRUD + 409-in-use + auto_approve forces requires_approval=false, acceptance gate respecting both rule modes, preview inline/attachment branching, partner-admin delete with reference check, uploaded_by_name fallback, migration importability. |
+| Tests | `backend/tests/test_partner_documents_api.py` | Sprint-21 test updated to AD-34 -- file_data now expected on `DocumentVersion` not on `PartnerDocument`. |
+| Frontend | `frontend/src/pages/PartnerDocuments.jsx` | Version badge column (clickable when count > 1); inline version history panel; new `NewVersionModal` triggered by per-row "+ Version" button; Preview button for previewable MIME types; Delete button for partner_admin (handles 409); Uploaded By column. Internal mode adds a Revert button on non-current versions. |
+| Frontend | `frontend/src/pages/QuoteDetail.jsx` | Pick Existing tab shows version badge (e.g. `v3 of 5`) next to each document. Upload New tab fetches `/admin/document-type-rules` on mount and renders a gate-info hint ("auto-approved on upload" / "requires approval" / "no rule configured") below the document type select. |
+| Frontend | `frontend/src/pages/ProgramConfig.jsx` | New "Document Rules" tab (system_admin only, hidden via `adminOnly` filter). Summary cards (Total / Auto-Approve / Requires Approval), CRUD table with Add / Edit / Delete modal. Auto-approve toggle forces requires_approval=false in the UI to match server behaviour. 409 on delete shows inline alert. |
+| Docs | `CLAUDE.md`, `CLAUDE_HISTORY.md`, `PROJECT_CONTEXT.md`, `RUNBOOK.md` | Sprint 22 entries, AD-34 added, Jira config table extended with Sprint 21 + 22 IDs, obsolete "Jira API token 401" note removed. |
+
+### New API endpoints (9)
+
+- `POST /partners/{id}/documents/{doc_id}/versions`
+- `GET /partners/{id}/documents/{doc_id}/versions`
+- `GET /partners/{id}/documents/{doc_id}/versions/{version_id}/download`
+- `POST /partners/{id}/documents/{doc_id}/versions/{version_id}/revert`
+- `GET /partners/{id}/documents/{doc_id}/preview`
+- `GET /admin/document-type-rules`
+- `POST /admin/document-type-rules`
+- `PATCH /admin/document-type-rules/{rule_id}`
+- `DELETE /admin/document-type-rules/{rule_id}`
+
+### Lessons
+
+1. **Append-then-update beats truncate-then-rewrite for big router files.**
+   The Sprint 21 + 22 churn on `documents_router.py` taught me the routine:
+   add new endpoints at the bottom; touch existing ones only for the
+   specific behaviour change; never reflow whole sections "for clarity".
+   The diff stays reviewable and the regression surface stays small.
+2. **`auto_approve` is the right shortcut; `requires_approval` is the right
+   gate.** Two independent booleans on the rule table accommodate the
+   common shapes (auto-approve-then-skip-gate, manual-approve-then-honour-
+   gate) without inventing more workflow primitives. The UI enforces
+   `auto_approve => !requires_approval` for sanity; the API silently does
+   the same coercion if a direct caller submits both true.
+3. **`fp-page` removal carried into Sprint 22.** Sprint 21 hotfix removed
+   the class on PartnerDocuments.jsx; the version UI rebuild stayed in the
+   same plain-div layout. No new layout footguns introduced.
+4. **The acceptance gate now has a single point of truth.** Before
+   Sprint 22 the gate was a hardcoded `requires_approval=False` baked
+   into the code. Now `document_type_rules.requires_approval` drives it.
+   Admins can flip the policy via the new ProgramConfig tab without code
+   changes, and the next sprint that touches the gate doesn't have to
+   re-litigate the FPRM-353 design.
+
+---

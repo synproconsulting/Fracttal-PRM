@@ -152,7 +152,21 @@ def test_upload_with_file_data_returns_201_no_file_data_in_body(client, db):
         .first()
     )
     assert row is not None
-    assert row.file_data == _PDF_B64
+    # Sprint 22 / AD-34 -- file_data lives in document_versions now, not
+    # on partner_documents.file_data (which stays NULL for new uploads).
+    assert row.file_data is None
+    from models import DocumentVersion
+    version = (
+        db.query(DocumentVersion)
+        .filter(
+            DocumentVersion.document_id == row.id,
+            DocumentVersion.is_current.is_(True),
+        )
+        .first()
+    )
+    assert version is not None
+    assert version.file_data == _PDF_B64
+    assert version.version_number == 1
 
 
 def test_upload_with_quote_acceptance_type_accepted(client, db):
