@@ -1043,6 +1043,8 @@ _INTERNAL_DEAL_SORT = {
 def list_internal_deals(
     status: Optional[str] = Query(default=None),
     partner_org_id: Optional[uuid.UUID] = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     export: Optional[str] = Query(default=None),
@@ -1055,6 +1057,11 @@ def list_internal_deals(
 
     Supports `?status=` and `?partner_org_id=` filters. By default returns all
     statuses; the frontend filter tabs constrain to submitted / under_review.
+
+    ``from_date`` / ``to_date`` are ISO ``YYYY-MM-DD`` strings filtered against
+    ``submitted_at``. ``to_date`` is treated inclusively to end-of-day so a
+    same-day pair returns every deal submitted on that day. Bad strings return
+    422 (PR #178 fix — same shape as PR #175's fix on ``/deal-registrations``).
 
     Sort: when no ``sort_by`` query param is supplied, fall back to the
     composite ``submitted_at DESC NULLS LAST, created_at DESC`` order that
@@ -1080,6 +1087,29 @@ def list_internal_deals(
         query = query.filter(DealRegistration.status == status)
     if partner_org_id is not None:
         query = query.filter(DealRegistration.partner_org_id == partner_org_id)
+
+    if from_date:
+        try:
+            from_d = date.fromisoformat(from_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid date format for from_date. Use YYYY-MM-DD.",
+            )
+        query = query.filter(
+            DealRegistration.submitted_at >= datetime.combine(from_d, datetime.min.time())
+        )
+    if to_date:
+        try:
+            to_d = date.fromisoformat(to_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid date format for to_date. Use YYYY-MM-DD.",
+            )
+        query = query.filter(
+            DealRegistration.submitted_at <= datetime.combine(to_d, datetime.max.time())
+        )
 
     if export == "csv":
         rows_csv = (
