@@ -92,13 +92,40 @@ export default function InternalQuotes() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize])
 
+  const [exporting, setExporting] = useState(false)
+  async function exportCSV() {
+    // Sprint 21 -- GET /internal/quotes/export. AD-20: fetch + Blob.
+    setExporting(true)
+    try {
+      const qs = new URLSearchParams()
+      if (filters.status) qs.set('status', filters.status)
+      if (filters.feature_plan) qs.set('feature_plan', filters.feature_plan)
+      if (filters.search) qs.set('search', filters.search)
+      const r = await fetch(`${API}/internal/quotes/export?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'quotes_export.csv'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div>
       <div className="fp-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1 className="fp-page-title">Quotes</h1>
-        <button type="button" disabled title="CSV export coming soon"
-                style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#A0AEC0', cursor: 'not-allowed', fontWeight: 400 }}>
-          Export CSV
+        <button type="button" onClick={exportCSV} disabled={exporting}
+                style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid #CBD5E0', borderRadius: 4, backgroundColor: 'white', color: '#718096', cursor: exporting ? 'wait' : 'pointer', fontWeight: 400 }}>
+          {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
       </div>
 

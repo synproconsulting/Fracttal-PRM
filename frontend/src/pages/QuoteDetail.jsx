@@ -66,14 +66,29 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
     if (!quoteId || !token) return
     setDocumentsLoading(true)
     try {
-      const r = await fetch(`${API}/quotes/${quoteId}/documents`, {
+      // Sprint 21 / AD-33 -- documents now live in partner_documents and are
+      // linked to the quote via document_references. The new
+      // /quotes/{id}/attached-documents endpoint joins the two.
+      const r = await fetch(`${API}/quotes/${quoteId}/attached-documents`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!r.ok) {
         setDocuments([])
         return
       }
-      setDocuments(await r.json())
+      const rows = await r.json()
+      // Adapt to the shape the existing render logic expects:
+      // {id, document_type, file_name, file_size_bytes, uploaded_at, notes}
+      setDocuments(rows.map((row) => ({
+        id: row.document_id,
+        reference_id: row.reference_id,
+        partner_org_id: row.partner_org_id,
+        document_type: row.label || row.document_type,
+        file_name: row.document_name,
+        file_size_bytes: row.file_size_bytes,
+        uploaded_at: row.uploaded_at,
+        notes: null,
+      })))
     } catch {
       setDocuments([])
     } finally {
@@ -350,6 +365,9 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   const _MAX_DOC_BYTES = 10 * 1024 * 1024
 
   async function handleAttachDocument() {
+    // Sprint 21 / AD-33 -- two-step flow: upload bytes into the centralised
+    // partner_documents store, then create a document_references row linking
+    // the new document to this quote (entity_type='quote', label=attachType).
     setAttachError(null)
     if (!attachFile) {
       setAttachError('Choose a file to attach')
@@ -359,11 +377,12 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       setAttachError('File too large. Maximum upload size is 10 MB.')
       return
     }
+    if (!quote?.partner_org_id) {
+      setAttachError('Cannot attach: partner org missing from quote')
+      return
+    }
     setAttachSaving(true)
     try {
-      // Read file as base64 client-side. FileReader.readAsDataURL returns
-      // a `data:...;base64,<payload>` URL — strip the prefix to get the
-      // raw base64 the backend expects (per AD-17).
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve(reader.result)
@@ -371,19 +390,37 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
         reader.readAsDataURL(attachFile)
       })
       const b64 = String(dataUrl).split(',', 2)[1] || ''
-      const r = await fetch(`${API}/quotes/${quoteId}/documents`, {
+      const uploadRes = await fetch(`${API}/partners/${quote.partner_org_id}/documents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           document_type: attachType,
-          file_name: attachFile.name,
+          document_name: attachFile.name,
           file_data: b64,
           file_size_bytes: attachFile.size,
-          notes: attachNotes || null,
+          mime_type: attachFile.type || 'application/octet-stream',
         }),
       })
-      const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
+      const uploadBody = await uploadRes.json().catch(() => ({}))
+      if (!uploadRes.ok) {
+        throw new Error(typeof uploadBody.detail === 'string' ? uploadBody.detail : `HTTP ${uploadRes.status}`)
+      }
+      const refRes = await fetch(
+        `${API}/partners/${quote.partner_org_id}/documents/${uploadBody.id}/references`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            entity_type: 'quote',
+            entity_id: quoteId,
+            label: attachType,
+          }),
+        },
+      )
+      if (!refRes.ok) {
+        const body = await refRes.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${refRes.status}`)
+      }
       await loadDocuments()
       setShowAttachForm(false)
       setAttachFile(null)
@@ -399,7 +436,8 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
 
   async function handleDownloadDocument(doc) {
     try {
-      const r = await fetch(`${API}/quotes/${quoteId}/documents/${doc.id}/download`, {
+      const partnerOrgId = doc.partner_org_id || quote?.partner_org_id
+      const r = await fetch(`${API}/partners/${partnerOrgId}/documents/${doc.id}/download`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!r.ok) {
@@ -421,18 +459,26 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   }
 
   async function handleDeleteDocument(doc) {
-    if (!window.confirm(`Delete ${doc.file_name}? This cannot be undone.`)) return
+    // Sprint 21 / AD-33 -- detach by removing the document_references row,
+    // leaving the underlying partner_documents row intact so other links
+    // (and the file content) survive. A full hard-delete of the document
+    // happens from the Documents page.
+    if (!window.confirm(`Remove ${doc.file_name} from this quote?`)) return
     try {
-      const r = await fetch(`${API}/quotes/${quoteId}/documents/${doc.id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const partnerOrgId = doc.partner_org_id || quote?.partner_org_id
+      const r = await fetch(
+        `${API}/partners/${partnerOrgId}/documents/${doc.id}/references/${doc.reference_id}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
       if (!r.ok) {
         const body = await r.json().catch(() => ({}))
         throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`)
       }
       await loadDocuments()
-      showToast('Document deleted')
+      showToast('Document removed from quote')
     } catch (e) {
       setError(e.message || String(e))
     }

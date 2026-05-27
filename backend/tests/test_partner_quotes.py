@@ -226,6 +226,7 @@ def test_partner_quotes_export_csv(client, db_session):
     assert 'filename="my_quotes_export_' in r.headers.get("content-disposition", "")
 
     body = r.text.splitlines()
-    # Header + two data rows
-    assert body[0].startswith("Quote Name,Deal Name,Plan,Currency,Grand Total,Status,Pipeline,Active Scenario,Created")
+    # Sprint 21: Deal Status column added between Deal Name and Plan so the
+    # portal CSV mirrors the internal export shape.
+    assert body[0].startswith("Quote Name,Deal Name,Deal Status,Plan,Currency,Grand Total,Status,Pipeline,Active Scenario,Created")
     assert len(body) == 3

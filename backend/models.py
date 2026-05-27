@@ -389,7 +389,13 @@ class PartnerDocument(Base):
 
     document_name = Column(String, nullable=False)
 
-    file_path = Column(String, nullable=False)
+    # Sprint 21 / AD-33 -- migration 034 relaxed file_path to nullable so
+    # centralised uploads can store binary content in file_data instead.
+    file_path = Column(String, nullable=True)
+
+    # Sprint 21 / AD-33 -- base64-encoded file content (migration 034).
+    # Nullable so legacy file_path-only rows remain valid.
+    file_data = Column(Text, nullable=True)
 
     file_size_bytes = Column(Integer, nullable=True)
 
@@ -1598,33 +1604,36 @@ class QuoteLineItem(Base):
     )
 
 
-class QuoteDocument(Base):
-    """Migration 033 -- evidence documents attached to a quote.
+class DocumentReference(Base):
+    """Sprint 21 / AD-33 -- cross-record links pointing into the centralised
+    ``partner_documents`` store.
 
-    Pattern follows AD-17: file bytes stored as base64 in a ``Text`` column
-    rather than on disk, so the deployment stays self-contained and uploads
-    survive a Railway redeploy. ``document_type`` is a free-form string
-    (validated server-side against the spec list: ``quote_acceptance`` |
-    ``purchase_order`` | ``signed_proposal`` | ``other``) so the taxonomy
-    can be extended without a migration.
+    A single ``PartnerDocument`` row holds the file bytes; one or more
+    ``DocumentReference`` rows attach it to workflow objects (quotes, deals,
+    applications) without duplicating content. ``entity_type`` is a
+    polymorphic discriminator -- no FK constraint, since a union-typed FK
+    would require non-portable triggers.
 
-    Acceptance gate: a quote cannot transition to ``accepted`` until at
-    least one document with ``document_type == 'quote_acceptance'`` is
-    attached -- enforced in the PATCH /quotes/{id}/status handler.
+    Sprint 21 uses ``entity_type='quote'`` for quote acceptance evidence
+    (the gate in ``quotes_router.update_quote_status``). The taxonomy can
+    grow to ``deal``, ``application``, ``partner_org`` etc. without a
+    schema change -- ``label`` carries the semantic tag.
     """
 
-    __tablename__ = "quote_documents"
+    __tablename__ = "document_references"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    quote_id = Column(Uuid(as_uuid=True), ForeignKey("quotes.id"), nullable=False)
-    document_type = Column(String, nullable=False)
-    file_name = Column(String, nullable=False)
-    file_data = Column(Text, nullable=False)
-    file_size_bytes = Column(Integer, nullable=False)
-    uploaded_by = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    notes = Column(Text, nullable=True)
+    document_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(Uuid(as_uuid=True), nullable=False)
+    label = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
-        Index("ix_quote_documents_quote_id", "quote_id"),
+        Index("ix_doc_refs_entity", "entity_type", "entity_id"),
+        Index("ix_doc_refs_document", "document_id"),
     )

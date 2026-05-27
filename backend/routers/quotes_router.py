@@ -27,7 +27,6 @@ Pricing catalogue (any authenticated user, needed by the quote form UI):
     GET    /internal/config/pricing/addons        Active AddonCatalogItem rows
 """
 import base64
-import binascii
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -46,10 +45,12 @@ from database import get_db
 from models import (
     AddonCatalogItem,
     DealRegistration,
+    DocumentReference,
+    DocumentStatus,
     FeaturePlanPrice,
+    PartnerDocument,
     PartnerOrganization,
     Quote,
-    QuoteDocument,
     QuoteLineItem,
     QuoteVersion,
     User,
@@ -57,10 +58,6 @@ from models import (
 from quote_engine import calculate_quote
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 from sorting import apply_sort
-
-
-_QUOTE_DOCUMENT_TYPES = {"quote_acceptance", "purchase_order", "signed_proposal", "other"}
-_QUOTE_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 router = APIRouter(tags=["quotes"])
@@ -616,15 +613,21 @@ def update_quote_status(
             ),
         )
 
-    # Acceptance gate: an ``accepted`` quote must have a proof-of-acceptance
-    # document on file (signed order form / confirmation). Enforced here so
-    # there's no path -- API or UI -- that can flip a quote to accepted
-    # without evidence.
+    # Acceptance gate (Sprint 21 / AD-33): an ``accepted`` quote must have
+    # a proof-of-acceptance document on file (signed order form /
+    # confirmation). The document itself lives in the centralised
+    # ``partner_documents`` store; the link from the quote is captured in
+    # ``document_references`` (entity_type='quote', label='quote_acceptance').
+    # The underlying PartnerDocument must be approved -- a pending review
+    # is not yet evidence.
     if new_status == "accepted":
         has_acceptance_doc = (
-            db.query(QuoteDocument)
-            .filter(QuoteDocument.quote_id == quote.id)
-            .filter(QuoteDocument.document_type == "quote_acceptance")
+            db.query(DocumentReference)
+            .join(PartnerDocument, DocumentReference.document_id == PartnerDocument.id)
+            .filter(DocumentReference.entity_type == "quote")
+            .filter(DocumentReference.entity_id == quote.id)
+            .filter(DocumentReference.label == "quote_acceptance")
+            .filter(PartnerDocument.status == DocumentStatus.approved)
             .first()
             is not None
         )
@@ -719,216 +722,56 @@ def update_pipeline_inclusion(
     return _serialize_quote(quote)
 
 
-# ============================ Quote documents ============================
+# Sprint 21 / AD-33 -- the legacy /quotes/{quote_id}/documents endpoints have
+# been retired. Quote acceptance evidence is now uploaded once to the
+# centralised partner_documents store and linked via a document_references row
+# (entity_type='quote', label='quote_acceptance'). See:
+#   POST /partners/{partner_id}/documents
+#   POST /partners/{partner_id}/documents/{doc_id}/references
+# The acceptance gate above queries through that join.
 
 
-def _serialize_quote_document(doc: QuoteDocument) -> dict:
-    """Document payload without ``file_data``. Download endpoint serves the
-    raw bytes separately so list responses stay small even when several MB
-    of base64 content is attached."""
-    return {
-        "id": str(doc.id),
-        "quote_id": str(doc.quote_id),
-        "document_type": doc.document_type,
-        "file_name": doc.file_name,
-        "file_size_bytes": doc.file_size_bytes,
-        "uploaded_by": str(doc.uploaded_by) if doc.uploaded_by else None,
-        "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
-        "notes": doc.notes,
-    }
-
-
-@router.post("/quotes/{quote_id}/documents", status_code=201)
-def upload_quote_document(
+@router.get("/quotes/{quote_id}/attached-documents")
+def list_attached_documents(
     quote_id: uuid.UUID,
-    payload: dict = Body(...),
-    request: Request = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Attach an evidence document to a quote (proof of acceptance, PO, etc).
+    """Documents attached to a quote via document_references (AD-33).
 
-    Auth: channel_manager / channel_ops_admin / system_admin. Body fields:
-    ``document_type`` (one of ``quote_acceptance`` | ``purchase_order`` |
-    ``signed_proposal`` | ``other``), ``file_name``, ``file_data``
-    (base64-encoded bytes per AD-17), ``file_size_bytes``, ``notes``
-    (optional). 10 MB cap, validated against both the declared
-    ``file_size_bytes`` and the decoded payload length so a client can't
-    sneak past the limit by under-reporting.
+    Joins document_references -> partner_documents and returns the doc
+    metadata for each linkage. Replaces the legacy
+    GET /quotes/{quote_id}/documents endpoint that was retired in Sprint 21.
+
+    Includes each reference's id and label so the caller can offer a
+    "Remove" button without a second round-trip.
     """
-    _check_write_role(current_user)
-    quote = _get_quote_or_404(db, quote_id)
-
-    document_type = (payload.get("document_type") or "").strip()
-    if document_type not in _QUOTE_DOCUMENT_TYPES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"document_type must be one of: {sorted(_QUOTE_DOCUMENT_TYPES)}",
-        )
-    file_name = (payload.get("file_name") or "").strip()
-    if not file_name:
-        raise HTTPException(status_code=422, detail="file_name is required")
-    file_data = payload.get("file_data")
-    if not isinstance(file_data, str) or not file_data:
-        raise HTTPException(status_code=422, detail="file_data (base64) is required")
-    file_size_bytes = payload.get("file_size_bytes")
-    if not isinstance(file_size_bytes, int) or file_size_bytes <= 0:
-        raise HTTPException(
-            status_code=422, detail="file_size_bytes must be a positive integer",
-        )
-    if file_size_bytes > _QUOTE_DOCUMENT_MAX_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail="File too large. Maximum upload size is 10 MB.",
-        )
-    # Verify the base64 actually decodes and matches the declared size.
-    try:
-        decoded = base64.b64decode(file_data, validate=True)
-    except (binascii.Error, ValueError):
-        raise HTTPException(status_code=422, detail="file_data is not valid base64")
-    if len(decoded) > _QUOTE_DOCUMENT_MAX_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail="File too large. Maximum upload size is 10 MB.",
-        )
-    notes = payload.get("notes")
-    if notes is not None and not isinstance(notes, str):
-        raise HTTPException(status_code=422, detail="notes must be a string")
-
-    doc = QuoteDocument(
-        id=uuid.uuid4(),
-        quote_id=quote.id,
-        document_type=document_type,
-        file_name=file_name,
-        file_data=file_data,
-        file_size_bytes=file_size_bytes,
-        uploaded_by=current_user.id,
-        uploaded_at=datetime.utcnow(),
-        notes=notes,
-    )
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    log_audit_event(
-        db=db,
-        actor=current_user,
-        action="quote.document_uploaded",
-        object_type="quote_document",
-        object_id=doc.id,
-        after={
-            "quote_id": str(quote.id),
-            "document_type": doc.document_type,
-            "file_name": doc.file_name,
-            "file_size_bytes": doc.file_size_bytes,
-        },
-        ip_address=_client_ip(request) if request else None,
-    )
-    return _serialize_quote_document(doc)
-
-
-@router.get("/quotes/{quote_id}/documents")
-def list_quote_documents(
-    quote_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """List documents attached to a quote. Partners may read their own org's
-    documents; internal roles may read all. ``file_data`` is omitted from
-    the list payload -- callers fetch bytes via the dedicated download
-    endpoint."""
     quote = _get_quote_or_404(db, quote_id)
     _check_tenant_read(current_user, quote.partner_org_id)
-    docs = (
-        db.query(QuoteDocument)
-        .filter(QuoteDocument.quote_id == quote.id)
-        .order_by(QuoteDocument.uploaded_at.desc())
+
+    rows = (
+        db.query(DocumentReference, PartnerDocument)
+        .join(PartnerDocument, DocumentReference.document_id == PartnerDocument.id)
+        .filter(DocumentReference.entity_type == "quote")
+        .filter(DocumentReference.entity_id == quote.id)
+        .order_by(DocumentReference.created_at.desc())
         .all()
     )
-    return [_serialize_quote_document(d) for d in docs]
-
-
-@router.get("/quotes/{quote_id}/documents/{doc_id}/download")
-def download_quote_document(
-    quote_id: uuid.UUID,
-    doc_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Stream the document bytes (AD-20 -- never expose a direct URL).
-    Returns ``Content-Disposition: attachment`` with the stored
-    ``file_name``."""
-    quote = _get_quote_or_404(db, quote_id)
-    _check_tenant_read(current_user, quote.partner_org_id)
-    doc = (
-        db.query(QuoteDocument)
-        .filter(QuoteDocument.id == doc_id)
-        .filter(QuoteDocument.quote_id == quote.id)
-        .first()
-    )
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        body = base64.b64decode(doc.file_data, validate=True)
-    except (binascii.Error, ValueError):
-        # Corrupt row -- shouldn't happen in normal flow, but don't 500.
-        raise HTTPException(status_code=500, detail="Stored document is corrupt")
-    safe_name = doc.file_name.replace('"', "")
-    return Response(
-        content=body,
-        media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}"',
-            "Content-Length": str(len(body)),
-        },
-    )
-
-
-@router.delete("/quotes/{quote_id}/documents/{doc_id}")
-def delete_quote_document(
-    quote_id: uuid.UUID,
-    doc_id: uuid.UUID,
-    request: Request = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Hard-delete an attached document. Auth: ``channel_ops_admin`` or
-    ``system_admin`` only -- documents are evidence so a soft-delete would
-    leave deceased rows hanging around; the bar to delete is intentionally
-    higher than upload. Emits ``quote.document_deleted`` for audit."""
-    if UserRole(current_user.role) not in DELETE_ROLES:
-        raise HTTPException(
-            status_code=403,
-            detail="Permission denied: channel_ops_admin or system_admin required",
-        )
-    quote = _get_quote_or_404(db, quote_id)
-    doc = (
-        db.query(QuoteDocument)
-        .filter(QuoteDocument.id == doc_id)
-        .filter(QuoteDocument.quote_id == quote.id)
-        .first()
-    )
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    snapshot = {
-        "id": str(doc.id),
-        "quote_id": str(doc.quote_id),
-        "document_type": doc.document_type,
-        "file_name": doc.file_name,
-        "file_size_bytes": doc.file_size_bytes,
-    }
-    db.delete(doc)
-    db.commit()
-    log_audit_event(
-        db=db,
-        actor=current_user,
-        action="quote.document_deleted",
-        object_type="quote_document",
-        object_id=doc_id,
-        before=snapshot,
-        ip_address=_client_ip(request) if request else None,
-    )
-    return {"deleted": True, "id": str(doc_id)}
+    return [
+        {
+            "reference_id": str(ref.id),
+            "label": ref.label,
+            "document_id": str(doc.id),
+            "document_name": doc.document_name,
+            "document_type": doc.document_type,
+            "status": getattr(doc.status, "value", doc.status),
+            "mime_type": doc.mime_type,
+            "file_size_bytes": doc.file_size_bytes,
+            "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+            "partner_org_id": str(doc.partner_org_id),
+        }
+        for ref, doc in rows
+    ]
 
 
 @router.get("/quotes/{quote_id}/versions")
@@ -1549,6 +1392,84 @@ def list_internal_quotes(
     }
 
 
+# ===================== Sprint 21 -- Internal quotes CSV export =====================
+
+
+@router.get("/internal/quotes/export")
+def export_internal_quotes_csv(
+    status: Optional[str] = None,
+    partner_org_id: Optional[uuid.UUID] = None,
+    feature_plan: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stream every internal quote matching the dashboard filters as CSV.
+
+    Mirrors the filter surface of GET /internal/quotes so the "Export CSV"
+    button in InternalQuotes.jsx round-trips the same view. Internal
+    write roles only (channel_manager / channel_ops_admin / system_admin)
+    -- partner-side users get their own export via
+    ``/partners/{id}/quotes?export=csv``.
+
+    Closes the Sprint 16 TODO that left the internal quotes dashboard
+    without an export path.
+    """
+    if UserRole(current_user.role) not in WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    base = (
+        db.query(Quote, QuoteVersion, DealRegistration, PartnerOrganization)
+        .join(
+            QuoteVersion,
+            and_(
+                QuoteVersion.quote_id == Quote.id,
+                QuoteVersion.version_number == Quote.active_version,
+                QuoteVersion.is_deleted.is_(False),
+            ),
+        )
+        .join(DealRegistration, DealRegistration.id == Quote.deal_id)
+        .join(PartnerOrganization, PartnerOrganization.id == Quote.partner_org_id)
+    )
+    if status:
+        base = base.filter(Quote.status == status)
+    if partner_org_id:
+        base = base.filter(Quote.partner_org_id == partner_org_id)
+    if feature_plan:
+        base = base.filter(QuoteVersion.feature_plan == feature_plan)
+    if search:
+        like = f"%{search}%"
+        base = base.filter(or_(Quote.quote_name.ilike(like), DealRegistration.deal_name.ilike(like)))
+    base = base.order_by(Quote.created_at.desc())
+
+    rows = base.all()
+    return csv_response(
+        "quotes_export",
+        [
+            "Quote Name", "Deal Name", "Deal Status", "Partner",
+            "Plan", "Currency", "Grand Total", "Status",
+            "Pipeline", "Active Scenario", "Active Version", "Created",
+        ],
+        [
+            [
+                quote.quote_name or "Untitled Quote",
+                deal.deal_name or "",
+                deal.status or "",
+                partner.legal_name or "",
+                version.feature_plan or "",
+                quote.currency_code or "",
+                float(version.grand_total_after_discount),
+                quote.status or "",
+                "Yes" if bool(quote.include_in_pipeline) else "No",
+                quote.active_scenario or "",
+                quote.active_version,
+                quote.created_at.date().isoformat() if quote.created_at else "",
+            ]
+            for quote, version, deal, partner in rows
+        ],
+    )
+
+
 # ===================== Sprint 18 — Partner quote history =====================
 
 
@@ -1621,13 +1542,14 @@ def list_partner_quotes(
         return csv_response(
             "my_quotes_export",
             [
-                "Quote Name", "Deal Name", "Plan", "Currency",
+                "Quote Name", "Deal Name", "Deal Status", "Plan", "Currency",
                 "Grand Total", "Status", "Pipeline", "Active Scenario", "Created",
             ],
             [
                 [
                     quote.quote_name or "Untitled Quote",
                     deal.deal_name or "",
+                    deal.status or "",
                     version.feature_plan or "",
                     quote.currency_code or "",
                     float(version.grand_total_after_discount),
@@ -1640,12 +1562,17 @@ def list_partner_quotes(
             ],
         )
 
+    # Sprint 21 -- deal_status now surfaced on the partner quote list
+    # (closes TODO from PR #172). The portal "My Quotes" view needs to
+    # distinguish quotes whose deal is still in the pipeline from quotes
+    # sitting on won / rejected / cancelled deals without an extra fetch.
     items = [
         {
             "id": str(quote.id),
             "quote_name": quote.quote_name or "Untitled Quote",
             "deal_id": str(quote.deal_id),
             "deal_name": deal.deal_name or "—",
+            "deal_status": deal.status,
             "currency_code": quote.currency_code,
             "feature_plan": version.feature_plan,
             "grand_total_after_discount": float(version.grand_total_after_discount),

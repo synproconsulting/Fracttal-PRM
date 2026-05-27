@@ -1104,11 +1104,49 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 ---
 
+## Sprint 21 operational notes — Centralised Document Repository (2026-05-27)
+
+**Migration head:** 033 → **036**. Migrations 034 (extend `partner_documents` with
+`file_data`), 035 (create `document_references`), 036 (backfill + drop
+`quote_documents`).
+
+- **Where do quote acceptance files live now?** In `partner_documents`. The
+  `quote_documents` table no longer exists post-migration 036. If a quote shows
+  as missing its acceptance evidence after deploy, check the join:
+  `SELECT * FROM document_references WHERE entity_type='quote' AND entity_id=<quote_id>`.
+- **`file_data` is never returned in list / metadata / patch responses by
+  design (AD-33).** Use the dedicated `GET /partners/{id}/documents/{doc_id}/download`
+  endpoint to retrieve binary content. If a client appears to lose file content,
+  check the request path -- a list-endpoint response will never include bytes.
+- **The acceptance gate now requires `status='approved'` on the underlying
+  document.** Uploading a doc and creating a reference is not enough -- an
+  internal user must approve the document (PATCH status=approved) before the
+  quote can transition to accepted. This is intentional (a pending review is
+  not yet evidence) and is a behaviour change vs Sprint 20.
+- **`/internal/quotes/export` is the canonical CSV export for the internal
+  quote dashboard** (closes the Sprint 16 TODO). It mirrors the filter surface
+  of `GET /internal/quotes` so the same view round-trips to CSV. Partner-side
+  `GET /partners/{id}/quotes?export=csv` now also includes a `Deal Status`
+  column -- if a downstream consumer parses by column position, update them.
+- **Four legacy quote-document endpoints (`POST`, `GET`, `GET .../download`,
+  `DELETE` under `/quotes/{quote_id}/documents`) have been removed.** Any
+  external consumer must switch to the centralised path
+  `/partners/{partner_id}/documents/...` plus references.
+- **Jira token in `.env` is currently 401.** The Sprint 21 Phase A (fix
+  version + native sprint + 5 stories) was therefore not auto-created; rotate
+  the token at id.atlassian.com before the next sprint so the prompt
+  template's API path works again. The PR for Sprint 21 uses a placeholder
+  `FPRM-AD33` slug instead of a concrete story key.
+
+---
+
 *Post-Sprint-20 UX & Workflow Fixes complete: PRs #128–#163 — 2026-05-22.*
 
 *Frontend fix session 2026-05-26: AD-33 centralised document repository decision recorded; CI trigger extended to docs/** branches (PR #170); design standardisation pass A completed (PRs #171–#173); PROMPT_TEMPLATE.md created as new canonical document; Fix PR B1 (PR #174): draft quote lock bug fixed, portal/quotes modal restored, Approved→Accepted rename completed; Fix PR B2 (PR #175): backend date filter bug fixed. Fix PR C (PR #176): DealQueue.jsx redesign, Won card dollar value, Accepted Pipeline label, InternalHome Accepted label. Fix PR D (PR #177): DealQueue full-width layout, date filter wiring fixes on both deal pages. Fix PR E (PR #178): GET /internal/deals date filter backend fix (+4 tests, 719→723). Pre-Sprint-21 UI testing session fully complete.*
 
+*Sprint 21 (2026-05-27): Centralised document repository implementation — migrations 034–036, 10 new endpoints, 4 legacy quote-document endpoints retired, 738 tests (up from 723).*
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–20 closeout, post-Sprint-20 fix session.*
-*Last updated: Frontend Fix Session — 2026-05-26 (PRs #169–#178).*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–21 closeout, post-Sprint-20 fix session.*
+*Last updated: Sprint 21 — 2026-05-27.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
