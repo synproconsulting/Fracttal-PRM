@@ -34,8 +34,11 @@ import models  # noqa: F401
 from models import (
     AuditLog,
     DealRegistration,
+    DocumentReference,
+    DocumentStatus,
     FeaturePlanPrice,
     PartnerCategory,
+    PartnerDocument,
     PartnerOrganization,
     PartnerStatus,
     ProgramType,
@@ -76,6 +79,7 @@ def db_session(engine):
     finally:
         s.rollback()
         for tbl in (
+            "document_references", "partner_documents",
             "quote_line_items", "quote_versions", "quotes",
             "addon_catalog_items", "volume_discount_tiers", "feature_plan_prices",
             "deal_registrations", "users", "partner_organizations", "audit_log",
@@ -178,24 +182,38 @@ def _quote_total(client, quote_id):
     return float(r.json()["active_version_data"]["grand_total_after_discount"])
 
 
-# Migration 033 / PR-after-156: PATCH /quotes/{id}/status -> accepted now
-# requires a ``quote_acceptance`` document on the quote. The shared helper
-# below attaches a minimal one so existing transition tests can still
-# accept a quote without each test caring about the file payload.
-import base64 as _base64  # noqa: E402
-
-_TEST_PDF_BYTES = b"%PDF-1.4\n%%EOF"
-
-
-def _attach_acceptance_doc(client, quote_id):
-    r = client.post(f"/quotes/{quote_id}/documents", json={
-        "document_type": "quote_acceptance",
-        "file_name": "acceptance.pdf",
-        "file_data": _base64.b64encode(_TEST_PDF_BYTES).decode(),
-        "file_size_bytes": len(_TEST_PDF_BYTES),
-    })
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
+# Sprint 21 / AD-33: PATCH /quotes/{id}/status -> accepted requires a
+# quote_acceptance document linked via the centralised partner_documents
+# store. The helper below seeds the row + reference directly through the
+# session so individual transition tests don't have to wire the full
+# upload flow.
+def _attach_acceptance_doc(db_session, quote_id):
+    quote = db_session.query(Quote).filter(Quote.id == uuid.UUID(str(quote_id))).first()
+    assert quote is not None, f"quote {quote_id} not found in test session"
+    uploader = db_session.query(User).first()
+    doc = PartnerDocument(
+        id=uuid.uuid4(),
+        partner_org_id=quote.partner_org_id,
+        document_type="quote_acceptance",
+        document_name="acceptance.pdf",
+        file_data="JVBERi0xLjQKJSVFT0Y=",
+        file_size_bytes=14,
+        mime_type="application/pdf",
+        uploaded_by_user_id=uploader.id,
+        status=DocumentStatus.approved,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    ref = DocumentReference(
+        id=uuid.uuid4(),
+        document_id=doc.id,
+        entity_type="quote",
+        entity_id=uuid.UUID(str(quote_id)),
+        label="quote_acceptance",
+    )
+    db_session.add(ref)
+    db_session.commit()
+    return str(doc.id)
 
 
 # ============================================================
@@ -203,13 +221,13 @@ def _attach_acceptance_doc(client, quote_id):
 # ============================================================
 
 
-def _accept_one_quote(client, deal_id):
+def _accept_one_quote(client, deal_id, db_session):
     """Helper: create + transition a quote to ``accepted`` on the deal so
     the won endpoint's "at least one accepted quote" guard is satisfied.
     Returns the quote id."""
     q = _make_quote(client, deal_id)
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
-    _attach_acceptance_doc(client, q)
+    _attach_acceptance_doc(db_session, q)
     client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     return q
 
@@ -218,7 +236,7 @@ def test_approved_to_won_allowed(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id, status="approved")
-    _accept_one_quote(client, deal.id)
+    _accept_one_quote(client, deal.id, db_session)
     r = client.post(f"/internal/deals/{deal.id}/won")
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "won"
@@ -260,7 +278,7 @@ def test_won_is_terminal_via_status_patch(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id, status="approved")
-    _accept_one_quote(client, deal.id)
+    _accept_one_quote(client, deal.id, db_session)
     client.post(f"/internal/deals/{deal.id}/won")
     for target in ("lost", "withdrawn"):
         r = client.patch(f"/deal-registrations/{deal.id}/status", json={"status": target})
@@ -291,7 +309,7 @@ def test_won_cascade_cancels_draft_and_sent_preserves_accepted(client, db_sessio
     q_acc = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q_sent}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
-    _attach_acceptance_doc(client, q_acc)
+    _attach_acceptance_doc(db_session, q_acc)
     client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
 
     r = client.post(f"/internal/deals/{deal.id}/won")
@@ -312,7 +330,7 @@ def test_won_cascade_clears_include_in_pipeline(client, db_session):
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/pipeline-inclusion", json={"include_in_pipeline": True})
     assert client.get(f"/quotes/{q}").json()["include_in_pipeline"] is True
-    _accept_one_quote(client, deal.id)  # satisfies the new accepted-quote guard
+    _accept_one_quote(client, deal.id, db_session)  # satisfies the new accepted-quote guard
 
     client.post(f"/internal/deals/{deal.id}/won")
     after = client.get(f"/quotes/{q}").json()
@@ -325,7 +343,7 @@ def test_won_cascade_emits_quote_cancelled_audit_with_note(client, db_session):
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id, status="approved")
     q = _make_quote(client, deal.id)
-    _accept_one_quote(client, deal.id)  # satisfies the new accepted-quote guard
+    _accept_one_quote(client, deal.id, db_session)  # satisfies the new accepted-quote guard
 
     client.post(f"/internal/deals/{deal.id}/won")
     audit = (
@@ -401,7 +419,7 @@ def test_accept_quote_returns_suggest_mark_won_when_no_pending_quotes(client, db
     deal = _deal(db_session, org.id, status="approved")
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
-    _attach_acceptance_doc(client, q)
+    _attach_acceptance_doc(db_session, q)
 
     r = client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     assert r.status_code == 200, r.text
@@ -417,7 +435,7 @@ def test_accept_quote_returns_no_suggest_when_pending_quote_exists(client, db_se
     q_acc = _make_quote(client, deal.id)
     _make_quote(client, deal.id)  # second quote, stays draft
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
-    _attach_acceptance_doc(client, q_acc)
+    _attach_acceptance_doc(db_session, q_acc)
 
     r = client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
     assert r.status_code == 200
@@ -438,7 +456,7 @@ def test_won_deals_excluded_from_pipeline_total(client, db_session):
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/pipeline-inclusion", json={"include_in_pipeline": True})
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
-    _attach_acceptance_doc(client, q)
+    _attach_acceptance_doc(db_session, q)
     client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     # Pre-won: the accepted quote IS in pipeline_total
     pre = client.get("/internal/quotes").json()["summary"]
@@ -455,7 +473,7 @@ def test_closed_won_value_sums_accepted_quotes_on_won_deals(client, db_session):
     deal = _deal(db_session, org.id, status="approved")
     q = _make_quote(client, deal.id)
     client.patch(f"/quotes/{q}/status", json={"status": "sent"})
-    _attach_acceptance_doc(client, q)
+    _attach_acceptance_doc(db_session, q)
     client.patch(f"/quotes/{q}/status", json={"status": "accepted"})
     expected = round(_quote_total(client, q), 2)
 

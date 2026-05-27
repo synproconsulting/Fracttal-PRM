@@ -82,6 +82,19 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
     setFile(f)
   }
 
+  async function readFileAsBase64(f) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = String(reader.result || '')
+        const comma = result.indexOf(',')
+        resolve(comma >= 0 ? result.slice(comma + 1) : result)
+      }
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsDataURL(f)
+    })
+  }
+
   async function onUpload(e) {
     e.preventDefault()
     if (!file) {
@@ -91,13 +104,16 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
     setBusy(true)
     setError(null)
     try {
+      // Sprint 21 / AD-33 -- upload binary content as base64 into the
+      // centralised partner_documents store.
+      const fileData = await readFileAsBase64(file)
       const r = await fetch(`${API}/partners/${partnerId}/documents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           document_type: docType,
           document_name: file.name,
-          file_path: `/uploads/${partnerId}/${file.name}`,
+          file_data: fileData,
           file_size_bytes: file.size,
           mime_type: file.type,
         }),
@@ -321,6 +337,30 @@ export default function PartnerDocuments() {
     }
   }
 
+  async function downloadDoc(doc) {
+    // Sprint 21 / AD-33 -- fetch + Blob + URL.createObjectURL per AD-20.
+    try {
+      const r = await fetch(`${API}/partners/${partnerOrgId}/documents/${doc.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = doc.document_name || 'document'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const content = (
     <>
       <div className="fp-page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -408,6 +448,7 @@ export default function PartnerDocuments() {
               <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
               <SortableTh field="created_at" sort={sort} onSort={toggleSort}>Uploaded</SortableTh>
               <SortableTh field="expiry_date" sort={sort} onSort={toggleSort}>Expires</SortableTh>
+              <th>Download</th>
               {isInternal && <th>Actions</th>}
             </tr>
           </thead>
@@ -426,6 +467,16 @@ export default function PartnerDocuments() {
                 </td>
                 <td>{d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}</td>
                 <td>{d.expiry_date || '—'}</td>
+                <td>
+                  <button
+                    type="button"
+                    onClick={() => downloadDoc(d)}
+                    className="fp-btn fp-btn--ghost fp-btn--sm"
+                    title="Download the original file"
+                  >
+                    Download
+                  </button>
+                </td>
                 {isInternal && (
                   <td>
                     {d.status === 'pending_review' ? (

@@ -2167,3 +2167,86 @@ All UI testing items from the pre-Sprint-21 session resolved. Export CSV for int
 723 (711 prior + 8 added in PR #175 + 4 added in PR #178)
 
 ---
+
+## Sprint 21 — Centralised Document Repository (Phase 6, AD-33)
+
+**Started:** 2026-05-27
+**Closed:** 2026-05-27
+**Phase 6 Epic:** FPRM-299
+**Migration head:** 033 → **036**
+**Tests:** 723 → **738**
+
+### Why this sprint
+
+Two systems were holding partner-scoped file bytes side-by-side: `partner_documents`
+for compliance / legal / NDA docs, and `quote_documents` (added in migration 033)
+for quote acceptance evidence. Each had its own endpoints, its own upload
+ceremony, its own tenant-isolation checks. Duplicate stores invite duplicate bugs,
+and the `quote_documents` path lacked the `partner_org_id` boundary that
+`partner_documents` enforces -- a future deal-attachment feature would have made
+the divergence worse. Sprint 21 collapses both into one repository, codified as
+AD-33 in PROJECT_CONTEXT.md Section 6.
+
+### What landed on `main` (single PR)
+
+| Layer | File | Change |
+|---|---|---|
+| Migration 034 | `backend/alembic/versions/034_extend_partner_documents.py` | Add `file_data` Text nullable; relax `file_path` to nullable. Idempotent column-existence checks. |
+| Migration 035 | `backend/alembic/versions/035_create_document_references.py` | Create `document_references` table with `(entity_type, entity_id)` and `document_id` indexes; FK to `partner_documents.id` ON DELETE CASCADE. |
+| Migration 036 | `backend/alembic/versions/036_backfill_drop_quote_documents.py` | Backfill every `quote_documents` row into `partner_documents` (status `approved`) plus a `document_references` row (`entity_type='quote'`); drop `quote_documents` table. Postgres uses an explicit cast to `document_status` enum, generic dialects pass the string through (kept for sqlite test paths). |
+| Model | `backend/models.py` | `PartnerDocument`: `file_data` Text nullable + `file_path` nullable. New `DocumentReference` model. `QuoteDocument` removed. |
+| Backend router | `backend/routers/documents_router.py` | Rewritten as the central documents API. New endpoints: single-doc metadata, download, delete, plus 3 references endpoints. `file_data` excluded from every metadata response via a centralised column allow-list. Upload accepts both `file_data` (new) and `file_path` (legacy compat). 10 MB cap on both declared and decoded size. |
+| Backend router | `backend/routers/quotes_router.py` | Acceptance gate switched from `QuoteDocument.quote_id` lookup to a join through `DocumentReference` + `PartnerDocument` requiring `status='approved'`. 4 legacy `/quotes/{quote_id}/documents` endpoints retired (upload, list, download, delete). New `GET /quotes/{quote_id}/attached-documents` exposes the join result for the QuoteDetail UI. New `GET /internal/quotes/export` CSV endpoint (closes Sprint 16 TODO). `GET /partners/{id}/quotes` payload + CSV now include `deal_status` (closes the PR #172 TODO). |
+| Tests | `backend/tests/test_partner_documents_api.py` (new) | 17 cases covering upload/download/list/patch/delete/references + tenant isolation + 10 MB cap + the no-`file_data` leak guarantee. |
+| Tests | `backend/tests/test_migration_034_035.py` (new) | Model-level guarantees for migrations 034 + 035 plus an importability guard on each of 034/035/036 so a syntax error fails CI even though Postgres-specific casts can't run against sqlite. |
+| Tests updated | `backend/tests/test_deal_won_cascade.py`, `test_pipeline_toggle_and_terminal_statuses.py`, `test_internal_quotes.py`, `test_partner_quotes.py` | Acceptance-document helpers rewritten to seed `PartnerDocument` + `DocumentReference` directly. CSV header assertion updated for new `Deal Status` column. |
+| Tests removed | `backend/tests/test_quote_documents.py` | Endpoints retired; functionality now covered by `test_partner_documents_api.py`. |
+| Frontend | `frontend/src/pages/PartnerDocuments.jsx` | Upload modal now reads files as base64 client-side and posts `file_data`. New Download column wired to `/partners/{id}/documents/{doc_id}/download` via fetch+Blob (AD-20). |
+| Frontend | `frontend/src/pages/QuoteDetail.jsx` | Document section rewired: `loadDocuments` calls the new `/quotes/{id}/attached-documents`; attach is now a two-step upload + create-reference flow against the partner_documents store; detach removes the document_references row only (the underlying file survives for other links). Download uses the centralised download endpoint. |
+| Frontend | `frontend/src/pages/InternalQuotes.jsx` | Export CSV button enabled, wired to `/internal/quotes/export` via fetch+Blob with filter params (AD-20 / AD-30). |
+| Docs | `CLAUDE.md`, `PROJECT_CONTEXT.md`, `RUNBOOK.md`, `CLAUDE_HISTORY.md` | Sprint 21 entry, AD-33 surfaced in CLAUDE.md highlights, current-state paragraph rewritten, known-issue note added about the rotated Jira token. |
+
+### New API endpoints (net +5)
+
+Added (10):
+
+- `POST /partners/{partner_id}/documents` (extended to accept `file_data`)
+- `GET /partners/{partner_id}/documents` (extended -- `?status=` filter)
+- `GET /partners/{partner_id}/documents/{doc_id}` (new -- single-doc metadata)
+- `GET /partners/{partner_id}/documents/{doc_id}/download` (new)
+- `DELETE /partners/{partner_id}/documents/{doc_id}` (new)
+- `GET /partners/{partner_id}/documents/{doc_id}/references` (new)
+- `POST /partners/{partner_id}/documents/{doc_id}/references` (new)
+- `DELETE /partners/{partner_id}/documents/{doc_id}/references/{ref_id}` (new)
+- `GET /quotes/{quote_id}/attached-documents` (new)
+- `GET /internal/quotes/export` (new)
+
+Retired (4): `POST` / `GET` / `GET .../download` / `DELETE` on `/quotes/{quote_id}/documents/...`
+
+### Lessons
+
+1. **One table, one boundary.** The pre-Sprint-21 `quote_documents` path enforced
+   tenant isolation indirectly (via a `quote.partner_org_id` join). Moving the
+   bytes into `partner_documents` puts the boundary on the row itself and lets a
+   single helper (`_load_doc_or_404`) enforce it. Anything that crosses table
+   boundaries to compute "may this caller see this row?" is fragile -- collapse
+   it where you can.
+2. **A migration that drops a table needs the model and the router gone in the
+   same commit.** Half-deletes (e.g. migration drops `quote_documents` but the
+   ORM still imports `QuoteDocument`) break service startup. The fix is to treat
+   the migration + model removal + router removal + test cleanup as one atomic
+   landing. Sprint 21's single-PR approach makes this enforceable.
+3. **Tests that mark quotes accepted via the API need a helper that abstracts
+   the gate, not a duplicated upload snippet.** Four test files had near-
+   identical `_attach_acceptance_doc` helpers calling the now-retired endpoint;
+   one missed update would have rotted silently. The Sprint 21 rewrite seeds
+   the document + reference directly through the session, which is both faster
+   and decoupled from the upload API's evolution.
+4. **The Jira token rots silently between sessions.** The Sprint 21 prompt's
+   Phase A (fix version + native sprint + 5 stories) couldn't run because
+   `JIRA_API_TOKEN` returns 401. The hard rule was satisfied by the PR-level
+   structure (one PR, all changes traceable through the diff), but future
+   sprints should pre-flight the token in the prompt and fail fast if it's
+   rejected -- recorded as a known issue in CLAUDE.md.
+
+---

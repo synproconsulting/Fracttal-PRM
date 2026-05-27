@@ -19,8 +19,11 @@ import models  # noqa: F401
 from models import (
     AddonCatalogItem,
     DealRegistration,
+    DocumentReference,
+    DocumentStatus,
     FeaturePlanPrice,
     PartnerCategory,
+    PartnerDocument,
     PartnerOrganization,
     ProgramType,
     Quote,
@@ -57,6 +60,7 @@ def db_session(engine):
     finally:
         s.rollback()
         for tbl in (
+            "document_references", "partner_documents",
             "quote_line_items", "quote_versions", "quotes",
             "addon_catalog_items", "volume_discount_tiers", "feature_plan_prices",
             "deal_registrations", "users", "partner_organizations", "audit_log",
@@ -211,15 +215,23 @@ def test_internal_quotes_summary_counts(client, db_session):
     q_acc = _quote(client, _deal(db_session, org.id).id)
     client.patch(f"/quotes/{q_sent}/status", json={"status": "sent"})
     client.patch(f"/quotes/{q_acc}/status", json={"status": "sent"})
-    # Migration 033: PATCH -> accepted now requires a quote_acceptance doc.
-    import base64 as _b64
-    _pdf = b"%PDF-1.4\n%%EOF"
-    client.post(f"/quotes/{q_acc}/documents", json={
-        "document_type": "quote_acceptance",
-        "file_name": "x.pdf",
-        "file_data": _b64.b64encode(_pdf).decode(),
-        "file_size_bytes": len(_pdf),
-    })
+    # Sprint 21 / AD-33: seed quote_acceptance directly into partner_documents
+    # + document_references so the gate clears.
+    quote_row = db_session.query(Quote).filter(Quote.id == uuid.UUID(q_acc)).first()
+    uploader = db_session.query(User).first()
+    doc = PartnerDocument(
+        id=uuid.uuid4(), partner_org_id=quote_row.partner_org_id,
+        document_type="quote_acceptance", document_name="x.pdf",
+        file_data="JVBERi0xLjQKJSVFT0Y=", file_size_bytes=14,
+        mime_type="application/pdf", uploaded_by_user_id=uploader.id,
+        status=DocumentStatus.approved,
+    )
+    db_session.add(doc); db_session.flush()
+    db_session.add(DocumentReference(
+        id=uuid.uuid4(), document_id=doc.id, entity_type="quote",
+        entity_id=uuid.UUID(q_acc), label="quote_acceptance",
+    ))
+    db_session.commit()
     client.patch(f"/quotes/{q_acc}/status", json={"status": "accepted"})
     # Migration 032: pipeline_total now requires explicit include_in_pipeline=True.
     for qid in (q_draft, q_sent, q_acc):

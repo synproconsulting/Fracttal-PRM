@@ -36,9 +36,12 @@ import models  # noqa: F401
 from models import (
     AuditLog,
     DealRegistration,
+    DocumentReference,
+    DocumentStatus,
     FeaturePlanPrice,
     PartnerActivationChecklist,
     PartnerCategory,
+    PartnerDocument,
     PartnerOrganization,
     PartnerStatus,
     ProgramType,
@@ -79,6 +82,7 @@ def db_session(engine):
     finally:
         s.rollback()
         for tbl in (
+            "document_references", "partner_documents",
             "quote_line_items", "quote_versions", "quotes",
             "addon_catalog_items", "volume_discount_tiers", "feature_plan_prices",
             "partner_activation_checklists",
@@ -201,20 +205,12 @@ def test_sent_to_cancelled_allowed(client, db_session):
 
 
 def test_accepted_to_cancelled_not_allowed(client, db_session):
-    import base64 as _b64
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     qid = _make_quote(client, _deal(db_session, org.id).id)
     client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
-    # Migration 033 / acceptance-doc gate: a quote_acceptance document
-    # must exist before flipping to accepted.
-    _pdf = b"%PDF-1.4\n%%EOF"
-    client.post(f"/quotes/{qid}/documents", json={
-        "document_type": "quote_acceptance",
-        "file_name": "x.pdf",
-        "file_data": _b64.b64encode(_pdf).decode(),
-        "file_size_bytes": len(_pdf),
-    })
+    # Sprint 21 / AD-33: seed the acceptance evidence in partner_documents.
+    _seed_quote_acceptance(db_session, qid)
     client.patch(f"/quotes/{qid}/status", json={"status": "accepted"})
     r = client.patch(f"/quotes/{qid}/status", json={"status": "cancelled"})
     assert r.status_code == 422
@@ -423,23 +419,44 @@ def test_pipeline_report_excludes_lost_and_withdrawn(client, db_session):
 # ============================================================
 
 
-import base64 as _b64  # noqa: E402
+def _seed_quote_acceptance(db_session, quote_id):
+    """Sprint 21 / AD-33 helper: directly seed an approved partner_documents
+    row plus a document_references link so the acceptance gate clears
+    without going through the upload API."""
+    quote = db_session.query(Quote).filter(Quote.id == uuid.UUID(str(quote_id))).first()
+    assert quote is not None
+    uploader = db_session.query(User).first()
+    doc = PartnerDocument(
+        id=uuid.uuid4(),
+        partner_org_id=quote.partner_org_id,
+        document_type="quote_acceptance",
+        document_name="acceptance.pdf",
+        file_data="JVBERi0xLjQKJSVFT0Y=",
+        file_size_bytes=14,
+        mime_type="application/pdf",
+        uploaded_by_user_id=uploader.id,
+        status=DocumentStatus.approved,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    ref = DocumentReference(
+        id=uuid.uuid4(),
+        document_id=doc.id,
+        entity_type="quote",
+        entity_id=uuid.UUID(str(quote_id)),
+        label="quote_acceptance",
+    )
+    db_session.add(ref)
+    db_session.commit()
+    return str(doc.id)
 
-_RETRACT_PDF = b"%PDF-1.4\n%%EOF"
 
-
-def _accept_a_quote(client, deal_id):
+def _accept_a_quote(client, deal_id, db_session):
     """Helper: create a quote, attach the required acceptance document, and
     walk it to ``accepted``. Returns the quote id."""
     qid = _make_quote(client, deal_id)
     client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
-    r_doc = client.post(f"/quotes/{qid}/documents", json={
-        "document_type": "quote_acceptance",
-        "file_name": "acceptance.pdf",
-        "file_data": _b64.b64encode(_RETRACT_PDF).decode(),
-        "file_size_bytes": len(_RETRACT_PDF),
-    })
-    assert r_doc.status_code == 201, r_doc.text
+    _seed_quote_acceptance(db_session, qid)
     r_acc = client.patch(f"/quotes/{qid}/status", json={"status": "accepted"})
     assert r_acc.status_code == 200, r_acc.text
     return qid
@@ -449,7 +466,7 @@ def test_system_admin_can_retract_accepted_quote(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id)
-    qid = _accept_a_quote(client, deal.id)
+    qid = _accept_a_quote(client, deal.id, db_session)
 
     _auth(_user(db_session, UserRole.system_admin.value))
     r = client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
@@ -473,7 +490,7 @@ def test_channel_manager_cannot_retract_accepted_quote(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id)
-    qid = _accept_a_quote(client, deal.id)
+    qid = _accept_a_quote(client, deal.id, db_session)
 
     # Still authed as channel_manager — attempt the retract.
     r = client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
@@ -487,7 +504,7 @@ def test_partner_admin_cannot_retract_accepted_quote(client, db_session):
     org = _org(db_session)
     _auth(_user(db_session, UserRole.channel_manager.value))
     deal = _deal(db_session, org.id)
-    qid = _accept_a_quote(client, deal.id)
+    qid = _accept_a_quote(client, deal.id, db_session)
 
     _auth(_user(db_session, UserRole.partner_admin.value, org_id=org.id))
     r = client.patch(f"/quotes/{qid}/status", json={"status": "sent"})
