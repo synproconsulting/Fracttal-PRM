@@ -1106,9 +1106,9 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Post-Sprint-20 UX & Workflow Fixes complete: PRs #128–#163 — 2026-05-22.*
 
-*Frontend fix session 2026-05-26: AD-33 centralised document repository decision recorded; CI trigger extended to docs/** branches (PR #170); design standardisation pass A completed (PRs #171–#173); PROMPT_TEMPLATE.md created as new canonical document; Fix PR B1 (PR #174): draft quote lock bug fixed, portal/quotes modal restored, Approved→Accepted rename completed; Fix PR B2 (PR #175): backend date filter bug fixed. Fix PR C (PR #176): DealQueue.jsx redesign, Won card dollar value, Accepted Pipeline label, InternalHome Accepted label. Pre-Sprint-21 UI testing session complete.*
+*Frontend fix session 2026-05-26: AD-33 centralised document repository decision recorded; CI trigger extended to docs/** branches (PR #170); design standardisation pass A completed (PRs #171–#173); PROMPT_TEMPLATE.md created as new canonical document; Fix PR B1 (PR #174): draft quote lock bug fixed, portal/quotes modal restored, Approved→Accepted rename completed; Fix PR B2 (PR #175): backend date filter bug fixed. Fix PR C (PR #176): DealQueue.jsx redesign, Won card dollar value, Accepted Pipeline label, InternalHome Accepted label. Fix PR D (PR #177): DealQueue full-width layout, date filter wiring fixes on both deal pages. Pre-Sprint-21 UI testing session complete.*
 
 *RUNBOOK created: May 2026*
 *Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–20 closeout, post-Sprint-20 fix session.*
-*Last updated: Frontend Fix Session — 2026-05-26 (PRs #169–#176).*
+*Last updated: Frontend Fix Session — 2026-05-26 (PRs #169–#177).*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
