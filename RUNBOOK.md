@@ -1170,7 +1170,55 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 21 Hotfix (2026-05-27): FPRM-353/354/355/356/357 -- acceptance gate relaxed (no longer requires approved status), QuoteDetail document section gains Pick Existing tab, internal partner-documents page uses full-width layout, deal_status surfaced on `/internal/quotes` and rendered in both quotes tables. +2 tests (738 → 740).*
 
+---
+
+## Sprint 22 operational notes — Document Repository v2 (2026-05-27)
+
+**Migration head:** 036 → **038**. Migrations 037 (`document_versions` table + `partner_documents.current_version_number` / `version_count` + backfill of v1 from existing `file_data`), 038 (`document_type_rules` table + seed `quote_acceptance` / `contract`).
+
+- **Where do uploaded bytes live now?** In `document_versions.file_data`, one
+  row per version, exactly one with `is_current=true`. The
+  `partner_documents.file_data` column is **deprecated** (AD-34) and not
+  written by new code. If a download returns unexpected content, check the
+  join:
+  `SELECT * FROM document_versions WHERE document_id=<doc_id> AND is_current=true`.
+  An empty result means the row has not been migrated yet — the legacy
+  fallback in the download endpoint reads `partner_documents.file_data`
+  as a safety net for any straggler.
+- **Approval workflow rules.** Seeded defaults (migration 038):
+  `quote_acceptance` — auto-approve / no manual step;
+  `contract` — requires approval.
+  Admins manage further rules via Program Config → **Document Rules**
+  (system_admin only). The acceptance gate in `quotes_router.py` reads
+  `document_type_rules.requires_approval` at runtime, so policy flips
+  take effect immediately on the next quote PATCH.
+- **Auto-approve forces "no manual approval".** The Document Rules
+  modal couples the two booleans: setting `auto_approve = true` zeroes
+  `requires_approval`. The backend silently does the same coercion if a
+  direct API caller submits both true.
+- **Partner self-service delete** (`partner_admin` role on own org) is
+  available on the portal Documents page. The endpoint returns 409 if any
+  `document_references` row points at the document — the partner must
+  remove the document from every quote before deleting. Hard-delete by
+  `channel_ops_admin` / `system_admin` (which removes all references too)
+  is unchanged.
+- **Preview vs download.** `/preview` returns `Content-Disposition: inline`
+  for PDF + common image MIME types; everything else falls back to
+  `attachment`. The portal Documents table shows a "Preview" button only
+  when the MIME type is in the inline-supported set.
+- **Versioning — revert is internal-only.** Channel managers /
+  channel_ops_admin / system_admin can roll a document back to a previous
+  version; partner_admin cannot self-revert (audit trail preservation).
+  The previous current version is NOT deleted — both rows survive.
+- **Uploaded By column.** The list response includes `uploaded_by_name`
+  (User.full_name with email fallback). Historical rows with
+  `uploaded_by_user_id IS NULL` return `null`.
+
+---
+
+*Sprint 22 (2026-05-27): Document Repository v2 — migrations 037/038, 9 new endpoints, AD-34 deprecation of partner_documents.file_data, versioning UI on portal + internal, Document Rules admin tab. +25 tests (740 → 765).*
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–21 closeout, Sprint 21 hotfix.*
-*Last updated: Sprint 21 Hotfix — 2026-05-27.*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–22 closeout, Sprint 21 hotfix.*
+*Last updated: Sprint 22 — 2026-05-27.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

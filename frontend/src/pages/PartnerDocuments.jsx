@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useOutletContext, useParams } from 'react-router-dom'
 import { SortableTh } from '../components/SortableTh.jsx'
 
@@ -177,6 +177,88 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
   )
 }
 
+function NewVersionModal({ partnerId, docId, docName, token, onClose, onUploaded }) {
+  const [file, setFile] = useState(null)
+  const [notes, setNotes] = useState('')
+  const [error, setError] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  function onFileChange(e) {
+    const f = e.target.files?.[0] || null
+    setError(null)
+    if (!f) { setFile(null); return }
+    if (f.size > MAX_FILE_BYTES) { setError('File is larger than 10 MB.'); return }
+    setFile(f)
+  }
+
+  async function readFileAsBase64(f) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = String(reader.result || '')
+        const comma = result.indexOf(',')
+        resolve(comma >= 0 ? result.slice(comma + 1) : result)
+      }
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsDataURL(f)
+    })
+  }
+
+  async function onSubmit(e) {
+    e.preventDefault()
+    if (!file) { setError('Choose a file first.'); return }
+    setBusy(true); setError(null)
+    try {
+      const b64 = await readFileAsBase64(file)
+      const r = await fetch(`${API}/partners/${partnerId}/documents/${docId}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          file_data: b64,
+          file_size_bytes: file.size,
+          mime_type: file.type,
+          notes: notes || null,
+        }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
+      onUploaded?.(data)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fp-modal-overlay" role="dialog" aria-modal="true">
+      <form className="fp-modal" onSubmit={onSubmit}>
+        <h3 className="fp-modal__title">Upload new version</h3>
+        <p className="fp-modal__subtitle">{docName}</p>
+        <label style={{ display: 'block', marginTop: 8, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+          File
+          <input type="file" accept={ACCEPT_TYPES} onChange={onFileChange}
+            style={{ display: 'block', marginTop: 6, fontSize: 'var(--fp-fs-sm)' }} />
+        </label>
+        <div className="fp-field fp-field--filled" style={{ marginTop: 8 }}>
+          <textarea id="version-notes" rows={2} placeholder=" "
+            value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <label htmlFor="version-notes">Notes (optional)</label>
+        </div>
+        {error && <div className="fp-alert fp-alert--danger" style={{ marginTop: 12 }}>{error}</div>}
+        <div className="fp-modal__actions">
+          <button type="button" onClick={onClose} disabled={busy} className="fp-btn fp-btn--ghost">Cancel</button>
+          <button type="submit" disabled={busy || !file} className="fp-btn fp-btn--primary">
+            {busy ? 'Uploading…' : 'Upload Version'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+
 function RejectModal({ doc, onClose, onConfirm, saving }) {
   const [notes, setNotes] = useState('')
   return (
@@ -266,6 +348,10 @@ export default function PartnerDocuments() {
   const [typeFilter, setTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
+  // Sprint 22 -- expanded doc id (inline version history panel), upload-new-version target
+  const [expandedDocId, setExpandedDocId] = useState(null)
+  const [versionsByDoc, setVersionsByDoc] = useState({})
+  const [versionTargetDoc, setVersionTargetDoc] = useState(null)
 
   function toggleSort(field) {
     setSort((s) => s.field === field
@@ -361,6 +447,116 @@ export default function PartnerDocuments() {
     }
   }
 
+  // Sprint 22 -- inline preview opens the /preview endpoint in a new tab.
+  // PREVIEWABLE_MIME maps client-side decision logic for the Preview button.
+  const PREVIEWABLE_MIME = new Set([
+    'application/pdf', 'image/png', 'image/jpeg', 'image/jpg',
+    'image/gif', 'image/webp',
+  ])
+
+  function previewDoc(doc) {
+    if (!doc.id || !partnerOrgId || !token) return
+    // The endpoint requires bearer auth; fetch + blob URL so we can open
+    // it in a new tab without leaking the JWT into the URL.
+    fetch(`${API}/partners/${partnerOrgId}/documents/${doc.id}/preview`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}))
+          throw new Error(body.detail || `HTTP ${r.status}`)
+        }
+        const blob = await r.blob()
+        const url = URL.createObjectURL(blob)
+        window.open(url, '_blank', 'noopener,noreferrer')
+        // Revoke after a short delay so the new tab has time to read.
+        setTimeout(() => URL.revokeObjectURL(url), 30_000)
+      })
+      .catch((e) => setError(e.message || String(e)))
+  }
+
+  // Sprint 22 -- versioning: load/expand the version history panel
+  async function toggleVersions(docId) {
+    if (expandedDocId === docId) {
+      setExpandedDocId(null)
+      return
+    }
+    setExpandedDocId(docId)
+    if (versionsByDoc[docId]) return  // cached
+    try {
+      const r = await fetch(
+        `${API}/partners/${partnerOrgId}/documents/${docId}/versions`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const rows = await r.json()
+      setVersionsByDoc((prev) => ({ ...prev, [docId]: rows }))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function downloadVersion(docId, version) {
+    try {
+      const r = await fetch(
+        `${API}/partners/${partnerOrgId}/documents/${docId}/versions/${version.id}/download`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `v${version.version_number}-${docs.find((d) => d.id === docId)?.document_name || 'document'}`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function revertToVersion(docId, version) {
+    if (!confirm(`Revert to version ${version.version_number}? The current version will be preserved in history.`)) return
+    try {
+      const r = await fetch(
+        `${API}/partners/${partnerOrgId}/documents/${docId}/versions/${version.id}/revert`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${r.status}`)
+      }
+      // Reload docs + the version list for this doc
+      reload()
+      setVersionsByDoc((prev) => ({ ...prev, [docId]: undefined }))
+      if (expandedDocId === docId) toggleVersions(docId)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function deleteOwnDoc(doc) {
+    if (!confirm(`Delete ${doc.document_name}? This cannot be undone.`)) return
+    try {
+      const r = await fetch(
+        `${API}/partners/${partnerOrgId}/documents/${doc.id}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (r.status === 409) {
+        const body = await r.json().catch(() => ({}))
+        alert(body.detail || 'This document is attached to a quote. Remove it from the quote first before deleting.')
+        return
+      }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${r.status}`)
+      }
+      reload()
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const content = (
     <>
       <div className="fp-page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -445,18 +641,43 @@ export default function PartnerDocuments() {
             <tr>
               <SortableTh field="document_type" sort={sort} onSort={toggleSort}>Type</SortableTh>
               <SortableTh field="document_name" sort={sort} onSort={toggleSort}>Name</SortableTh>
+              <th>Version</th>
               <SortableTh field="status" sort={sort} onSort={toggleSort}>Status</SortableTh>
               <SortableTh field="created_at" sort={sort} onSort={toggleSort}>Uploaded</SortableTh>
+              <th>Uploaded By</th>
               <SortableTh field="expiry_date" sort={sort} onSort={toggleSort}>Expires</SortableTh>
-              <th>Download</th>
-              {isInternal && <th>Actions</th>}
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {visibleDocs.map((d) => (
-              <tr key={d.id}>
+            {visibleDocs.map((d) => {
+              const vcur = d.current_version_number ?? 1
+              const vcount = d.version_count ?? 1
+              const isExpanded = expandedDocId === d.id
+              const versions = versionsByDoc[d.id]
+              return (
+              <Fragment key={d.id}>
+              <tr>
                 <td>{d.document_type}</td>
                 <td>{d.document_name}</td>
+                <td>
+                  {vcount > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleVersions(d.id)}
+                      style={{
+                        background: 'transparent', border: '1px solid #CBD5E0',
+                        borderRadius: 12, padding: '2px 8px', fontSize: 12,
+                        cursor: 'pointer', color: '#1A6EBB', fontWeight: 600,
+                      }}
+                      title={`v${vcur} of ${vcount} -- click to view history`}
+                    >
+                      v{vcur} of {vcount} {isExpanded ? '▴' : '▾'}
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 12, color: '#64748B' }}>v{vcur}</span>
+                  )}
+                </td>
                 <td>
                   <StatusBadge status={d.status} />
                   {d.review_notes && d.status === 'rejected' && (
@@ -466,43 +687,137 @@ export default function PartnerDocuments() {
                   )}
                 </td>
                 <td>{d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}</td>
+                <td style={{ color: '#64748B' }}>{d.uploaded_by_name ?? '—'}</td>
                 <td>{d.expiry_date || '—'}</td>
-                <td>
+                <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {PREVIEWABLE_MIME.has(d.mime_type) && (
+                    <button
+                      type="button"
+                      onClick={() => previewDoc(d)}
+                      className="fp-btn fp-btn--ghost fp-btn--sm"
+                      title="Open in new tab"
+                    >
+                      Preview
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => downloadDoc(d)}
                     className="fp-btn fp-btn--ghost fp-btn--sm"
-                    title="Download the original file"
                   >
                     Download
                   </button>
+                  {!isInternal && (
+                    <button
+                      type="button"
+                      onClick={() => setVersionTargetDoc(d)}
+                      className="fp-btn fp-btn--ghost fp-btn--sm"
+                      title="Upload a new version of this document"
+                    >
+                      + Version
+                    </button>
+                  )}
+                  {!isInternal && payload?.role === 'partner_admin' && (
+                    <button
+                      type="button"
+                      onClick={() => deleteOwnDoc(d)}
+                      className="fp-btn fp-btn--danger fp-btn--sm"
+                    >
+                      Delete
+                    </button>
+                  )}
+                  {isInternal && d.status === 'pending_review' && (
+                    <>
+                      <button
+                        onClick={() => approve(d)}
+                        disabled={actionSaving}
+                        className="fp-btn fp-btn--success fp-btn--sm"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => setActionDoc(d)}
+                        disabled={actionSaving}
+                        className="fp-btn fp-btn--danger fp-btn--sm"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
                 </td>
-                {isInternal && (
-                  <td>
-                    {d.status === 'pending_review' ? (
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button
-                          onClick={() => approve(d)}
-                          disabled={actionSaving}
-                          className="fp-btn fp-btn--success fp-btn--sm"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => setActionDoc(d)}
-                          disabled={actionSaving}
-                          className="fp-btn fp-btn--danger fp-btn--sm"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span style={{ color: 'var(--fp-text-muted)', fontSize: 'var(--fp-fs-sm)' }}>—</span>
+              </tr>
+              {isExpanded && (
+                <tr key={`${d.id}-history`}>
+                  <td colSpan={8} style={{ background: '#F8FAFC', padding: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8, color: '#1E293B' }}>
+                      Version history
+                    </div>
+                    {!versions && <div style={{ color: '#64748B', fontSize: 13 }}>Loading…</div>}
+                    {versions && versions.length === 0 && (
+                      <div style={{ color: '#94A3B8', fontSize: 13 }}>No version history available.</div>
+                    )}
+                    {versions && versions.length > 0 && (
+                      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ textAlign: 'left', background: '#F1F5F9' }}>
+                            <th style={{ padding: 6 }}>Version</th>
+                            <th style={{ padding: 6 }}>Uploaded At</th>
+                            <th style={{ padding: 6 }}>Size</th>
+                            <th style={{ padding: 6 }}>Notes</th>
+                            <th style={{ padding: 6, textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {versions.map((v) => (
+                            <tr key={v.id}
+                              style={{
+                                borderBottom: '1px solid #E2E8F0',
+                                borderLeft: v.is_current ? '3px solid #1B8743' : '3px solid transparent',
+                                background: v.is_current ? '#F0FDF4' : 'transparent',
+                              }}>
+                              <td style={{ padding: 6 }}>
+                                v{v.version_number}
+                                {v.is_current && (
+                                  <span style={{ marginLeft: 6, fontSize: 11, color: '#1B8743', fontWeight: 600 }}>Current</span>
+                                )}
+                              </td>
+                              <td style={{ padding: 6, color: '#64748B' }}>
+                                {v.uploaded_at ? new Date(v.uploaded_at).toLocaleString() : '—'}
+                              </td>
+                              <td style={{ padding: 6, color: '#64748B' }}>
+                                {v.file_size_bytes != null ? `${(v.file_size_bytes / 1024).toFixed(1)} KB` : '—'}
+                              </td>
+                              <td style={{ padding: 6, color: '#64748B' }}>{v.notes || '—'}</td>
+                              <td style={{ padding: 6, textAlign: 'right' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadVersion(d.id, v)}
+                                  className="fp-btn fp-btn--ghost fp-btn--sm"
+                                  style={{ marginRight: 6 }}
+                                >
+                                  Download
+                                </button>
+                                {isInternal && !v.is_current && (
+                                  <button
+                                    type="button"
+                                    onClick={() => revertToVersion(d.id, v)}
+                                    className="fp-btn fp-btn--secondary fp-btn--sm"
+                                  >
+                                    Revert
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
                   </td>
-                )}
-              </tr>
-            ))}
+                </tr>
+              )}
+              </Fragment>
+              )
+            })}
           </tbody>
         </table>
         )
@@ -522,6 +837,16 @@ export default function PartnerDocuments() {
           saving={actionSaving}
           onClose={() => setActionDoc(null)}
           onConfirm={(notes) => reject(actionDoc, notes)}
+        />
+      )}
+      {versionTargetDoc && (
+        <NewVersionModal
+          partnerId={partnerOrgId}
+          docId={versionTargetDoc.id}
+          docName={versionTargetDoc.document_name}
+          token={token}
+          onClose={() => setVersionTargetDoc(null)}
+          onUploaded={() => { reload(); setVersionsByDoc({}) }}
         />
       )}
     </>

@@ -612,37 +612,46 @@ def update_quote_status(
             ),
         )
 
-    # Acceptance gate (Sprint 21 / AD-33; Sprint 21 hotfix FPRM-353):
+    # Acceptance gate (Sprint 21 AD-33 / hotfix FPRM-353 / Sprint 22):
     # an ``accepted`` quote must have a proof-of-acceptance document
-    # attached. Evidence lives in ``partner_documents`` and the link to
-    # the quote is captured in ``document_references`` (entity_type='quote',
+    # attached via ``document_references`` (entity_type='quote',
     # label='quote_acceptance').
     #
-    # The status field on PartnerDocument is for the KYC / compliance
-    # review workflow -- it does NOT govern whether a doc counts as
-    # quote evidence. A channel_manager attaching a signed order form
-    # is the affirmative evidence act; requiring a separate approve step
-    # produced the production bug where the gate failed silently after
-    # upload (FPRM-353).
+    # Sprint 22 reinstates the ``status='approved'`` check, but only for
+    # document types where ``document_type_rules.requires_approval`` is
+    # true. The seeded ``quote_acceptance`` rule has
+    # requires_approval=false / auto_approve=true, so the FPRM-353 hotfix
+    # behaviour is preserved by default. Admins managing the rules table
+    # can flip the policy without code changes (per AD-34).
     if new_status == "accepted":
-        has_acceptance_doc = (
+        from models import DocumentTypeRule  # local import to avoid cycle
+        rule = (
+            db.query(DocumentTypeRule)
+            .filter(DocumentTypeRule.document_type == "quote_acceptance")
+            .first()
+        )
+        requires_approval = bool(rule.requires_approval) if rule else False
+
+        ref_query = (
             db.query(DocumentReference)
             .join(PartnerDocument, DocumentReference.document_id == PartnerDocument.id)
             .filter(DocumentReference.entity_type == "quote")
             .filter(DocumentReference.entity_id == quote.id)
             .filter(DocumentReference.label == "quote_acceptance")
-            .first()
-            is not None
         )
-        if not has_acceptance_doc:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Proof of quote acceptance must be attached before "
-                    "marking a quote as accepted. Please upload a signed "
-                    "order form or confirmation document."
-                ),
+        if requires_approval:
+            from models import DocumentStatus
+            ref_query = ref_query.filter(PartnerDocument.status == DocumentStatus.approved)
+
+        if ref_query.first() is None:
+            detail = (
+                "Cannot accept quote: an approved quote_acceptance document is required."
+                if requires_approval
+                else "Proof of quote acceptance must be attached before "
+                     "marking a quote as accepted. Please upload a signed "
+                     "order form or confirmation document."
             )
+            raise HTTPException(status_code=422, detail=detail)
 
     before = quote.status
     quote.status = new_status

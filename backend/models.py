@@ -394,7 +394,10 @@ class PartnerDocument(Base):
     file_path = Column(String, nullable=True)
 
     # Sprint 21 / AD-33 -- base64-encoded file content (migration 034).
-    # Nullable so legacy file_path-only rows remain valid.
+    # Sprint 22 / AD-34 -- DEPRECATED. New uploads write to
+    # ``document_versions.file_data`` instead. Column retained for
+    # backward compatibility with Sprint 21 rows; do NOT read from or
+    # write to this column in new code.
     file_data = Column(Text, nullable=True)
 
     file_size_bytes = Column(Integer, nullable=True)
@@ -406,6 +409,14 @@ class PartnerDocument(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     expiry_date = Column(Date, nullable=True)
+
+    # Sprint 22 / AD-34 -- denormalised pointers so list views can render
+    # version state without joining ``document_versions``. Migration 037
+    # backfills both from existing rows that have file_data; new uploads
+    # set them when the first version row is created.
+    current_version_number = Column(Integer, nullable=True)
+
+    version_count = Column(Integer, nullable=False, default=1)
 
     status = Column(
 
@@ -426,6 +437,15 @@ class PartnerDocument(Base):
     rejection_reason = Column(Text, nullable=True)
 
     info_request_message = Column(Text, nullable=True)
+
+    # Sprint 22 / AD-34 -- versioned binary store relationship. Ordered by
+    # version_number ascending so iteration always yields v1 first.
+    versions = relationship(
+        "DocumentVersion",
+        back_populates="document",
+        order_by="DocumentVersion.version_number",
+        cascade="all, delete-orphan",
+    )
 
 
 
@@ -1636,4 +1656,86 @@ class DocumentReference(Base):
     __table_args__ = (
         Index("ix_doc_refs_entity", "entity_type", "entity_id"),
         Index("ix_doc_refs_document", "document_id"),
+    )
+
+
+class DocumentVersion(Base):
+    """Sprint 22 / AD-34 -- versioned binary blob for a partner document.
+
+    Every upload (initial or new-version) creates one row here. Exactly
+    one row per document has ``is_current = true``; download / preview
+    endpoints always resolve via that flag. The denormalised
+    ``current_version_number`` and ``version_count`` on
+    ``partner_documents`` keep list views from joining this table.
+
+    ``file_data`` is base64-encoded text per AD-19 -- Railway has no
+    persistent local filesystem across deploys. The
+    ``partner_documents.file_data`` column is deprecated (AD-34); new
+    code reads exclusively from here.
+    """
+
+    __tablename__ = "document_versions"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_number = Column(Integer, nullable=False)
+    file_data = Column(Text, nullable=False)
+    file_size_bytes = Column(Integer, nullable=True)
+    mime_type = Column(String(100), nullable=True)
+    uploaded_by = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    notes = Column(Text, nullable=True)
+    is_current = Column(Boolean, default=False, nullable=False)
+
+    document = relationship("PartnerDocument", back_populates="versions")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "version_number", name="uq_doc_version"
+        ),
+        Index("ix_doc_versions_document", "document_id"),
+    )
+
+
+class DocumentTypeRule(Base):
+    """Sprint 22 -- admin-configurable approval workflow rules per
+    document type.
+
+    Codifies the post-FPRM-353 design: the acceptance gate (and any
+    future workflow gate) reads ``requires_approval`` to decide whether
+    the underlying ``partner_documents.status`` must be ``approved`` for
+    the document to count as evidence. ``auto_approve`` is the upload-
+    time shortcut -- if true, the new partner_documents row is created
+    with ``status = approved`` so the channel manager isn't asked to
+    rubber-stamp their own attachment.
+
+    Two seed rows ship in migration 038:
+
+    * ``quote_acceptance`` -- ``requires_approval=false``, ``auto_approve=true``
+    * ``contract`` -- ``requires_approval=true``, ``auto_approve=false``
+
+    Admins manage further rules via ``/admin/document-type-rules``.
+    """
+
+    __tablename__ = "document_type_rules"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_type = Column(String(100), unique=True, nullable=False)
+    requires_approval = Column(Boolean, default=True, nullable=False)
+    auto_approve = Column(Boolean, default=False, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
     )

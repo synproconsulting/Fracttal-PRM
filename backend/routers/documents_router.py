@@ -41,8 +41,11 @@ from database import get_db
 from sorting import apply_sort
 from models import (
     DocumentReference,
+    DocumentStatus,
     DocumentType,
     DocumentTypeConfig,
+    DocumentTypeRule,
+    DocumentVersion,
     PartnerDocument,
     PartnerOrganization,
     User,
@@ -171,6 +174,15 @@ def list_documents(
         tiebreaker=PartnerDocument.id,
     )
     docs = query.all()
+
+    # Sprint 22 / FPRM-371 -- enrich each row with the uploader's display
+    # name. Single round-trip via IN clause; falls back to email when the
+    # User has no full_name. None when the FK is null (historical rows).
+    uploader_ids = {d.uploaded_by_user_id for d in docs if d.uploaded_by_user_id}
+    uploader_map: dict = {}
+    if uploader_ids:
+        for u in db.query(User).filter(User.id.in_(uploader_ids)).all():
+            uploader_map[u.id] = getattr(u, "full_name", None) or u.email
     if export == "csv":
         partner = (
             db.query(PartnerOrganization)
@@ -201,7 +213,15 @@ def list_documents(
                 for d in docs
             ],
         )
-    return {"items": [_serialize(d) for d in docs]}
+
+    items = []
+    for d in docs:
+        item = _serialize(d)
+        item["uploaded_by_name"] = (
+            uploader_map.get(d.uploaded_by_user_id) if d.uploaded_by_user_id else None
+        )
+        items.append(item)
+    return {"items": items}
 
 
 @router.post("/{partner_id}/documents", status_code=201)
@@ -264,24 +284,35 @@ def upload_document(
         # value as-is so the centralised endpoint covers both flows.
         doc_type_value = requested_code
     else:
-        config_count = db.query(DocumentTypeConfig).count()
-        if config_count > 0:
-            match = (
-                db.query(DocumentTypeConfig)
-                .filter(
-                    DocumentTypeConfig.code == requested_code,
-                    DocumentTypeConfig.is_active.is_(True),
-                )
-                .first()
-            )
-            if not match:
-                raise HTTPException(status_code=422, detail="Invalid document_type")
-            doc_type_value = match.code
+        # Sprint 22 -- admin-defined types via document_type_rules count
+        # as valid. This unlocks Program Config -> Document Rules as the
+        # canonical onboarding path for new document categories.
+        rule_match = (
+            db.query(DocumentTypeRule)
+            .filter(DocumentTypeRule.document_type == requested_code)
+            .first()
+        )
+        if rule_match is not None:
+            doc_type_value = rule_match.document_type
         else:
-            try:
-                doc_type_value = DocumentType(requested_code).value
-            except ValueError:
-                raise HTTPException(status_code=422, detail="Invalid document_type")
+            config_count = db.query(DocumentTypeConfig).count()
+            if config_count > 0:
+                match = (
+                    db.query(DocumentTypeConfig)
+                    .filter(
+                        DocumentTypeConfig.code == requested_code,
+                        DocumentTypeConfig.is_active.is_(True),
+                    )
+                    .first()
+                )
+                if not match:
+                    raise HTTPException(status_code=422, detail="Invalid document_type")
+                doc_type_value = match.code
+            else:
+                try:
+                    doc_type_value = DocumentType(requested_code).value
+                except ValueError:
+                    raise HTTPException(status_code=422, detail="Invalid document_type")
 
     expiry_str = payload.get("expiry_date")
     expiry_value: date | None = None
@@ -314,19 +345,56 @@ def upload_document(
             )
     persisted_size = declared_size if declared_size is not None else decoded_size
 
+    # Sprint 22 / AD-34 -- check document_type_rules for auto-approve and
+    # the approval-workflow toggle. Missing rule => safe default: status
+    # stays at pending_review (matches the PartnerDocument model default).
+    rule = (
+        db.query(DocumentTypeRule)
+        .filter(DocumentTypeRule.document_type == doc_type_value)
+        .first()
+    )
+    initial_status = (
+        DocumentStatus.approved if (rule and rule.auto_approve)
+        else DocumentStatus.pending_review
+    )
+
     doc = PartnerDocument(
         id=uuid.uuid4(),
         partner_org_id=partner_id,
         document_type=doc_type_value,
         document_name=payload["document_name"],
         file_path=file_path,
-        file_data=file_data,
+        # Sprint 22 / AD-34 -- partner_documents.file_data is deprecated.
+        # New uploads write to document_versions only.
+        file_data=None,
         file_size_bytes=persisted_size,
         mime_type=payload.get("mime_type"),
         uploaded_by_user_id=current_user.id,
         expiry_date=expiry_value,
+        status=initial_status,
+        current_version_number=1 if file_data else None,
+        version_count=1,
     )
     db.add(doc)
+    db.flush()
+
+    # Create initial version row when file_data was provided. Legacy
+    # file_path-only uploads (still accepted for backward compat with the
+    # AD-33 transition) skip the version row -- there are no bytes to
+    # store yet.
+    if file_data:
+        version = DocumentVersion(
+            id=uuid.uuid4(),
+            document_id=doc.id,
+            version_number=1,
+            file_data=file_data,
+            file_size_bytes=persisted_size,
+            mime_type=payload.get("mime_type"),
+            uploaded_by=current_user.id,
+            is_current=True,
+        )
+        db.add(version)
+
     db.commit()
     db.refresh(doc)
 
@@ -365,19 +433,37 @@ def download_document(
 ):
     """Stream the document's binary content (AD-20).
 
+    Sprint 22 / AD-34 -- reads from ``document_versions`` where
+    ``is_current = true`` instead of the deprecated
+    ``partner_documents.file_data`` column. Legacy rows uploaded before
+    migration 037 fall back to ``partner_documents.file_data`` since the
+    backfill copied that into a v1 row only when ``file_data IS NOT
+    NULL`` -- the fallback path stays intact for the file_path-only
+    legacy uploads from the Sprint 21 transition.
+
     Tenant isolation is enforced via ``_ensure_partner_exists_and_tenant``
     and the FK match in ``_load_doc_or_404`` -- two checks because losing
     either one is a hard data-leak (SOC II / ISO 27001 boundary).
     """
     _ensure_partner_exists_and_tenant(db, partner_id, current_user)
     doc = _load_doc_or_404(db, partner_id, doc_id)
-    if not doc.file_data:
+
+    current = (
+        db.query(DocumentVersion)
+        .filter(
+            DocumentVersion.document_id == doc.id,
+            DocumentVersion.is_current.is_(True),
+        )
+        .first()
+    )
+    raw_b64 = current.file_data if current else doc.file_data
+    if not raw_b64:
         raise HTTPException(
             status_code=404,
             detail="No binary content stored for this document",
         )
     try:
-        body = base64.b64decode(doc.file_data, validate=True)
+        body = base64.b64decode(raw_b64, validate=True)
     except (binascii.Error, ValueError):
         raise HTTPException(status_code=500, detail="Stored document is corrupt")
 
@@ -387,14 +473,18 @@ def download_document(
         action="partner_document.download",
         object_type="partner_document",
         object_id=doc.id,
-        after={"document_name": doc.document_name},
+        after={
+            "document_name": doc.document_name,
+            "version_number": current.version_number if current else None,
+        },
         ip_address=_client_ip(request),
     )
 
     safe_name = (doc.document_name or "document").replace('"', "")
+    mime = (current.mime_type if current else None) or doc.mime_type or "application/octet-stream"
     return Response(
         content=body,
-        media_type=doc.mime_type or "application/octet-stream",
+        media_type=mime,
         headers={
             "Content-Disposition": f'attachment; filename="{safe_name}"',
             "Content-Length": str(len(body)),
@@ -478,18 +568,59 @@ def delete_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Hard-delete a partner document and every reference pointing at it.
+    """Delete a partner document.
 
-    Auth: ``channel_ops_admin`` or ``system_admin`` only. Documents are
-    evidence so the bar is intentionally higher than upload.
+    Two paths converge here:
+
+    1. **Internal hard-delete** (``channel_ops_admin`` / ``system_admin``):
+       removes the partner_document row + every ``document_references``
+       row pointing at it. Used to scrub evidence that should never have
+       been uploaded.
+    2. **Partner self-service soft-delete** (``partner_admin`` own org,
+       Sprint 22 / FPRM-370): allowed ONLY when zero document_references
+       point at the document. Sets ``status = 'rejected'`` so the row
+       hides from active list views; the binary survives in
+       ``document_versions`` for audit. If any reference exists, returns
+       409 so the partner removes the attachment first.
     """
-    if UserRole(current_user.role) not in _DELETE_ROLES:
+    role = UserRole(current_user.role)
+    _ensure_partner_exists_and_tenant(db, partner_id, current_user)
+    doc = _load_doc_or_404(db, partner_id, doc_id)
+    snapshot = jsonable_encoder(_serialize(doc))
+
+    if role == UserRole.partner_admin:
+        ref_count = (
+            db.query(DocumentReference)
+            .filter(DocumentReference.document_id == doc.id)
+            .count()
+        )
+        if ref_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Document is attached to one or more quotes and cannot "
+                    "be deleted. Remove it from all quotes first."
+                ),
+            )
+        doc.status = DocumentStatus.rejected
+        db.commit()
+        log_audit_event(
+            db=db,
+            actor=current_user,
+            action="document.deleted_by_partner",
+            object_type="partner_document",
+            object_id=doc_id,
+            before=snapshot,
+            ip_address=_client_ip(request),
+        )
+        return {"deleted": True, "id": str(doc_id)}
+
+    if role not in _DELETE_ROLES:
         raise HTTPException(
             status_code=403,
             detail="Permission denied: channel_ops_admin or system_admin required",
         )
-    doc = _load_doc_or_404(db, partner_id, doc_id)
-    snapshot = jsonable_encoder(_serialize(doc))
+
     db.query(DocumentReference).filter(
         DocumentReference.document_id == doc.id
     ).delete(synchronize_session=False)
@@ -625,3 +756,537 @@ def delete_document_reference(
         ip_address=_client_ip(request),
     )
     return {"deleted": True, "id": str(ref_id)}
+
+
+
+# ============================================================
+# Sprint 22 / AD-34 -- Document versioning endpoints
+# ============================================================
+
+
+def _serialize_version(version: DocumentVersion) -> dict:
+    """Version metadata without the binary blob."""
+    return {
+        "id": str(version.id),
+        "document_id": str(version.document_id),
+        "version_number": version.version_number,
+        "file_size_bytes": version.file_size_bytes,
+        "mime_type": version.mime_type,
+        "uploaded_by": str(version.uploaded_by) if version.uploaded_by else None,
+        "uploaded_at": version.uploaded_at.isoformat() if version.uploaded_at else None,
+        "notes": version.notes,
+        "is_current": bool(version.is_current),
+    }
+
+
+@router.post("/{partner_id}/documents/{doc_id}/versions", status_code=201)
+def upload_new_version(
+    partner_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Upload a new version of an existing document.
+
+    Atomically demotes the prior current version and inserts the new one
+    at ``max(version_number) + 1``. Updates the denormalised pointers on
+    ``partner_documents`` so list views stay coherent.
+
+    Approval workflow (AD-34 / FPRM-353 corollary):
+        * If a ``document_type_rules`` row says ``requires_approval =
+          true`` and ``auto_approve = false``, the new version resets
+          ``partner_documents.status`` back to ``pending_review`` -- a
+          revised contract isn't approved just because the original was.
+        * If the rule says ``auto_approve = true``, status stays approved.
+        * No rule => safe default: reset to ``pending_review``.
+    """
+    _ensure_partner_exists_and_tenant(db, partner_id, current_user)
+    doc = _load_doc_or_404(db, partner_id, doc_id)
+
+    file_data = payload.get("file_data")
+    if not isinstance(file_data, str) or not file_data:
+        raise HTTPException(status_code=422, detail="file_data (base64) is required")
+    try:
+        decoded = base64.b64decode(file_data, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=422, detail="file_data is not valid base64")
+    if len(decoded) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail="File too large. Maximum upload size is 10 MB.",
+        )
+
+    declared_size = payload.get("file_size_bytes")
+    if declared_size is not None:
+        if not isinstance(declared_size, int) or declared_size < 0:
+            raise HTTPException(
+                status_code=422, detail="file_size_bytes must be a non-negative integer",
+            )
+        if declared_size > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=422,
+                detail="File too large. Maximum upload size is 10 MB.",
+            )
+    persisted_size = declared_size if declared_size is not None else len(decoded)
+
+    notes = payload.get("notes")
+    if notes is not None and not isinstance(notes, str):
+        raise HTTPException(status_code=422, detail="notes must be a string")
+
+    # Atomic version flip: demote prior current, find next version_number,
+    # insert new row with is_current=True. Wrapped in a single flush
+    # before commit so a failure on the insert leaves the prior version
+    # current.
+    db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc.id,
+        DocumentVersion.is_current.is_(True),
+    ).update({"is_current": False}, synchronize_session=False)
+
+    max_row = (
+        db.query(DocumentVersion.version_number)
+        .filter(DocumentVersion.document_id == doc.id)
+        .order_by(DocumentVersion.version_number.desc())
+        .first()
+    )
+    next_version = (max_row[0] if max_row else 0) + 1
+
+    new_version = DocumentVersion(
+        id=uuid.uuid4(),
+        document_id=doc.id,
+        version_number=next_version,
+        file_data=file_data,
+        file_size_bytes=persisted_size,
+        mime_type=payload.get("mime_type"),
+        uploaded_by=current_user.id,
+        notes=notes,
+        is_current=True,
+    )
+    db.add(new_version)
+
+    doc.current_version_number = next_version
+    doc.version_count = (doc.version_count or 0) + 1
+
+    rule = (
+        db.query(DocumentTypeRule)
+        .filter(DocumentTypeRule.document_type == doc.document_type)
+        .first()
+    )
+    if rule and rule.auto_approve:
+        doc.status = DocumentStatus.approved
+    elif rule and rule.requires_approval:
+        doc.status = DocumentStatus.pending_review
+        doc.reviewed_at = None
+        doc.reviewed_by_user_id = None
+    else:
+        doc.status = DocumentStatus.pending_review
+        doc.reviewed_at = None
+        doc.reviewed_by_user_id = None
+
+    db.commit()
+    db.refresh(doc)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document.version_uploaded",
+        object_type="partner_document",
+        object_id=doc.id,
+        after={
+            "version_number": next_version,
+            "version_count": doc.version_count,
+            "status": getattr(doc.status, "value", str(doc.status)),
+        },
+        ip_address=_client_ip(request),
+    )
+    return _serialize(doc)
+
+
+@router.get("/{partner_id}/documents/{doc_id}/versions")
+def list_document_versions(
+    partner_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Version history -- ordered newest first. ``file_data`` is never
+    returned; clients fetch bytes via the per-version download endpoint."""
+    _ensure_partner_exists_and_tenant(db, partner_id, current_user)
+    _load_doc_or_404(db, partner_id, doc_id)
+    rows = (
+        db.query(DocumentVersion)
+        .filter(DocumentVersion.document_id == doc_id)
+        .order_by(DocumentVersion.version_number.desc())
+        .all()
+    )
+    return [_serialize_version(v) for v in rows]
+
+
+@router.get("/{partner_id}/documents/{doc_id}/versions/{version_id}/download")
+def download_specific_version(
+    partner_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    version_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stream a specific historical version. Tenant-scoped + double-check
+    that the version belongs to the requested document so a guessed
+    version_id can't pivot into another partner's vault."""
+    _ensure_partner_exists_and_tenant(db, partner_id, current_user)
+    doc = _load_doc_or_404(db, partner_id, doc_id)
+
+    version = (
+        db.query(DocumentVersion)
+        .filter(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == doc.id,
+        )
+        .first()
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        body = base64.b64decode(version.file_data, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=500, detail="Stored version is corrupt")
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document.version_downloaded",
+        object_type="partner_document",
+        object_id=doc.id,
+        after={
+            "version_number": version.version_number,
+            "document_name": doc.document_name,
+        },
+        ip_address=_client_ip(request),
+    )
+
+    safe_name = (doc.document_name or "document").replace('"', "")
+    mime = version.mime_type or doc.mime_type or "application/octet-stream"
+    return Response(
+        content=body,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "Content-Length": str(len(body)),
+        },
+    )
+
+
+_INTERNAL_REVERT_ROLES = {
+    UserRole.channel_manager,
+    UserRole.channel_ops_admin,
+    UserRole.system_admin,
+}
+
+
+@router.post("/{partner_id}/documents/{doc_id}/versions/{version_id}/revert")
+def revert_to_version(
+    partner_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    version_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Make a historical version current again. Internal roles only --
+    partner_admin can upload-new but cannot self-revert (audit trail
+    preservation; the channel manager owns the canonical version).
+
+    The previous current version is NOT deleted -- both rows survive so
+    the audit trail captures every flip."""
+    if UserRole(current_user.role) not in _INTERNAL_REVERT_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied: internal role required to revert versions",
+        )
+    _ensure_partner_exists_and_tenant(db, partner_id, current_user)
+    doc = _load_doc_or_404(db, partner_id, doc_id)
+
+    target = (
+        db.query(DocumentVersion)
+        .filter(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == doc.id,
+        )
+        .first()
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    from_version = doc.current_version_number
+
+    db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc.id,
+        DocumentVersion.is_current.is_(True),
+    ).update({"is_current": False}, synchronize_session=False)
+    target.is_current = True
+    doc.current_version_number = target.version_number
+    db.commit()
+    db.refresh(doc)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document.reverted",
+        object_type="partner_document",
+        object_id=doc.id,
+        before={"from_version": from_version},
+        after={"to_version": target.version_number},
+        ip_address=_client_ip(request),
+    )
+    return _serialize(doc)
+
+
+# ============================================================
+# Sprint 22 -- Preview endpoint (Story 3 / FPRM-369)
+# ============================================================
+
+
+PREVIEWABLE_MIME_TYPES = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+}
+
+
+@router.get("/{partner_id}/documents/{doc_id}/preview")
+def preview_document(
+    partner_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """In-browser preview of the current version.
+
+    For PDF + common image types, returns ``Content-Disposition: inline``
+    so the browser renders rather than downloads. Anything else falls
+    back to attachment disposition.
+
+    Same tenant guard chain as download.
+    """
+    _ensure_partner_exists_and_tenant(db, partner_id, current_user)
+    doc = _load_doc_or_404(db, partner_id, doc_id)
+
+    current = (
+        db.query(DocumentVersion)
+        .filter(
+            DocumentVersion.document_id == doc.id,
+            DocumentVersion.is_current.is_(True),
+        )
+        .first()
+    )
+    raw_b64 = current.file_data if current else doc.file_data
+    if not raw_b64:
+        raise HTTPException(status_code=404, detail="No binary content for this document")
+    try:
+        body = base64.b64decode(raw_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=500, detail="Stored document is corrupt")
+
+    mime = (current.mime_type if current else None) or doc.mime_type or "application/octet-stream"
+    disposition = "inline" if mime in PREVIEWABLE_MIME_TYPES else "attachment"
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document.previewed",
+        object_type="partner_document",
+        object_id=doc.id,
+        after={"mime_type": mime, "disposition": disposition},
+        ip_address=_client_ip(request),
+    )
+
+    safe_name = (doc.document_name or "document").replace('"', "")
+    return Response(
+        content=body,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{safe_name}"',
+            "Content-Length": str(len(body)),
+        },
+    )
+
+
+# ============================================================
+# Sprint 22 -- Document type rules CRUD (Story 2 / FPRM-366)
+# ============================================================
+
+
+_RULES_READ_ROLES = {
+    UserRole.channel_manager,
+    UserRole.channel_ops_admin,
+    UserRole.system_admin,
+}
+_RULES_WRITE_ROLE = UserRole.system_admin
+
+
+def _serialize_rule(rule: DocumentTypeRule) -> dict:
+    return {
+        "id": str(rule.id),
+        "document_type": rule.document_type,
+        "requires_approval": bool(rule.requires_approval),
+        "auto_approve": bool(rule.auto_approve),
+        "description": rule.description,
+        "created_at": rule.created_at.isoformat() if rule.created_at else None,
+        "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+    }
+
+
+rules_router = APIRouter(prefix="/admin/document-type-rules", tags=["document-type-rules"])
+
+
+@rules_router.get("")
+def list_document_type_rules(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if UserRole(current_user.role) not in _RULES_READ_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+    rows = (
+        db.query(DocumentTypeRule)
+        .order_by(DocumentTypeRule.document_type)
+        .all()
+    )
+    return [_serialize_rule(r) for r in rows]
+
+
+@rules_router.post("", status_code=201)
+def create_document_type_rule(
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if UserRole(current_user.role) != _RULES_WRITE_ROLE:
+        raise HTTPException(status_code=403, detail="Only system_admin can create rules")
+    doc_type = (payload.get("document_type") or "").strip()
+    if not doc_type:
+        raise HTTPException(status_code=422, detail="document_type is required")
+    requires_approval = bool(payload.get("requires_approval", True))
+    auto_approve = bool(payload.get("auto_approve", False))
+    if auto_approve:
+        requires_approval = False
+
+    existing = (
+        db.query(DocumentTypeRule)
+        .filter(DocumentTypeRule.document_type == doc_type)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A rule for this document type already exists",
+        )
+
+    rule = DocumentTypeRule(
+        id=uuid.uuid4(),
+        document_type=doc_type,
+        requires_approval=requires_approval,
+        auto_approve=auto_approve,
+        description=payload.get("description"),
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document_type_rule.created",
+        object_type="document_type_rule",
+        object_id=rule.id,
+        after=_serialize_rule(rule),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_rule(rule)
+
+
+@rules_router.patch("/{rule_id}")
+def update_document_type_rule(
+    rule_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if UserRole(current_user.role) != _RULES_WRITE_ROLE:
+        raise HTTPException(status_code=403, detail="Only system_admin can update rules")
+    rule = db.query(DocumentTypeRule).filter(DocumentTypeRule.id == rule_id).first()
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    before = _serialize_rule(rule)
+
+    if "requires_approval" in payload:
+        rule.requires_approval = bool(payload["requires_approval"])
+    if "auto_approve" in payload:
+        rule.auto_approve = bool(payload["auto_approve"])
+        if rule.auto_approve:
+            rule.requires_approval = False
+    if "description" in payload:
+        rule.description = payload["description"]
+    rule.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(rule)
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document_type_rule.updated",
+        object_type="document_type_rule",
+        object_id=rule.id,
+        before=before,
+        after=_serialize_rule(rule),
+        ip_address=_client_ip(request),
+    )
+    return _serialize_rule(rule)
+
+
+@rules_router.delete("/{rule_id}", status_code=204)
+def delete_document_type_rule(
+    rule_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if UserRole(current_user.role) != _RULES_WRITE_ROLE:
+        raise HTTPException(status_code=403, detail="Only system_admin can delete rules")
+    rule = db.query(DocumentTypeRule).filter(DocumentTypeRule.id == rule_id).first()
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    in_use = (
+        db.query(PartnerDocument)
+        .filter(PartnerDocument.document_type == rule.document_type)
+        .first()
+    )
+    if in_use is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Document type in use -- cannot delete rule. "
+                   "Reassign or remove partner documents of this type first.",
+        )
+
+    snapshot = _serialize_rule(rule)
+    db.delete(rule)
+    db.commit()
+
+    log_audit_event(
+        db=db,
+        actor=current_user,
+        action="document_type_rule.deleted",
+        object_type="document_type_rule",
+        object_id=rule_id,
+        before=snapshot,
+        ip_address=_client_ip(request),
+    )
+    return Response(status_code=204)

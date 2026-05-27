@@ -53,6 +53,9 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   const [pickLoading, setPickLoading] = useState(false)
   const [pickSearch, setPickSearch] = useState('')
   const [pickAttachingId, setPickAttachingId] = useState(null)
+  // Sprint 22 / FPRM-378 -- gate UI feedback. Rules fetched once on mount;
+  // matched client-side against the document type field.
+  const [documentTypeRules, setDocumentTypeRules] = useState([])
   const canUploadDocument = (
     currentUserRole === 'system_admin'
     || currentUserRole === 'channel_ops_admin'
@@ -68,6 +71,19 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
     fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((me) => { if (me?.role) setCurrentUserRole(me.role) })
+      .catch(() => {})
+  }, [token])
+
+  // Sprint 22 / FPRM-378 -- fetch document_type_rules once on mount so the
+  // upload-new tab can show a gate-info hint when the user types a known
+  // document type. Failure is silent: the hint just won't render.
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API}/admin/document-type-rules`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rules) => Array.isArray(rules) && setDocumentTypeRules(rules))
       .catch(() => {})
   }, [token])
 
@@ -949,6 +965,34 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
                     <option value="other">Other</option>
                   </select>
                 </label>
+                {/* Sprint 22 / FPRM-378 -- acceptance gate UI feedback. */}
+                {(() => {
+                  const rule = documentTypeRules.find(
+                    (r) => r.document_type.toLowerCase() === attachType.toLowerCase()
+                  )
+                  if (rule && rule.auto_approve) {
+                    return (
+                      <div style={{ fontSize: 12, color: '#2E7D32', background: '#E6F4EA', padding: '6px 10px', borderRadius: 6 }}>
+                        ✓ This document type will be auto-approved on upload.
+                      </div>
+                    )
+                  }
+                  if (rule && rule.requires_approval) {
+                    return (
+                      <div style={{ fontSize: 12, color: '#B7791F', background: '#FEFCE8', padding: '6px 10px', borderRadius: 6 }}>
+                        ⚠ This document type requires approval before it can be used to accept a quote.
+                      </div>
+                    )
+                  }
+                  if (!rule && attachType.length > 2) {
+                    return (
+                      <div style={{ fontSize: 12, color: '#64748B', background: '#F5F7FA', padding: '6px 10px', borderRadius: 6 }}>
+                        No approval rule configured for this document type — will default to pending review.
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
                 <label style={{ display: 'block', fontSize: 13 }}>
                   <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>File (max 10 MB)</span>
                   <input
@@ -1023,7 +1067,22 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
                       <tbody>
                         {filtered.map((d) => (
                           <tr key={d.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                            <td style={{ padding: 6 }}>{d.document_name}</td>
+                            <td style={{ padding: 6 }}>
+                              {d.document_name}
+                              {/* Sprint 22 -- version badge so the user knows
+                                  which version is being attached. */}
+                              <span style={{
+                                marginLeft: 6, fontSize: 11, color: '#1A6EBB',
+                                fontWeight: 600,
+                              }}>
+                                v{d.current_version_number ?? 1}
+                                {d.version_count > 1 && (
+                                  <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+                                    {' '}(of {d.version_count})
+                                  </span>
+                                )}
+                              </span>
+                            </td>
                             <td style={{ padding: 6, color: '#64748B' }}>{d.document_type}</td>
                             <td style={{ padding: 6, color: '#64748B' }}>{d.status}</td>
                             <td style={{ padding: 6, color: '#64748B' }}>
