@@ -1482,3 +1482,98 @@ def test_invalid_date_format_returns_422(db_session):
         assert "YYYY-MM-DD" in r.json()["detail"]
     finally:
         clear_overrides()
+
+
+# ------------------ PR #178 -- from_date / to_date filters on GET /internal/deals ------------------
+
+
+def test_internal_deals_from_date_filter(db_session):
+    """PR #178: from_date excludes deals submitted strictly before the date."""
+    org = make_org(db_session)
+    older = datetime(2026, 5, 10, 12, 0, 0)
+    newer = datetime(2026, 5, 25, 12, 0, 0)
+    _make_deal_at(db_session, org.id, submitted_at=older)
+    _make_deal_at(db_session, org.id, submitted_at=newer)
+    user = make_user(UserRole.system_admin)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/internal/deals?partner_org_id={org.id}&from_date=2026-05-20"
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        dates = sorted(it["submitted_at"][:10] for it in items)
+        assert dates == ["2026-05-25"], dates
+    finally:
+        clear_overrides()
+
+
+def test_internal_deals_to_date_filter(db_session):
+    """PR #178: to_date is inclusive of the entire day (end-of-day cap)."""
+    org = make_org(db_session)
+    older = datetime(2026, 5, 10, 12, 0, 0)
+    newer = datetime(2026, 5, 25, 12, 0, 0)
+    _make_deal_at(db_session, org.id, submitted_at=older)
+    _make_deal_at(db_session, org.id, submitted_at=newer)
+    user = make_user(UserRole.system_admin)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/internal/deals?partner_org_id={org.id}&to_date=2026-05-20"
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        dates = sorted(it["submitted_at"][:10] for it in items)
+        assert dates == ["2026-05-10"], dates
+    finally:
+        clear_overrides()
+
+
+def test_internal_deals_date_range_filter(db_session):
+    """PR #178: combining from_date + to_date narrows to a window. Same-day
+    bounds return the deal stamped that day (inclusive-inclusive)."""
+    org = make_org(db_session)
+    earliest = datetime(2026, 5, 1, 12, 0, 0)
+    middle = datetime(2026, 5, 15, 12, 0, 0)
+    latest = datetime(2026, 5, 30, 12, 0, 0)
+    _make_deal_at(db_session, org.id, submitted_at=earliest)
+    _make_deal_at(db_session, org.id, submitted_at=middle)
+    _make_deal_at(db_session, org.id, submitted_at=latest)
+    user = make_user(UserRole.system_admin)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/internal/deals?partner_org_id={org.id}"
+            "&from_date=2026-05-15&to_date=2026-05-15"
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        dates = sorted(it["submitted_at"][:10] for it in items)
+        assert dates == ["2026-05-15"], dates
+    finally:
+        clear_overrides()
+
+
+def test_internal_deals_invalid_from_date_returns_422(db_session):
+    """PR #178: malformed date strings return 422 with a clear message."""
+    org = make_org(db_session)
+    user = make_user(UserRole.system_admin)
+    override_user(db_session, user)
+    client = TestClient(app)
+    try:
+        r = client.get(
+            f"/internal/deals?partner_org_id={org.id}&from_date=not-a-date"
+        )
+        assert r.status_code == 422
+        assert "YYYY-MM-DD" in r.json()["detail"]
+
+        r = client.get(
+            f"/internal/deals?partner_org_id={org.id}&to_date=2026/05/21"
+        )
+        assert r.status_code == 422
+        assert "YYYY-MM-DD" in r.json()["detail"]
+    finally:
+        clear_overrides()
