@@ -528,7 +528,11 @@ export default function PartnerDocuments() {
   )
 
   if (internalMode) {
-    return <div className="fp-page">{content}</div>
+    // Sprint 21 hotfix FPRM-356: match the full-width layout used by every
+    // other internal page (DealQueue, DealList, InternalQuotes, etc.) --
+    // a plain <div> that fills the InternalLayout content slot. The earlier
+    // ``fp-page`` wrapper bunched content into a narrow column.
+    return <div>{content}</div>
   }
   return content
 }

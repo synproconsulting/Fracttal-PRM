@@ -46,7 +46,6 @@ from models import (
     AddonCatalogItem,
     DealRegistration,
     DocumentReference,
-    DocumentStatus,
     FeaturePlanPrice,
     PartnerDocument,
     PartnerOrganization,
@@ -613,13 +612,18 @@ def update_quote_status(
             ),
         )
 
-    # Acceptance gate (Sprint 21 / AD-33): an ``accepted`` quote must have
-    # a proof-of-acceptance document on file (signed order form /
-    # confirmation). The document itself lives in the centralised
-    # ``partner_documents`` store; the link from the quote is captured in
-    # ``document_references`` (entity_type='quote', label='quote_acceptance').
-    # The underlying PartnerDocument must be approved -- a pending review
-    # is not yet evidence.
+    # Acceptance gate (Sprint 21 / AD-33; Sprint 21 hotfix FPRM-353):
+    # an ``accepted`` quote must have a proof-of-acceptance document
+    # attached. Evidence lives in ``partner_documents`` and the link to
+    # the quote is captured in ``document_references`` (entity_type='quote',
+    # label='quote_acceptance').
+    #
+    # The status field on PartnerDocument is for the KYC / compliance
+    # review workflow -- it does NOT govern whether a doc counts as
+    # quote evidence. A channel_manager attaching a signed order form
+    # is the affirmative evidence act; requiring a separate approve step
+    # produced the production bug where the gate failed silently after
+    # upload (FPRM-353).
     if new_status == "accepted":
         has_acceptance_doc = (
             db.query(DocumentReference)
@@ -627,7 +631,6 @@ def update_quote_status(
             .filter(DocumentReference.entity_type == "quote")
             .filter(DocumentReference.entity_id == quote.id)
             .filter(DocumentReference.label == "quote_acceptance")
-            .filter(PartnerDocument.status == DocumentStatus.approved)
             .first()
             is not None
         )
@@ -1295,6 +1298,11 @@ def list_internal_quotes(
                 "quote_name": quote.quote_name or "Untitled Quote",
                 "deal_id": str(quote.deal_id),
                 "deal_name": deal.deal_name or "—",
+                # Sprint 21 hotfix FPRM-357: surface the parent deal's
+                # lifecycle status so the InternalQuotes dashboard column
+                # can distinguish pipeline quotes from quotes sitting on
+                # won / lost / withdrawn / cancelled deals.
+                "deal_status": deal.status,
                 "partner_org_id": str(quote.partner_org_id),
                 "partner_org_name": partner.legal_name,
                 "currency_code": quote.currency_code,

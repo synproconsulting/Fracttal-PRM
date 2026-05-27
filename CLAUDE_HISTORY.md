@@ -2250,3 +2250,86 @@ Retired (4): `POST` / `GET` / `GET .../download` / `DELETE` on `/quotes/{quote_i
    rejected -- recorded as a known issue in CLAUDE.md.
 
 ---
+
+## Sprint 21 Hotfix -- Post-Sprint-21 Bug Fixes
+
+**Started:** 2026-05-27
+**Closed:** 2026-05-27
+**Fix Version:** Sprint 21 (10868) -- same sprint, no new fix version
+**Native Sprint:** 841
+**Tests:** 738 → **740**
+
+### Why this hotfix
+
+UI testing on the Sprint 21 PR after merge surfaced five bugs that fell into
+two distinct buckets. The first three are interlocked: the quote acceptance
+gate was silently rejecting status transitions even though documents were
+visibly attached, and the quote modal lacked a path to reuse an existing
+partner document (only Upload New worked). The remaining two are smaller:
+the internal `/internal/partners/:id/documents` page was constrained to a
+narrow column instead of the full-width layout the rest of the internal
+pages use, and the `deal_status` field added in Sprint 21 was not actually
+returned by `GET /internal/quotes` or rendered as a column in either the
+internal or portal quotes table.
+
+### Bugs fixed
+
+| Key | Bug | Root cause |
+|---|---|---|
+| FPRM-353 | Mark as Accepted does not change quote status even with documents attached | The acceptance gate joined `document_references` → `partner_documents` and filtered on `PartnerDocument.status == 'approved'`. Documents uploaded via the QuoteDetail modal arrive with the default `status='pending_review'` and there is no UI path to flip them to approved. The button enabled (because the document_type matched), the click PATCHed status, the backend returned 422 with a "proof must be attached" detail, and the user saw an error that contradicted the visible attachment. Fix: drop the `status='approved'` filter from the gate -- the attachment via `document_references` IS the affirmative evidence act; the status field on `partner_documents` is for the KYC review workflow, not quote acceptance. |
+| FPRM-354 | Cannot open/edit existing draft quote to attach a document | Investigation showed the modal already opened for drafts (no status gate on the View button) and the document section already showed the "+ Attach Document" button. The actual gap was the single-path Upload New flow -- the user expected to ALSO be able to reuse an existing partner document without re-uploading. Subsumed into FPRM-355. |
+| FPRM-355 | Quote document section still shows old direct-upload form -- picker and upload flow not rendering | The Sprint 21 implementation only built the Upload New path. Added a two-tab UI inside the same panel: Upload New (default, original flow) and Pick Existing (lists `GET /partners/{id}/documents`, excludes already-attached docs, attach button POSTs a single reference). |
+| FPRM-356 | Internal partner documents page does not fit to full page width | `internalMode` wrapped content in `<div className="fp-page">`. The `fp-page` class constrained width whereas every other internal page (DealQueue, DealList, InternalQuotes) uses a plain `<div>` and inherits the full content slot from `InternalLayout`. Fix: drop the class. |
+| FPRM-357 | deal_status column missing from internal and portal quotes list UI | Sprint 21 added `deal_status` to `GET /partners/{id}/quotes` but not to `GET /internal/quotes`; and neither the internal nor portal quotes tables rendered the field. Fix: include `deal_status` in the internal-quotes response, plus a `DealStatusBadge` (tinted, AD-27 palette) and new column in both InternalQuotes.jsx and PortalQuotes.jsx. |
+
+### Files changed
+
+| Layer | File | Change |
+|---|---|---|
+| Backend | `backend/routers/quotes_router.py` | Acceptance gate filter `PartnerDocument.status == DocumentStatus.approved` removed (FPRM-353). `DocumentStatus` import dropped (no longer referenced). `deal_status` added to `GET /internal/quotes` item payload (FPRM-357). |
+| Tests | `backend/tests/test_pipeline_toggle_and_terminal_statuses.py` | New `test_accept_quote_with_pending_review_document_succeeds` regression test (FPRM-353). |
+| Tests | `backend/tests/test_internal_quotes.py` | New `test_internal_quotes_list_includes_deal_status` (FPRM-357). |
+| Frontend | `frontend/src/pages/QuoteDetail.jsx` | Document section gains a tab switcher (Upload New / Pick Existing); new `loadPickList` fetches `/partners/{id}/documents` minus already-attached; new `handleAttachExistingDocument` POSTs a reference only (FPRM-354 / FPRM-355). |
+| Frontend | `frontend/src/pages/PartnerDocuments.jsx` | `internalMode` returns a plain `<div>` instead of `<div className="fp-page">` so the page uses full width (FPRM-356). |
+| Frontend | `frontend/src/pages/InternalQuotes.jsx` | New `DealStatusBadge` (tinted, AD-27 palette); new Deal Status column between Status and Pipeline; colspan adjusted (FPRM-357). |
+| Frontend | `frontend/src/pages/PortalQuotes.jsx` | Same Deal Status column + badge as InternalQuotes (FPRM-357). |
+
+### UX decision recorded
+
+Document attachment from a quote must offer two paths in a single panel:
+
+1. **Upload New** -- creates a `partner_documents` record AND a
+   `document_references` row in one operation; the user never leaves the
+   quote modal.
+2. **Pick Existing** -- selects from existing partner documents, creates a
+   `document_references` row only.
+
+This supersedes the Sprint 21 single-path implementation. The acceptance gate
+in `PATCH /quotes/{id}/status` now treats the mere presence of an attachment
+as sufficient evidence -- it no longer requires `PartnerDocument.status` to
+be `'approved'`. The status field on `partner_documents` remains the
+substrate for the KYC / compliance review workflow (`documents_router.py`
+PATCH endpoint) but is decoupled from the quote acceptance gate.
+
+### Lessons
+
+1. **A gate that depends on two independent state machines silently fails
+   when one is off.** The acceptance gate required both "document attached"
+   (via `document_references`) AND "document approved" (via
+   `partner_documents.status`). The QuoteDetail upload flow only created the
+   first; flipping the second required a trip to the Documents page and an
+   internal review action that channel managers normally don't perform on
+   evidence they uploaded themselves. The fix is the cleaner gate: one
+   condition, the attachment itself.
+2. **A column added to one of two list endpoints needs to be added to
+   both.** Sprint 21 carry-forward fix added `deal_status` to
+   `GET /partners/{id}/quotes` (closing the PR #172 TODO) but missed
+   `GET /internal/quotes`. The UI then had no column to read regardless.
+   Future similar fixes: audit every consumer endpoint when adding a field
+   to one of them.
+3. **`fp-page` was a layout footgun.** No other internal page uses it. The
+   class survived from an earlier layout iteration. Worth a wider audit:
+   any class that exists but is used by exactly one page is either
+   load-bearing (rename it to advertise that) or vestigial (delete it).
+
+---
