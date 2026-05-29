@@ -203,10 +203,26 @@ def test_upload_auto_approve_rule_sets_status_approved(client, db):
     assert doc.status == DocumentStatus.approved
 
 
-def test_upload_no_rule_defaults_to_pending(client, db):
+def test_upload_no_rule_defaults_to_approved(client, db):
+    """FPRM-384: with no document_type_rules row, the default is
+    auto-approve (status=approved)."""
     p = _partner(db)
     _auth(_user(db, UserRole.system_admin.value))
     r = _upload(client, p.id, document_type="nda")
+    assert r.status_code == 201, r.text
+    doc = db.query(PartnerDocument).filter(
+        PartnerDocument.id == uuid.UUID(r.json()["id"])
+    ).first()
+    assert doc.status == DocumentStatus.approved
+
+
+def test_upload_requires_approval_rule_sets_status_pending(client, db):
+    """FPRM-384: a rule with requires_approval=true (auto_approve=false)
+    makes the upload land in pending_review."""
+    p = _partner(db)
+    _seed_contract_rule(db)
+    _auth(_user(db, UserRole.system_admin.value))
+    r = _upload(client, p.id, document_type="contract")
     assert r.status_code == 201, r.text
     doc = db.query(PartnerDocument).filter(
         PartnerDocument.id == uuid.UUID(r.json()["id"])
@@ -392,7 +408,9 @@ def test_document_type_rule_create_read_update_delete(client, db):
     assert r.status_code == 204
 
 
-def test_document_type_rule_delete_in_use_returns_409(client, db):
+def test_document_type_rule_delete_in_use_succeeds(client, db):
+    """FPRM-385: rules are freely deletable even when partner_documents of
+    that type exist. The documents keep their current status (no cascade)."""
     p = _partner(db)
     admin = _user(db, UserRole.system_admin.value)
     _auth(admin)
@@ -402,10 +420,25 @@ def test_document_type_rule_delete_in_use_returns_409(client, db):
     )
     rule_id = create.json()["id"]
     # Create a partner_document with this type
-    _upload(client, p.id, document_type="custom_type", document_name="x.pdf")
-    # Delete should now 409
+    upload = _upload(client, p.id, document_type="custom_type", document_name="x.pdf")
+    doc_id = uuid.UUID(upload.json()["id"])
+    doc_before = db.query(PartnerDocument).filter(
+        PartnerDocument.id == doc_id
+    ).first()
+    status_before = doc_before.status
+    # Delete now succeeds (guard removed)
     r = client.delete(f"/admin/document-type-rules/{rule_id}")
-    assert r.status_code == 409
+    assert r.status_code == 204
+    # Rule gone
+    assert db.query(DocumentTypeRule).filter(
+        DocumentTypeRule.id == uuid.UUID(rule_id)
+    ).first() is None
+    # Document survives unchanged
+    doc_after = db.query(PartnerDocument).filter(
+        PartnerDocument.id == doc_id
+    ).first()
+    assert doc_after is not None
+    assert doc_after.status == status_before
 
 
 def test_document_type_rule_auto_approve_forces_no_manual_approval(client, db):
@@ -550,18 +583,26 @@ def test_preview_unknown_type_returns_attachment_disposition(client, db):
 
 
 def test_partner_admin_delete_unreferenced_succeeds(client, db):
+    """FPRM-383: an unreferenced document is permanently removed from the
+    DB (was previously soft-flagged as rejected). The version rows cascade
+    away too."""
     p = _partner(db)
     pa = _user(db, UserRole.partner_admin.value, partner_org_id=p.id)
     _auth(pa)
     upload = _upload(client, p.id, document_type="nda").json()
+    doc_id = uuid.UUID(upload["id"])
     r = client.delete(f"/partners/{p.id}/documents/{upload['id']}")
     assert r.status_code == 200
-    # Soft-delete: status flipped to rejected, row persists
+    # Permanent delete: row is gone
     doc = db.query(PartnerDocument).filter(
-        PartnerDocument.id == uuid.UUID(upload["id"])
+        PartnerDocument.id == doc_id
     ).first()
-    assert doc is not None
-    assert doc.status == DocumentStatus.rejected
+    assert doc is None
+    # Version rows cascaded away
+    versions = db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc_id
+    ).all()
+    assert versions == []
 
 
 def test_partner_admin_delete_referenced_returns_409(client, db):

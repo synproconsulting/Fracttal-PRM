@@ -112,7 +112,9 @@ def test_upload_document_as_partner_admin(db_session):
     assert r.status_code == 201
     data = r.json()
     assert data["document_type"] == "nda"
-    assert data["status"] == "pending_review"
+    # FPRM-384: with no document_type_rules row for 'nda', the upload
+    # defaults to auto-approve (status=approved).
+    assert data["status"] == "approved"
 
 
 def test_upload_document_other_org_denied(db_session):

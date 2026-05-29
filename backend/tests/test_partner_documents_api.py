@@ -224,14 +224,15 @@ def test_list_documents_filters_by_status(client, db):
     p = _partner(db)
     admin = _user(db, UserRole.channel_ops_admin.value)
     _auth(admin)
-    upl = _upload(client, p.id, document_type="nda")
-    doc_id = upl.json()["id"]
-    # Approve the doc as the same channel_ops_admin
+    # FPRM-384: with no rule for 'nda', uploads auto-approve. The first
+    # doc ("acceptance.pdf") stays approved; the second is explicitly
+    # flipped to rejected so the approved-status filter excludes it.
+    _upload(client, p.id, document_type="nda")
+    upl2 = _upload(client, p.id, document_type="nda", document_name="rejected.pdf")
     client.patch(
-        f"/partners/{p.id}/documents/{doc_id}",
-        json={"status": "approved"},
+        f"/partners/{p.id}/documents/{upl2.json()['id']}",
+        json={"status": "rejected"},
     )
-    _upload(client, p.id, document_type="nda", document_name="pending.pdf")
 
     r = client.get(f"/partners/{p.id}/documents?status=approved")
     assert r.status_code == 200
