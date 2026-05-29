@@ -64,6 +64,12 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
   const canDeleteDocument = (
     currentUserRole === 'system_admin' || currentUserRole === 'channel_ops_admin'
   )
+  // AD-35 (FPRM-389): partner roles may attach a proof-of-acceptance document
+  // and mark their own-org quote accepted -- even though the portal renders the
+  // detail read-only for every other action. Tenant scope is enforced
+  // server-side. They never see retract/delete/edit/sent/expire/add-version.
+  const isPartner = currentUserRole === 'partner_admin' || currentUserRole === 'partner_user'
+  const canAttachAcceptance = canUploadDocument || isPartner
   const hasAcceptanceDoc = documents.some((d) => d.document_type === 'quote_acceptance')
 
   useEffect(() => {
@@ -387,7 +393,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
     }
   }
 
-  const _MAX_DOC_BYTES = 10 * 1024 * 1024
+  const _MAX_DOC_BYTES = 25 * 1024 * 1024  // AD-37: aligned with the 25 MB partner-documents cap
 
   async function handleAttachDocument() {
     // Sprint 21 / AD-33 -- two-step flow: upload bytes into the centralised
@@ -399,7 +405,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       return
     }
     if (attachFile.size > _MAX_DOC_BYTES) {
-      setAttachError('File too large. Maximum upload size is 10 MB.')
+      setAttachError('File too large. Maximum upload size is 25 MB.')
       return
     }
     if (!quote?.partner_org_id) {
@@ -642,7 +648,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
               Mark as Sent
             </button>
           )}
-          {!isReadOnly && quote.status === 'sent' && (
+          {(!isReadOnly || isPartner) && quote.status === 'sent' && (
             <button type="button"
               disabled={busy || !hasAcceptanceDoc}
               title={!hasAcceptanceDoc ? 'Attach proof of acceptance before marking as accepted' : undefined}
@@ -890,20 +896,20 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h3 className="fp-section-title" style={{ margin: 0 }}>Documents</h3>
-          {!isReadOnly && canUploadDocument && !showAttachForm && (
+          {(!isReadOnly || isPartner) && canAttachAcceptance && !showAttachForm && (
             <button type="button" className="fp-btn fp-btn--primary" onClick={() => setShowAttachForm(true)}>
               + Attach Document
             </button>
           )}
         </div>
 
-        {!isReadOnly && !hasAcceptanceDoc && (quote.status === 'draft' || quote.status === 'sent') && (
+        {(!isReadOnly || isPartner) && !hasAcceptanceDoc && (quote.status === 'draft' || quote.status === 'sent') && (
           <div className="fp-alert fp-alert--warning" role="status" style={{ marginBottom: 12 }}>
             ⚠️ Attach proof of acceptance before marking as accepted
           </div>
         )}
 
-        {!isReadOnly && showAttachForm && (
+        {(!isReadOnly || isPartner) && showAttachForm && (
           <div style={{ background: '#F8FAFC', border: '1px solid #E0E4EA', borderRadius: 6, padding: 12, marginBottom: 12 }}>
             {/* Sprint 21 hotfix FPRM-355: two-path attach — Upload New or Pick Existing. */}
             <div role="tablist" style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '1px solid #E0E4EA' }}>
@@ -994,7 +1000,7 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
                   return null
                 })()}
                 <label style={{ display: 'block', fontSize: 13 }}>
-                  <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>File (max 10 MB)</span>
+                  <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>File (max 25 MB)</span>
                   <input
                     type="file"
                     onChange={(e) => setAttachFile(e.target.files?.[0] || null)}

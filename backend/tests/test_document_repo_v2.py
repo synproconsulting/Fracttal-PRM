@@ -409,7 +409,9 @@ def test_revert_sets_is_current_on_target_version(client, db):
     assert [v.is_current for v in versions_after] == [True, False]
 
 
-def test_revert_as_partner_admin_returns_403(client, db):
+def test_revert_as_partner_admin_own_org_succeeds(client, db):
+    """FPRM-390 / AD-36 supersedes the Sprint 22 internal-only rule:
+    partner_admin may now revert versions of their OWN org's documents."""
     p = _partner(db)
     cm = _user(db, UserRole.channel_manager.value)
     _auth(cm)
@@ -421,13 +423,14 @@ def test_revert_as_partner_admin_returns_403(client, db):
     )
     versions = client.get(f"/partners/{p.id}/documents/{doc_id}/versions").json()
     v1 = next(v for v in versions if v["version_number"] == 1)
-    # Switch to partner_admin
+    # Switch to partner_admin of the SAME org
     pa = _user(db, UserRole.partner_admin.value, partner_org_id=p.id)
     _auth(pa)
     r = client.post(
         f"/partners/{p.id}/documents/{doc_id}/versions/{v1['id']}/revert",
     )
-    assert r.status_code == 403
+    assert r.status_code == 200, r.text
+    assert r.json()["current_version_number"] == 1
 
 
 # ============================================================

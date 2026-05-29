@@ -2501,3 +2501,64 @@ matching, not the conditional.
 *Docs PR (2026-05-29): established a dedicated "Phase 7 Backlog" section in CLAUDE.md as the single authoritative home for deferred work; re-added Dynamic RBAC (Phase 5 deferral that had dropped off the written list) as the anchor item. No code change. PR #184.*
 
 ---
+
+## Sprint 23 PR A — Sprint 22 Carry-Forward (Phase 6)
+
+**Date:** 2026-05-29 · **PR:** #185 · **Migration head:** 038 → **039** ·
+**Tests:** 769 → **786** (+17). Fix version "Sprint 23" (10934), native sprint 907.
+PR B (Asset Library, migration 040) is a separate prompt run after this merges.
+
+Six stories (FPRM-387…392), 12 subtasks (FPRM-397…408). All under epic FPRM-299.
+Closes the 8 Sprint 22 UI-testing carry-forward items.
+
+### Stories / subtasks
+
+| Story | Items | Summary |
+|---|---|---|
+| S1 FPRM-387 (S1.1/S1.2) | #5,#7 | Migration 039 dual-table seed + reconcile; universal approval gate verified on every upload path (partner-documents, version, quote-attach) via the shared `_find_rule_for_type` helper. |
+| S2 FPRM-388 (S2.1/S2.2) | #8,#3 | ProgramConfig → Document Rules: free-text type field becomes a `<select>` sourced from `GET /config/document-types` (+ "Add new type…" creating a `document_types` vocabulary row); label renamed "Requires Approval". |
+| S3 FPRM-389 (S3.1/S3.2) | #6 | Partner self-accept (AD-35): `quote:accept_own` permission added to partner roles; quote status handler allows partner own-org `sent → accepted` only; portal QuoteDetail exposes attach proof + Mark as Accepted for partners. |
+| S4 FPRM-390 (S4.1/S4.2) | #4,#1 | Version revert widened to `partner_admin` own-org (AD-36, supersedes FPRM-374); audit action renamed `document.reverted` → `document.version_reverted`; version list now returns `uploaded_by_name`; version panel shows Uploaded By + a confirm dialog before revert. |
+| S5 FPRM-391 (S5.1/S5.2) | #2 | Upload size cap raised 10 MB → **25 MB** (AD-37); no server-side type allowlist existed (only the FE `accept` filter, now removed); quote-attach FE guard aligned to 25 MB. |
+| S6 FPRM-392 (S6.1/S6.2) | — | These four canonical-doc updates. |
+
+### Migration 039 (data only, no schema change)
+
+Seeds `proof_of_fiscal_domicile`, `w9`, `insurance_certificate`, `nda`,
+`security_assessment` into `document_type_rules` (requires_approval=true,
+auto_approve=false) AND the same set + `contract`/`quote_acceptance` into the
+`document_types` vocabulary. Reconciles every DISTINCT in-use
+`partner_documents.document_type` into both tables. Idempotent (`WHERE NOT
+EXISTS`); `downgrade()` removes only the five rule rows it introduced.
+
+### Endpoint note
+
+No NEW endpoint shipped. `GET /config/document-types` already existed as the
+DocumentTypeConfig *vocabulary* endpoint and was deliberately **not** repurposed
+to return rules (it has tested consumers + drives upload validation). Both the
+upload form and the admin Document Rules dropdown are wired to it. This is the
+two-table model recorded as **AD-38**. (The Jira ticket text predates this
+decision and describes a "new" endpoint returning rules; the implementation
+follows the owner's two-table direction.)
+
+### ADs recorded
+
+AD-35 (partner self-accept), AD-36 (partner_admin revert — **supersedes
+FPRM-374**), AD-37 (size cap replaces type allowlist), AD-38 (two-table document
+model).
+
+### Lessons
+
+1. **Check for path collisions before adding a "new" endpoint.** The prompt's
+   `GET /config/document-types` already existed with a different (tested) shape.
+   Surfacing it to the owner produced the cleaner two-table model instead of a
+   breaking repurpose.
+2. **Widening a permission means inverting its old test.** The Sprint 22
+   `test_revert_as_partner_admin_returns_403` asserted the exact behaviour AD-36
+   reverses — it had to flip to a 200 success assertion, not just get a new
+   sibling test.
+3. **Frontend `accept=` filters are not a security control.** The "type
+   allowlist" lived only in the browser; the backend already accepted any MIME.
+   AD-37 made the real gate (size) explicit on both sides.
+
+---
