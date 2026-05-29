@@ -32,6 +32,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -62,6 +63,30 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB cap (matches retired quote_document
 # pre-migration-017. Quote acceptance documents are routed through the same
 # endpoint with document_type='quote_acceptance' -- pre-seed accepted there.
 _QUOTE_DOC_TYPES = {"quote_acceptance", "purchase_order", "signed_proposal"}
+
+
+def _find_rule_for_type(db: Session, document_type) -> Optional[DocumentTypeRule]:
+    """Look up a ``document_type_rules`` row, matching case-insensitively
+    and ignoring surrounding whitespace.
+
+    FPRM-386 -- the Program Config -> Document Rules form is a free-text
+    input, so an admin can persist a rule as ``"NDA"`` while uploads send
+    the canonical lowercase code ``"nda"``. An exact ``==`` match silently
+    misses, the upload falls through to the auto-approve default, and a
+    ``requires_approval`` document is wrongly approved. Normalising both
+    sides honours admin intent regardless of casing and repairs existing
+    mis-cased rows immediately, with no data migration.
+    """
+    if document_type is None:
+        return None
+    key = str(document_type).strip().lower()
+    if not key:
+        return None
+    return (
+        db.query(DocumentTypeRule)
+        .filter(func.lower(func.trim(DocumentTypeRule.document_type)) == key)
+        .first()
+    )
 
 
 def _doc_columns_excluding_data() -> list[str]:
@@ -287,11 +312,10 @@ def upload_document(
         # Sprint 22 -- admin-defined types via document_type_rules count
         # as valid. This unlocks Program Config -> Document Rules as the
         # canonical onboarding path for new document categories.
-        rule_match = (
-            db.query(DocumentTypeRule)
-            .filter(DocumentTypeRule.document_type == requested_code)
-            .first()
-        )
+        # FPRM-386 -- match case-insensitively + trimmed (see
+        # _find_rule_for_type) so a free-text rule entered as "NDA" still
+        # validates an upload of "nda".
+        rule_match = _find_rule_for_type(db, requested_code)
         if rule_match is not None:
             doc_type_value = rule_match.document_type
         else:
@@ -352,11 +376,10 @@ def upload_document(
     #   * no matching rule                 -> approved (default is
     #     auto-approve; routine attachments with no governing rule should
     #     not need a manual rubber-stamp)
-    rule = (
-        db.query(DocumentTypeRule)
-        .filter(DocumentTypeRule.document_type == doc_type_value)
-        .first()
-    )
+    # FPRM-386 -- the lookup is case-insensitive + trimmed so a rule stored
+    # with different casing than the upload's document_type is still found
+    # and its requires_approval gate is honoured.
+    rule = _find_rule_for_type(db, doc_type_value)
     if rule is None:
         initial_status = DocumentStatus.approved
     elif rule.auto_approve:
@@ -1188,11 +1211,10 @@ def create_document_type_rule(
     if auto_approve:
         requires_approval = False
 
-    existing = (
-        db.query(DocumentTypeRule)
-        .filter(DocumentTypeRule.document_type == doc_type)
-        .first()
-    )
+    # FPRM-386 -- duplicate check is case-insensitive so "NDA" and "nda"
+    # can't both exist; case-insensitive upload matching would otherwise be
+    # ambiguous about which rule wins.
+    existing = _find_rule_for_type(db, doc_type)
     if existing is not None:
         raise HTTPException(
             status_code=409,
