@@ -2456,3 +2456,44 @@ contracts gated; teams wanting a manual-review gate for other types must add a r
    and matches the partner's mental model of "delete".
 
 ---
+
+## Sprint 22 Hotfix #2 — Case-insensitive document_type_rules matching (Phase 6)
+
+**Date:** 2026-05-29 · **PR:** #183 · **Migration head:** 038 (unchanged) ·
+**Tests:** 766 → **769** (+3 regression cases).
+
+Single bug **FPRM-386** under epic FPRM-299 (hotfix pattern — no fix version / no
+native sprint).
+
+### Bug fixed
+
+| Ticket | Symptom | Root cause | Fix |
+|---|---|---|---|
+| FPRM-386 | `requires_approval=true` documents (e.g. NDA) were auto-approved on upload instead of landing `pending_review`. | The Program Config → Document Rules form is a free-text input, so an admin stored a rule as `document_type="NDA"`. Uploads send the canonical lowercase code `nda`, and the rule lookup was an exact, case-sensitive `==`, so it found no rule and fell through to the auto-approve default (FPRM-384). | Rule lookup in the upload endpoint is now case-insensitive + whitespace-trimmed (`LOWER(TRIM(...))`) on both the type-validation and status-derivation paths, via a shared `_find_rule_for_type` helper. The rule-create duplicate check is also case-insensitive so `NDA`/`nda` can't coexist. The PR #182 conditional and the no-rule→approved default are unchanged. The acceptance gate is unaffected (it compares against the hardcoded `quote_acceptance` constant). |
+
+### Files changed
+
+| Area | File | Change |
+|---|---|---|
+| Backend router | `backend/routers/documents_router.py` | New `_find_rule_for_type` helper (case-insensitive + trimmed); used at the upload type-validation lookup, the status-derivation lookup, and the rule-create duplicate check. `from sqlalchemy import func` added. |
+| Tests | `backend/tests/test_document_repo_v2.py` | +3: `test_upload_matches_rule_case_insensitively` (rule `NDA` ↔ upload `nda` → `pending_review`), `test_upload_matches_rule_ignoring_whitespace`, `test_rule_create_duplicate_is_case_insensitive` (409). |
+
+### Investigation note
+
+The originally-suspected "broken conditional" did **not** reproduce — the PR #182
+status conditional was already correct and its `requires_approval` test was green. An
+empirical repro (`rule=NDA, upload=nda → approved`) isolated the real cause as the
+exact-match lookup, confirmed by the free-text Document Rules form. The fix targets
+matching, not the conditional.
+
+### Lessons
+
+1. **"Tests green" ≠ "behaviour correct" when the test data is too tidy.** The Sprint 22
+   `requires_approval` test used a same-cased type (`contract`/`contract`), so it never
+   exercised the casing path that broke in production. The regression test now seeds the
+   rule with a *different* casing than the upload — mirroring the real free-text entry.
+2. **Free-text identifiers need normalisation at the matching layer, not just the UI.**
+   Fixing the dropdown alone would leave existing mis-cased rows broken; normalising the
+   lookup repairs production data immediately and is resilient to any future UI.
+
+---

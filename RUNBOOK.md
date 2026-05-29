@@ -402,6 +402,7 @@ The canonical copy of `CLAUDE.md`, `PROJECT_CONTEXT.md`, `CLAUDE_HISTORY.md`, an
 | `partner_profiles` has no POST endpoint | The profile row is only created by `provisioning.provision_partner_from_application`. There is no standalone create route. | Always provision test partners via the application flow (see FPRM-172 row above). PATCH /partner-profiles/{id} only works on existing rows. |
 | Auto-merger occasionally returns 405 on merge | Race between GitHub check-suite settling and the auto-merger's merge call. Observed Sprint 10 PR #73 (FPRM-160). | Merge the PR manually via the GitHub UI once blocking checks are green. See § 7 for the full procedure. Sprint still closes cleanly. |
 | Partner document uploads auto-approve by default (FPRM-384) | Since the Sprint 22 hotfix, `POST /partners/{id}/documents` sets `status=approved` unless a `document_type_rules` row for that `document_type` has `requires_approval=true` (then `pending_review`). The `contract` seed is gated; `quote_acceptance` and unruled types auto-approve. | When testing the manual review path, first create/flip a rule with `requires_approval=true` via `POST/PATCH /admin/document-type-rules`. The §11 step-7 "approve both docs as system_admin" is now only needed for `requires_approval` types. |
+| Rule `document_type` matching is **case-insensitive + whitespace-trimmed** (FPRM-386) | The Program Config → Document Rules form is free-text. Originally the upload lookup was an exact `==`, so a rule typed as `NDA` never matched an upload of `nda` → the `requires_approval` gate was silently bypassed and the doc auto-approved. The match is now normalised (`LOWER(TRIM(...))`) on both sides, and the rule-create duplicate check is case-insensitive (can't create both `NDA` and `nda`). | No action — a rule entered in any casing now governs uploads of the canonical lowercase code. Don't rely on case to create variant rules; they're treated as the same type. |
 | Partner self-service delete is permanent (FPRM-383) | `DELETE /partners/{id}/documents/{doc_id}` as a `partner_admin` now hard-deletes an unreferenced document (versions cascade) instead of soft-flagging `rejected`. If the doc is referenced by a quote, it still 409s. | To delete, first remove all `document_references` (detach from quotes); then the partner delete succeeds and the row is gone. |
 | Document-type rules are freely deletable (FPRM-385) | `DELETE /admin/document-type-rules/{id}` no longer 409s when documents of that type exist. Existing documents keep their status. | None — delete any rule at any time as system_admin. |
 
@@ -1221,7 +1222,9 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 22 (2026-05-27): Document Repository v2 — migrations 037/038, 9 new endpoints, AD-34 deprecation of partner_documents.file_data, versioning UI on portal + internal, Document Rules admin tab. +25 tests (740 → 765).*
 
+*Sprint 22 hotfix #2 (2026-05-29, FPRM-386, PR #183): case-insensitive + whitespace-trimmed document_type_rules matching on upload — a free-text rule entered as `NDA` now governs uploads of the lowercase code `nda`; rule-create dedupe is case-insensitive. +3 tests (766 → 769).*
+
 *RUNBOOK created: May 2026*
-*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–22 closeout, Sprint 21 hotfix.*
-*Last updated: Sprint 22 — 2026-05-27.*
+*Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–22 closeout, Sprint 21 hotfix, Sprint 22 hotfix #2.*
+*Last updated: Sprint 22 hotfix #2 — 2026-05-29.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

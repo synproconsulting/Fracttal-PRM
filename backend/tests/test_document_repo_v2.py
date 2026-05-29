@@ -230,6 +230,60 @@ def test_upload_requires_approval_rule_sets_status_pending(client, db):
     assert doc.status == DocumentStatus.pending_review
 
 
+def test_upload_matches_rule_case_insensitively(client, db):
+    """FPRM-386 regression: a rule persisted with different casing ("NDA")
+    than the upload's canonical document_type ("nda") is still matched, so
+    requires_approval is honoured instead of silently auto-approving. This
+    is the exact production failure -- the free-text Document Rules form
+    stored "NDA" while uploads send the lowercase code."""
+    p = _partner(db)
+    _auth(_user(db, UserRole.system_admin.value))
+    db.add(DocumentTypeRule(
+        id=uuid.uuid4(),
+        document_type="NDA",  # uppercase, as a free-text rule entry stores it
+        requires_approval=True,
+        auto_approve=False,
+    ))
+    db.commit()
+    r = _upload(client, p.id, document_type="nda")  # canonical lowercase code
+    assert r.status_code == 201, r.text
+    doc = db.query(PartnerDocument).filter(
+        PartnerDocument.id == uuid.UUID(r.json()["id"])
+    ).first()
+    assert doc.status == DocumentStatus.pending_review
+
+
+def test_upload_matches_rule_ignoring_whitespace(client, db):
+    """FPRM-386: surrounding whitespace on the stored rule type is ignored."""
+    p = _partner(db)
+    _auth(_user(db, UserRole.system_admin.value))
+    db.add(DocumentTypeRule(
+        id=uuid.uuid4(),
+        document_type="  contract  ",
+        requires_approval=True,
+        auto_approve=False,
+    ))
+    db.commit()
+    r = _upload(client, p.id, document_type="contract")
+    assert r.status_code == 201, r.text
+    doc = db.query(PartnerDocument).filter(
+        PartnerDocument.id == uuid.UUID(r.json()["id"])
+    ).first()
+    assert doc.status == DocumentStatus.pending_review
+
+
+def test_rule_create_duplicate_is_case_insensitive(client, db):
+    """FPRM-386: cannot create "nda" when "NDA" already exists -- otherwise
+    case-insensitive upload matching would be ambiguous about which wins."""
+    _auth(_user(db, UserRole.system_admin.value))
+    r1 = client.post("/admin/document-type-rules",
+                     json={"document_type": "NDA", "requires_approval": True})
+    assert r1.status_code == 201
+    r2 = client.post("/admin/document-type-rules",
+                     json={"document_type": "nda", "requires_approval": True})
+    assert r2.status_code == 409
+
+
 # ============================================================
 # Story 2 -- new version endpoint
 # ============================================================
