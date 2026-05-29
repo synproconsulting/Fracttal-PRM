@@ -1226,5 +1226,5 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *RUNBOOK created: May 2026*
 *Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–22 closeout, Sprint 21 hotfix, Sprint 22 hotfix #2.*
-*Last updated: Sprint 22 hotfix #2 — 2026-05-29.*
+*Last updated: 2026-05-29 — docs PR #184 (Phase 7 Backlog section established in CLAUDE.md).*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

@@ -2497,3 +2497,7 @@ matching, not the conditional.
    lookup repairs production data immediately and is resilient to any future UI.
 
 ---
+
+*Docs PR (2026-05-29): established a dedicated "Phase 7 Backlog" section in CLAUDE.md as the single authoritative home for deferred work; re-added Dynamic RBAC (Phase 5 deferral that had dropped off the written list) as the anchor item. No code change. PR #184.*
+
+---
