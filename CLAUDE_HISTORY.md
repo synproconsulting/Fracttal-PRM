@@ -2409,3 +2409,50 @@ and surfacing the uploader's name in list views.
    re-litigate the FPRM-353 design.
 
 ---
+
+## Sprint 22 Hotfix -- Document Repository v2 Bug Fixes (Phase 6)
+
+**Tests:** 765 -> **766** (+1 net; new `requires_approval` upload case added,
+delete/no-rule cases reworked in place).
+
+Single PR `fix: Sprint 22 hotfix — document delete, auto-approve, rule delete guard`.
+Three bugs filed under epic FPRM-299 (no fix version / no native sprint, same
+hotfix pattern as the Sprint 21 hotfix).
+
+### Bugs fixed
+
+| Ticket | Bug | Fix |
+|---|---|---|
+| FPRM-383 | Partner-admin self-service delete set `status='rejected'` instead of deleting | Unreferenced documents are now permanently removed (`db.delete(doc)`); the `document_versions` rows cascade away via FK `ondelete=CASCADE` + ORM `cascade="all, delete-orphan"`. The 409 path (document still referenced) is unchanged. |
+| FPRM-384 | Auto-approve default wrong at upload time | Upload status now derives from `document_type_rules`: `auto_approve=true` → `approved`; `requires_approval=true` → `pending_review`; **no matching rule → `approved`** (default is auto-approve). Previously a missing rule defaulted to `pending_review`. |
+| FPRM-385 | Document-type-rule delete blocked by in-use 409 guard | The in-use guard on `DELETE /admin/document-type-rules/{id}` was removed — rules are freely deletable at any time. Existing documents of that type keep whatever status they received at upload (no cascade status change). |
+
+### Files changed
+
+| Area | File | Change |
+|---|---|---|
+| Backend router | `backend/routers/documents_router.py` | Partner-admin delete path hard-deletes unreferenced docs; upload `initial_status` derivation rewritten (no-rule → approved); rule-delete in-use 409 guard removed. |
+| Tests | `backend/tests/test_document_repo_v2.py` | `no_rule_defaults_to_pending` → `..._to_approved`; new `test_upload_requires_approval_rule_sets_status_pending`; `delete_in_use_returns_409` → `..._succeeds` (204, doc survives); `delete_unreferenced_succeeds` now asserts permanent delete + version cascade. |
+| Tests | `backend/tests/test_documents.py` | `test_upload_document_as_partner_admin` now asserts `status=approved` (no rule for `nda`). |
+| Tests | `backend/tests/test_partner_documents_api.py` | `test_list_documents_filters_by_status` reworked — second `nda` upload is explicitly flipped to `rejected` since uploads now auto-approve by default. |
+
+### Behaviour-change note
+
+The no-rule upload default flip (FPRM-384) means **partner documents now auto-approve
+on upload unless a `document_type_rules` row with `requires_approval=true` governs the
+type.** This intentionally changes activation timing for orgs with no governing rules
+(documents count toward activation immediately). The `contract` seed row keeps
+contracts gated; teams wanting a manual-review gate for other types must add a rule.
+
+### Lessons
+
+1. **A "safe default" is a product decision, not a code default.** Sprint 22 shipped
+   `pending_review` as the missing-rule default reasoning it was the conservative
+   choice; the business actually wanted auto-approve so routine attachments don't pile
+   up in a review queue nobody watches. The rule table now encodes the exceptions.
+2. **Soft-delete needs a reason to exist.** The self-service delete was soft (status
+   flip) for an audit trail that `document_versions` already preserves for *referenced*
+   docs — and unreferenced docs have nothing worth keeping. Permanent delete is simpler
+   and matches the partner's mental model of "delete".
+
+---

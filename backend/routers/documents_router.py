@@ -345,18 +345,26 @@ def upload_document(
             )
     persisted_size = declared_size if declared_size is not None else decoded_size
 
-    # Sprint 22 / AD-34 -- check document_type_rules for auto-approve and
-    # the approval-workflow toggle. Missing rule => safe default: status
-    # stays at pending_review (matches the PartnerDocument model default).
+    # Sprint 22 / AD-34 + FPRM-384 -- derive the initial status from the
+    # document_type_rules table:
+    #   * rule with auto_approve=true      -> approved
+    #   * rule with requires_approval=true -> pending_review
+    #   * no matching rule                 -> approved (default is
+    #     auto-approve; routine attachments with no governing rule should
+    #     not need a manual rubber-stamp)
     rule = (
         db.query(DocumentTypeRule)
         .filter(DocumentTypeRule.document_type == doc_type_value)
         .first()
     )
-    initial_status = (
-        DocumentStatus.approved if (rule and rule.auto_approve)
-        else DocumentStatus.pending_review
-    )
+    if rule is None:
+        initial_status = DocumentStatus.approved
+    elif rule.auto_approve:
+        initial_status = DocumentStatus.approved
+    elif rule.requires_approval:
+        initial_status = DocumentStatus.pending_review
+    else:
+        initial_status = DocumentStatus.approved
 
     doc = PartnerDocument(
         id=uuid.uuid4(),
@@ -576,12 +584,13 @@ def delete_document(
        removes the partner_document row + every ``document_references``
        row pointing at it. Used to scrub evidence that should never have
        been uploaded.
-    2. **Partner self-service soft-delete** (``partner_admin`` own org,
-       Sprint 22 / FPRM-370): allowed ONLY when zero document_references
-       point at the document. Sets ``status = 'rejected'`` so the row
-       hides from active list views; the binary survives in
-       ``document_versions`` for audit. If any reference exists, returns
-       409 so the partner removes the attachment first.
+    2. **Partner self-service delete** (``partner_admin`` own org,
+       Sprint 22 / FPRM-370, fixed FPRM-383): allowed ONLY when zero
+       document_references point at the document. Permanently removes the
+       partner_document row -- the ``document_versions`` rows cascade away
+       (FK ``ondelete=CASCADE`` + ORM ``cascade="all, delete-orphan"``).
+       If any reference exists, returns 409 so the partner removes the
+       attachment first.
     """
     role = UserRole(current_user.role)
     _ensure_partner_exists_and_tenant(db, partner_id, current_user)
@@ -602,7 +611,9 @@ def delete_document(
                     "be deleted. Remove it from all quotes first."
                 ),
             )
-        doc.status = DocumentStatus.rejected
+        # FPRM-383 -- permanently delete the unreferenced document instead
+        # of soft-flagging it as rejected. Version rows cascade away.
+        db.delete(doc)
         db.commit()
         log_audit_event(
             db=db,
@@ -1264,18 +1275,9 @@ def delete_document_type_rule(
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    in_use = (
-        db.query(PartnerDocument)
-        .filter(PartnerDocument.document_type == rule.document_type)
-        .first()
-    )
-    if in_use is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="Document type in use -- cannot delete rule. "
-                   "Reassign or remove partner documents of this type first.",
-        )
-
+    # FPRM-385 -- rules are freely deletable at any time. The previous
+    # in-use 409 guard has been removed; existing partner_documents of this
+    # type keep whatever status they received at upload (no cascade change).
     snapshot = _serialize_rule(rule)
     db.delete(rule)
     db.commit()
