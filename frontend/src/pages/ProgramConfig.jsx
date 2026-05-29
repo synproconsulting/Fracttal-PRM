@@ -1813,6 +1813,12 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
   })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState(null)
+  // S2 (FPRM-388): document-type vocabulary for the Add Rule dropdown, sourced
+  // from GET /config/document-types. "Add new type…" reveals code/label inputs
+  // that create a new DocumentTypeConfig vocabulary entry before the rule.
+  const [vocab, setVocab] = useState([])
+  const [newTypeMode, setNewTypeMode] = useState(false)
+  const [newType, setNewType] = useState({ code: '', label: '' })
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -1829,10 +1835,24 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
     }
   }, [token, onError])
 
+  const loadVocab = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/config/document-types`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) return
+      const data = await r.json()
+      setVocab((data?.items || []).map((t) => ({ code: t.code, label: t.label || t.code })))
+    } catch (_) { /* dropdown falls back to free-text via "Add new type" */ }
+  }, [token])
+
   useEffect(() => { reload() }, [reload])
+  useEffect(() => { loadVocab() }, [loadVocab])
 
   function openNew() {
     setForm({ document_type: '', requires_approval: true, auto_approve: false, description: '' })
+    setNewTypeMode(false)
+    setNewType({ code: '', label: '' })
     setFormError(null)
     setEditing('new')
   }
@@ -1861,20 +1881,50 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
     setSaving(true); setFormError(null)
     try {
       const isNew = editing === 'new'
-      const url = isNew
-        ? `${API}/admin/document-type-rules`
-        : `${API}/admin/document-type-rules/${editing.id}`
-      const body = isNew
-        ? form
-        : {
+      if (!isNew) {
+        const r = await fetch(`${API}/admin/document-type-rules/${editing.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
             requires_approval: form.requires_approval,
             auto_approve: form.auto_approve,
             description: form.description,
-          }
-      const r = await fetch(url, {
-        method: isNew ? 'POST' : 'PATCH',
+          }),
+        })
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
+        setEditing(null); reload(); onUpdate?.('Rule updated')
+        return
+      }
+
+      // New rule. Resolve the document type from the dropdown, or create a
+      // brand-new vocabulary entry first when "Add new type…" is selected.
+      let docType = form.document_type
+      if (newTypeMode) {
+        docType = newType.code.trim()
+        if (!docType) { setFormError('Enter a code for the new document type'); return }
+        const vr = await fetch(`${API}/config/document-types`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ code: docType, label: (newType.label || docType).trim() }),
+        })
+        // 409 = the vocabulary entry already exists, which is fine -- proceed.
+        if (!vr.ok && vr.status !== 409) {
+          const vd = await vr.json().catch(() => ({}))
+          throw new Error(vd.detail || `HTTP ${vr.status}`)
+        }
+      }
+      if (!docType) { setFormError('Choose a document type'); return }
+
+      const r = await fetch(`${API}/admin/document-type-rules`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          document_type: docType,
+          requires_approval: form.requires_approval,
+          auto_approve: form.auto_approve,
+          description: form.description,
+        }),
       })
       const data = await r.json().catch(() => ({}))
       if (r.status === 409) {
@@ -1883,8 +1933,9 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
       }
       if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
       setEditing(null)
+      loadVocab()
       reload()
-      onUpdate?.(isNew ? 'Rule created' : 'Rule updated')
+      onUpdate?.('Rule created')
     } catch (e) {
       setFormError(e.message || String(e))
     } finally {
@@ -2011,13 +2062,61 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
             <div style={{ display: 'grid', gap: 12 }}>
               <label style={{ display: 'block', fontSize: 13 }}>
                 <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Document type</span>
-                <input
-                  type="text"
-                  value={form.document_type}
-                  onChange={(e) => setForm({ ...form, document_type: e.target.value })}
-                  disabled={editing !== 'new' || saving}
-                  style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
-                />
+                {editing !== 'new' ? (
+                  // Edit mode -- the document_type key is immutable.
+                  <input
+                    type="text"
+                    value={form.document_type}
+                    disabled
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+                  />
+                ) : (
+                  <select
+                    value={newTypeMode ? '__new__' : form.document_type}
+                    disabled={saving}
+                    onChange={(e) => {
+                      if (e.target.value === '__new__') {
+                        setNewTypeMode(true)
+                      } else {
+                        setNewTypeMode(false)
+                        setForm({ ...form, document_type: e.target.value })
+                      }
+                    }}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+                  >
+                    <option value="">Select a document type…</option>
+                    {vocab.map((t) => {
+                      const hasRule = rules.some(
+                        (r) => (r.document_type || '').trim().toLowerCase() === t.code.trim().toLowerCase(),
+                      )
+                      return (
+                        <option key={t.code} value={t.code} disabled={hasRule}>
+                          {t.label}{hasRule ? ' — rule exists' : ''}
+                        </option>
+                      )
+                    })}
+                    <option value="__new__">Add new type…</option>
+                  </select>
+                )}
+                {editing === 'new' && newTypeMode && (
+                  <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                    <input
+                      type="text" placeholder="code (e.g. tax_clearance)"
+                      value={newType.code} disabled={saving}
+                      onChange={(e) => setNewType({ ...newType, code: e.target.value })}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+                    />
+                    <input
+                      type="text" placeholder="label (e.g. Tax Clearance)"
+                      value={newType.label} disabled={saving}
+                      onChange={(e) => setNewType({ ...newType, label: e.target.value })}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+                    />
+                    <span style={{ fontSize: 12, color: '#64748B' }}>
+                      Creates a new document type in the vocabulary, then this rule.
+                    </span>
+                  </div>
+                )}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                 <input type="checkbox" checked={form.auto_approve}
@@ -2034,7 +2133,7 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
                 <input type="checkbox" checked={form.requires_approval}
                   onChange={(e) => setForm({ ...form, requires_approval: e.target.checked })}
                   disabled={saving || form.auto_approve} />
-                <span>Requires approval to count as evidence</span>
+                <span>Requires Approval</span>
               </label>
               <label style={{ display: 'block', fontSize: 13 }}>
                 <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Description (optional)</span>
@@ -2050,7 +2149,10 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
                   className="fp-btn fp-btn--ghost">
                   Cancel
                 </button>
-                <button type="button" onClick={save} disabled={saving || !form.document_type.trim()}
+                <button type="button" onClick={save}
+                  disabled={saving || (editing === 'new' && (
+                    newTypeMode ? !newType.code.trim() : !form.document_type.trim()
+                  ))}
                   className="fp-btn fp-btn--primary">
                   {saving ? 'Saving...' : (editing === 'new' ? 'Create' : 'Save')}
                 </button>

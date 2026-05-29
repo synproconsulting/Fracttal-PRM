@@ -27,6 +27,9 @@ PERMISSIONS: dict[str, set[str]] = {
         "training:read_own",
         "asset:read_own",
         "quote:read_own",
+        # AD-35 (FPRM-389): partner roles may mark their own-org quote
+        # accepted (and attach proof). No create/edit/submit/retract/delete.
+        "quote:accept_own",
     },
 
     UserRole.partner_admin: {
@@ -46,6 +49,9 @@ PERMISSIONS: dict[str, set[str]] = {
         "quote:create",
         "quote:read_own",
         "quote:update_own",
+        # AD-35 (FPRM-389): partner_admin may mark their own-org quote
+        # accepted (and attach proof). No retract/delete.
+        "quote:accept_own",
         "report:read_own",
         "report:export",
     },

@@ -56,7 +56,7 @@ from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 router = APIRouter(prefix="/partners", tags=["partner-documents"])
 
 PROOF_OF_DOMICILE_MAX_AGE_DAYS = 90
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB cap (matches retired quote_documents)
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap (AD-37 -- size gate replaces type allowlist; 26214400 bytes)
 
 # Document-type vocabulary mode -- when the document_types config table is
 # empty, fall back to the legacy DocumentType enum so deploys remain robust
@@ -299,7 +299,7 @@ def upload_document(
         if decoded_size > MAX_UPLOAD_BYTES:
             raise HTTPException(
                 status_code=422,
-                detail="File too large. Maximum upload size is 10 MB.",
+                detail="File too large. Maximum upload size is 25 MB.",
             )
 
     requested_code = str(payload["document_type"])
@@ -365,7 +365,7 @@ def upload_document(
         if declared_size > MAX_UPLOAD_BYTES:
             raise HTTPException(
                 status_code=422,
-                detail="File too large. Maximum upload size is 10 MB.",
+                detail="File too large. Maximum upload size is 25 MB.",
             )
     persisted_size = declared_size if declared_size is not None else decoded_size
 
@@ -798,8 +798,17 @@ def delete_document_reference(
 # ============================================================
 
 
-def _serialize_version(version: DocumentVersion) -> dict:
-    """Version metadata without the binary blob."""
+def _serialize_version(version: DocumentVersion, uploader_map: Optional[dict] = None) -> dict:
+    """Version metadata without the binary blob.
+
+    FPRM-390 (#1) -- ``uploaded_by_name`` is the uploader's display name
+    (full_name, falling back to email) resolved from ``uploader_map`` so the
+    version-history panel can show who uploaded each version. None when the
+    FK is null or the map is absent.
+    """
+    uploaded_by_name = None
+    if uploader_map and version.uploaded_by is not None:
+        uploaded_by_name = uploader_map.get(version.uploaded_by)
     return {
         "id": str(version.id),
         "document_id": str(version.document_id),
@@ -807,6 +816,7 @@ def _serialize_version(version: DocumentVersion) -> dict:
         "file_size_bytes": version.file_size_bytes,
         "mime_type": version.mime_type,
         "uploaded_by": str(version.uploaded_by) if version.uploaded_by else None,
+        "uploaded_by_name": uploaded_by_name,
         "uploaded_at": version.uploaded_at.isoformat() if version.uploaded_at else None,
         "notes": version.notes,
         "is_current": bool(version.is_current),
@@ -849,7 +859,7 @@ def upload_new_version(
     if len(decoded) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=422,
-            detail="File too large. Maximum upload size is 10 MB.",
+            detail="File too large. Maximum upload size is 25 MB.",
         )
 
     declared_size = payload.get("file_size_bytes")
@@ -861,7 +871,7 @@ def upload_new_version(
         if declared_size > MAX_UPLOAD_BYTES:
             raise HTTPException(
                 status_code=422,
-                detail="File too large. Maximum upload size is 10 MB.",
+                detail="File too large. Maximum upload size is 25 MB.",
             )
     persisted_size = declared_size if declared_size is not None else len(decoded)
 
@@ -902,11 +912,10 @@ def upload_new_version(
     doc.current_version_number = next_version
     doc.version_count = (doc.version_count or 0) + 1
 
-    rule = (
-        db.query(DocumentTypeRule)
-        .filter(DocumentTypeRule.document_type == doc.document_type)
-        .first()
-    )
+    # FPRM-387 (#7 universal gate) -- resolve the rule via the shared
+    # case-insensitive + trimmed helper so the version-upload path honours
+    # the same matching as the initial upload.
+    rule = _find_rule_for_type(db, doc.document_type)
     if rule and rule.auto_approve:
         doc.status = DocumentStatus.approved
     elif rule and rule.requires_approval:
@@ -954,7 +963,14 @@ def list_document_versions(
         .order_by(DocumentVersion.version_number.desc())
         .all()
     )
-    return [_serialize_version(v) for v in rows]
+    # FPRM-390 (#1) -- resolve uploader display names in one round-trip so each
+    # version row can show who uploaded it (full_name, falling back to email).
+    uploader_ids = {v.uploaded_by for v in rows if v.uploaded_by}
+    uploader_map: dict = {}
+    if uploader_ids:
+        for u in db.query(User).filter(User.id.in_(uploader_ids)).all():
+            uploader_map[u.id] = getattr(u, "full_name", None) or u.email
+    return [_serialize_version(v, uploader_map) for v in rows]
 
 
 @router.get("/{partner_id}/documents/{doc_id}/versions/{version_id}/download")
@@ -1028,17 +1044,25 @@ def revert_to_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Make a historical version current again. Internal roles only --
-    partner_admin can upload-new but cannot self-revert (audit trail
-    preservation; the channel manager owns the canonical version).
+    """Make a historical version current again.
+
+    FPRM-390 / AD-36 (supersedes the Sprint 22 internal-only FPRM-374
+    decision): internal roles OR ``partner_admin`` on their OWN org may
+    revert. ``partner_user`` remains excluded. Tenant scope is enforced by
+    ``_ensure_partner_exists_and_tenant`` (partner roles must match the
+    URL's partner_id), so a partner_admin can never revert another org's
+    document.
 
     The previous current version is NOT deleted -- both rows survive so
     the audit trail captures every flip."""
-    if UserRole(current_user.role) not in _INTERNAL_REVERT_ROLES:
+    role = UserRole(current_user.role)
+    if role not in _INTERNAL_REVERT_ROLES and role != UserRole.partner_admin:
         raise HTTPException(
             status_code=403,
-            detail="Permission denied: internal role required to revert versions",
+            detail="Permission denied: internal role or partner_admin (own org) required to revert versions",
         )
+    # Enforces partner own-org boundary for partner_admin (403 on mismatch);
+    # internal roles pass through.
     _ensure_partner_exists_and_tenant(db, partner_id, current_user)
     doc = _load_doc_or_404(db, partner_id, doc_id)
 
@@ -1067,7 +1091,7 @@ def revert_to_version(
     log_audit_event(
         db=db,
         actor=current_user,
-        action="document.reverted",
+        action="document.version_reverted",
         object_type="partner_document",
         object_id=doc.id,
         before={"from_version": from_version},

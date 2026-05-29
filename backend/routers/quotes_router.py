@@ -54,6 +54,7 @@ from models import (
     QuoteVersion,
     User,
 )
+from permissions import has_permission
 from quote_engine import calculate_quote
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 from sorting import apply_sort
@@ -586,11 +587,30 @@ def update_quote_status(
     prompt the reviewer to close the deal as Won. The deal is never closed
     automatically -- the suggestion is purely advisory.
     """
-    _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
     new_status = payload.get("status")
     if not new_status:
         raise HTTPException(status_code=422, detail="status is required")
+
+    # AD-35 (FPRM-389): partner roles (own org) may ONLY perform the
+    # sent -> accepted transition, gated on the quote:accept_own permission.
+    # Every other transition -- and every other partner write action -- stays
+    # internal-write-only. Tenant scope is enforced here in the handler per
+    # AD-9, never folded into a require_permission dependency.
+    role = UserRole(current_user.role)
+    if role in PARTNER_ROLES:
+        _check_tenant_read(current_user, quote.partner_org_id)  # 403 if not own org
+        if not (
+            has_permission(current_user.role, "quote:accept_own")
+            and quote.status == "sent"
+            and new_status == "accepted"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Partners may only mark their own sent quote as accepted.",
+            )
+    else:
+        _check_write_role(current_user)
 
     allowed = ALLOWED_STATUS_TRANSITIONS.get(quote.status, set())
     if new_status not in allowed:

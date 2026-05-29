@@ -355,6 +355,10 @@ The auto-merger's blocking check filter uses title-cased names: `"Test (Python 3
 
 Before opening any PR, verify zero open PRs via the GitHub API. The auto-merger serialises merges — opening a second PR while one is pending causes race conditions.
 
+### Build PR bodies from a file, never from an inline shell command with backticks
+
+When creating/updating a PR via the GitHub API, read the body from a file (e.g. a file-based PATCH, or `gh pr create --body-file`), not from an inline `python -c "..."` / shell string that contains backticks. In a double-quoted shell command, backticks trigger command-substitution **before** the script runs, so any `` `code spans` `` in the body get executed as commands and stripped — the published PR body comes out mangled. Observed on the PR #184 docs PR; fixed there with a file-based PATCH. Markdown bodies (which always contain backticks) must go through a file.
+
 ---
 
 ## 9. Project File Management
@@ -405,6 +409,10 @@ The canonical copy of `CLAUDE.md`, `PROJECT_CONTEXT.md`, `CLAUDE_HISTORY.md`, an
 | Rule `document_type` matching is **case-insensitive + whitespace-trimmed** (FPRM-386) | The Program Config → Document Rules form is free-text. Originally the upload lookup was an exact `==`, so a rule typed as `NDA` never matched an upload of `nda` → the `requires_approval` gate was silently bypassed and the doc auto-approved. The match is now normalised (`LOWER(TRIM(...))`) on both sides, and the rule-create duplicate check is case-insensitive (can't create both `NDA` and `nda`). | No action — a rule entered in any casing now governs uploads of the canonical lowercase code. Don't rely on case to create variant rules; they're treated as the same type. |
 | Partner self-service delete is permanent (FPRM-383) | `DELETE /partners/{id}/documents/{doc_id}` as a `partner_admin` now hard-deletes an unreferenced document (versions cascade) instead of soft-flagging `rejected`. If the doc is referenced by a quote, it still 409s. | To delete, first remove all `document_references` (detach from quotes); then the partner delete succeeds and the row is gone. |
 | Document-type rules are freely deletable (FPRM-385) | `DELETE /admin/document-type-rules/{id}` no longer 409s when documents of that type exist. Existing documents keep their status. | None — delete any rule at any time as system_admin. |
+| Partners can self-accept their own quotes (Sprint 23 / FPRM-389, AD-35) | `partner_user`/`partner_admin` may attach a `quote_acceptance` doc to, and `PATCH /quotes/{id}/status`→`accepted`, a quote in their own org. They cannot create/edit/submit/retract/delete; retract stays system_admin-only. | To test: as a partner, open the quote in the portal (status `sent`), attach proof, then click **Mark as Accepted**. Accept without an attachment → 422; another org's quote → 403. |
+| Partner_admin can revert own-org document versions (Sprint 23 / FPRM-390, AD-36) | Supersedes the Sprint 22 internal-only rule. Revert emits a `document.version_reverted` audit event; the UI shows a confirm dialog. `partner_user` still excluded. | Revert button appears in the version-history panel for internal roles and `partner_admin`. Another org → 403/404. |
+| Document uploads gated by **size (25 MB)**, not type (Sprint 23 / FPRM-391, AD-37) | The PDF/JPG/PNG allowlist is removed (it only ever lived in the browser `accept` filter; the backend never enforced type). `POST /partners/{id}/documents` and `.../versions` reject `file_size_bytes > 26214400`. Asset Library (PR B) keeps its own 10 MB cap. | Any file type ≤25 MB uploads; >25 MB → 422 "Maximum upload size is 25 MB." |
+| Document types are data-driven (Sprint 23 / FPRM-387, AD-38) | Two tables: `document_types` = vocabulary (the dropdown list, served by `GET /config/document-types`); `document_type_rules` = approval policy. Migration 039 seeds both. `GET /config/document-types` was NOT repurposed to return rules. | Manage selectable types + rules in Program Config → Document Rules (the type field is now a dropdown + "Add new type"). |
 
 ---
 
@@ -1226,5 +1234,7 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *RUNBOOK created: May 2026*
 *Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–22 closeout, Sprint 21 hotfix, Sprint 22 hotfix #2.*
-*Last updated: 2026-05-29 — docs PR #184 (Phase 7 Backlog section established in CLAUDE.md).*
+*Sprint 23 PR A (2026-05-29, PR #185): migration 039 (dual-table document-type seed/reconcile); partner self-accept own quotes (AD-35); partner_admin version revert (AD-36); 25 MB upload size cap replaces type allowlist (AD-37); two-table document model (AD-38). +17 tests (769 → 786).*
+
+*Last updated: 2026-05-29 — Sprint 23 PR A (PR #185).*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

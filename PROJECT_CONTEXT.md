@@ -261,6 +261,13 @@
 
 > Additional endpoints documented here as sprints deliver them.
 
+**Sprint 23 PR A endpoint notes (no new endpoint added):**
+- `GET /config/document-types` — unchanged path; remains the **vocabulary** endpoint (DocumentTypeConfig: `{items:[{code,label,is_active}]}`), now consumed by both the partner/internal upload form and the Program Config → Document Rules dropdown. It is deliberately NOT repurposed to return `document_type_rules` (AD-38).
+- `PATCH /quotes/{id}/status` — now accepts a partner-role caller for their OWN-org `sent → accepted` transition only (AD-35, `quote:accept_own`). All other transitions and roles unchanged; `accepted → sent` retract stays system_admin-only.
+- `POST /partners/{id}/documents/{doc_id}/versions/{v_id}/revert` — now allows `partner_admin` on own-org documents (AD-36); audit action renamed `document.version_reverted`.
+- `GET /partners/{id}/documents/{doc_id}/versions` — each row now includes `uploaded_by_name`.
+- Upload size cap on `POST /partners/{id}/documents` and `POST .../versions` raised to **25 MB**; no file-type allowlist (AD-37).
+
 
 
 ---
@@ -343,6 +350,8 @@
 - Migration files live in `backend/alembic/versions/` — Claude Code reads and modifies them via GitHub Contents API (no local checkout required)
 
 - New migration files committed to the repo are picked up and applied automatically on the next Railway deploy — no manual intervention required
+
+**Migration 039 (Sprint 23 PR A — data only, no schema change).** Head moves 038 → **039**. Seeds the canonical KYC + contract document types into BOTH `document_types` (vocabulary: code, label, is_active) and `document_type_rules` (approval policy: requires_approval, auto_approve), same keys; reconciles every DISTINCT in-use `partner_documents.document_type` into both tables so nothing is left ungoverned/unselectable. No tables created or altered. Idempotent (`WHERE NOT EXISTS`); `downgrade()` removes only the five rule rows it introduced. See AD-38 (two-table document model).
 
 
 
@@ -1204,6 +1213,46 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 **Hotfix #2 (FPRM-386, PR #183):** `document_type_rules` matching in the upload endpoint is now case-insensitive + whitespace-trimmed (`LOWER(TRIM(...))`) on both the type-validation and status-derivation lookups, via the `_find_rule_for_type` helper. The Document Rules form is free-text, so a rule stored as `NDA` previously never matched an upload of the lowercase code `nda` — the exact `==` lookup missed and the `requires_approval` gate was silently bypassed (the doc auto-approved). The rule-create duplicate check is also case-insensitive (`NDA`/`nda` can't coexist). The PR #182 conditional and the no-rule→approved default are unchanged. The acceptance gate in `quotes_router.py` is unaffected — it compares against the hardcoded `quote_acceptance` constant.
 
 **Do not:** Read `partner_documents.file_data` in new code — the column is deprecated, the bytes may be absent for new rows. Do not write to `partner_documents.file_data`. Do not delete the column in a Sprint 22 / Phase 6 migration — cleanup deferred to Phase 7 once all readers are verified to use `document_versions`.
+
+### AD-35 — Partner roles may self-accept their own-org quote (Sprint 23 / FPRM-389)
+
+**Decision:** `partner_user` and `partner_admin` may, on a quote belonging to their own org, (a) attach a proof-of-acceptance document + `document_references` row and (b) `PATCH /quotes/{id}/status` → `accepted`. Gated on the new `quote:accept_own` permission. No create / edit / submit / retract / delete for partner roles; `accepted → sent` retract remains system_admin-only.
+
+**Why:** Channel managers were a bottleneck on the final accept click for deals the partner had already closed. The acceptance evidence (the attached signed order form) is the affirmative act; the partner marking it accepted is honest self-service.
+
+**Consequence:** The quote status handler loads the quote first, then branches: partner roles must pass `_check_tenant_read` (own-org, AD-9) AND `has_permission(role, "quote:accept_own")` AND the transition must be exactly `sent → accepted`; everything else is internal-write-only. The acceptance gate (`document_references` with `entity_type='quote'`, `label='quote_acceptance'`) is unchanged — partners now satisfy it themselves. Portal `QuoteDetail` exposes attach + Mark as Accepted for partners even though the view is otherwise read-only.
+
+**Do not:** Fold the tenant check into `require_permission` (AD-9). Do not grant partners any other quote transition. Do not remove the acceptance gate.
+
+### AD-36 — Document-version revert is open to `partner_admin` for own-org documents (Sprint 23 / FPRM-390)
+
+**Decision:** `partner_admin` may revert versions of their own org's documents, in addition to internal roles. Supersedes the Sprint 22 internal-only decision (FPRM-374). `partner_user` remains excluded.
+
+**Why:** Partners own their document vault; making them wait for a channel manager to undo a bad re-upload was friction with no governance benefit (the full version history is preserved either way).
+
+**Consequence:** `POST /partners/{id}/documents/{doc_id}/versions/{v_id}/revert` allows internal roles OR `partner_admin`; `_ensure_partner_exists_and_tenant` enforces the own-org boundary for partners. Every revert emits a `document.version_reverted` audit event (renamed from `document.reverted`) with from/to version; the UI requires a confirm dialog.
+
+**Do not:** Open revert to `partner_user`. Do not delete the superseded version on revert — both rows survive for the audit trail.
+
+### AD-37 — Partner document uploads are gated by size (≤25 MB), not file type (Sprint 23 / FPRM-391)
+
+**Decision:** Remove the file-type allowlist; accept any `mime_type`. Reject `file_size_bytes > 26214400` (25 MB) on `POST /partners/{id}/documents` and `POST .../versions` with 422.
+
+**Why:** Partners legitimately upload `.docx`, `.xlsx`, `.zip`, etc.; the PDF/JPG/PNG allowlist (which lived only in the browser `accept` filter — the backend never enforced type) blocked real documents. Size is the meaningful constraint given base64-in-DB storage (AD-19).
+
+**Consequence:** `MAX_UPLOAD_BYTES = 25 * 1024 * 1024` in `documents_router.py`. Frontend upload modals drop the `accept` filter and show "Any file type — max 25 MB" with a client-side size guard. The Asset Library (PR B) keeps its own independent 10 MB cap.
+
+**Do not:** Reintroduce a type allowlist. Do not assume the two caps are linked — Asset Library's 10 MB is separate.
+
+### AD-38 — Two-table document model: `document_types` (vocabulary) vs `document_type_rules` (approval policy) (Sprint 23 / FPRM-387)
+
+**Decision:** `document_types` (code, label, is_active) is the validated vocabulary — the selectable list in dropdowns, surfaced by `GET /config/document-types`, and checked by upload validation. `document_type_rules` (requires_approval, auto_approve) is the per-type approval policy that drives upload status + the acceptance gate. They are seeded together (same key) by migration 039 and kept consistent by reconcile.
+
+**Why:** Conflating "which types exist" with "how each type is approved" led to the earlier confusion where a `GET /config/document-types` was almost repurposed to return rules — which would have broken the tested vocabulary endpoint and upload validation. Two tables, two concerns.
+
+**Consequence:** `GET /config/document-types` is NOT repurposed — it stays the vocabulary endpoint. The admin Document Rules dropdown reads the vocabulary and cross-references existing rules; "Add new type" POSTs a vocabulary row then the rule. The approval-rule lookup fires on every upload path (partner-documents, version, quote-attach) through the shared case-insensitive + trimmed `_find_rule_for_type` helper (FPRM-386). No Postgres ENUM for document_type (AD-33).
+
+**Do not:** Make `GET /config/document-types` return `document_type_rules`. Do not let any upload path set status without the `_find_rule_for_type` lookup. Do not add a DB ENUM for document types.
 
 ---
 

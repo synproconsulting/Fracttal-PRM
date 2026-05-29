@@ -185,21 +185,33 @@ def test_upload_wrong_org_partner_admin_returns_403(client, db):
     assert r.status_code == 403
 
 
-def test_upload_file_exceeds_10mb_returns_422(client, db):
+def test_upload_file_exceeds_25mb_returns_422(client, db):
     p = _partner(db)
     _auth(_user(db, UserRole.partner_admin.value, partner_org_id=p.id))
-    # Declared size over 10 MB rejected even with tiny payload.
-    r = client.post(
+    # AD-37 (FPRM-391): cap is now 25 MB. A declared size over 25 MB is
+    # rejected even with a tiny real payload; an 11 MB file now succeeds.
+    over = client.post(
         f"/partners/{p.id}/documents",
         json={
             "document_type": "nda",
             "document_name": "x.bin",
             "file_data": base64.b64encode(b"x").decode(),
+            "file_size_bytes": 26 * 1024 * 1024,
+        },
+    )
+    assert over.status_code == 422
+    assert "25 MB" in over.json()["detail"]
+    # 11 MB was rejected under the old 10 MB cap -- now allowed.
+    ok = client.post(
+        f"/partners/{p.id}/documents",
+        json={
+            "document_type": "nda",
+            "document_name": "ok.bin",
+            "file_data": base64.b64encode(b"x").decode(),
             "file_size_bytes": 11 * 1024 * 1024,
         },
     )
-    assert r.status_code == 422
-    assert "10 MB" in r.json()["detail"]
+    assert ok.status_code == 201, ok.text
 
 
 # ============================================================

@@ -54,15 +54,29 @@ const DOCUMENT_TYPES = [
   { value: 'other', label: 'Other' },
 ]
 
-const ACCEPT_TYPES = '.pdf,.jpg,.jpeg,.png'
-const ACCEPT_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png'])
-const MAX_FILE_BYTES = 10 * 1024 * 1024
+// AD-37 (FPRM-391): the file-type allowlist is removed -- any file type is
+// accepted; uploads are gated on size only.
+const MAX_FILE_BYTES = 25 * 1024 * 1024  // 25 MB
 
 function UploadModal({ partnerId, token, onClose, onUploaded }) {
   const [docType, setDocType] = useState('fiscal_id')
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  // S2 (FPRM-388): document-type options come from the vocabulary endpoint
+  // GET /config/document-types; fall back to the built-in list if it fails.
+  const [docTypeOptions, setDocTypeOptions] = useState(DOCUMENT_TYPES)
+  useEffect(() => {
+    fetch(`${API}/config/document-types`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const items = data?.items || []
+        if (items.length) {
+          setDocTypeOptions(items.map((t) => ({ value: t.code, label: t.label || t.code })))
+        }
+      })
+      .catch(() => {})
+  }, [token])
 
   function onFileChange(e) {
     const f = e.target.files?.[0] || null
@@ -71,12 +85,9 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
       setFile(null)
       return
     }
-    if (!ACCEPT_MIME.has(f.type) && !/\.(pdf|jpe?g|png)$/i.test(f.name)) {
-      setError('Only PDF, JPG and PNG files are accepted.')
-      return
-    }
+    // AD-37: no type restriction -- size is the only gate.
     if (f.size > MAX_FILE_BYTES) {
-      setError('File is larger than 10 MB.')
+      setError('File is larger than 25 MB.')
       return
     }
     setFile(f)
@@ -135,7 +146,7 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
     <div className="fp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="upload-modal-title">
       <form className="fp-modal" onSubmit={onUpload}>
         <h3 id="upload-modal-title" className="fp-modal__title">Upload document</h3>
-        <p className="fp-modal__subtitle">PDF, JPG, or PNG — max 10 MB.</p>
+        <p className="fp-modal__subtitle">Any file type — max 25 MB.</p>
 
         <div className="fp-field fp-field--filled">
           <select
@@ -143,7 +154,7 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
             value={docType}
             onChange={(e) => setDocType(e.target.value)}
           >
-            {DOCUMENT_TYPES.map((t) => (
+            {docTypeOptions.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
@@ -154,7 +165,6 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
           File
           <input
             type="file"
-            accept={ACCEPT_TYPES}
             onChange={onFileChange}
             style={{ display: 'block', marginTop: 6, fontSize: 'var(--fp-fs-sm)' }}
           />
@@ -187,7 +197,7 @@ function NewVersionModal({ partnerId, docId, docName, token, onClose, onUploaded
     const f = e.target.files?.[0] || null
     setError(null)
     if (!f) { setFile(null); return }
-    if (f.size > MAX_FILE_BYTES) { setError('File is larger than 10 MB.'); return }
+    if (f.size > MAX_FILE_BYTES) { setError('File is larger than 25 MB.'); return }
     setFile(f)
   }
 
@@ -237,8 +247,8 @@ function NewVersionModal({ partnerId, docId, docName, token, onClose, onUploaded
         <h3 className="fp-modal__title">Upload new version</h3>
         <p className="fp-modal__subtitle">{docName}</p>
         <label style={{ display: 'block', marginTop: 8, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
-          File
-          <input type="file" accept={ACCEPT_TYPES} onChange={onFileChange}
+          File <span style={{ color: 'var(--fp-text-secondary)' }}>(any type, max 25 MB)</span>
+          <input type="file" onChange={onFileChange}
             style={{ display: 'block', marginTop: 6, fontSize: 'var(--fp-fs-sm)' }} />
         </label>
         <div className="fp-field fp-field--filled" style={{ marginTop: 8 }}>
@@ -516,7 +526,7 @@ export default function PartnerDocuments() {
   }
 
   async function revertToVersion(docId, version) {
-    if (!confirm(`Revert to version ${version.version_number}? The current version will be preserved in history.`)) return
+    if (!confirm(`Revert to v${version.version_number}? The current version will be replaced.`)) return
     try {
       const r = await fetch(
         `${API}/partners/${partnerOrgId}/documents/${docId}/versions/${version.id}/revert`,
@@ -762,6 +772,7 @@ export default function PartnerDocuments() {
                           <tr style={{ textAlign: 'left', background: '#F1F5F9' }}>
                             <th style={{ padding: 6 }}>Version</th>
                             <th style={{ padding: 6 }}>Uploaded At</th>
+                            <th style={{ padding: 6 }}>Uploaded By</th>
                             <th style={{ padding: 6 }}>Size</th>
                             <th style={{ padding: 6 }}>Notes</th>
                             <th style={{ padding: 6, textAlign: 'right' }}>Actions</th>
@@ -784,6 +795,7 @@ export default function PartnerDocuments() {
                               <td style={{ padding: 6, color: '#64748B' }}>
                                 {v.uploaded_at ? new Date(v.uploaded_at).toLocaleString() : '—'}
                               </td>
+                              <td style={{ padding: 6, color: '#64748B' }}>{v.uploaded_by_name || '—'}</td>
                               <td style={{ padding: 6, color: '#64748B' }}>
                                 {v.file_size_bytes != null ? `${(v.file_size_bytes / 1024).toFixed(1)} KB` : '—'}
                               </td>
@@ -797,7 +809,9 @@ export default function PartnerDocuments() {
                                 >
                                   Download
                                 </button>
-                                {isInternal && !v.is_current && (
+                                {/* AD-36 (FPRM-390): revert available to internal roles
+                                    OR partner_admin (own org enforced server-side). */}
+                                {(isInternal || payload?.role === 'partner_admin') && !v.is_current && (
                                   <button
                                     type="button"
                                     onClick={() => revertToVersion(d.id, v)}
