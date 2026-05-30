@@ -2562,3 +2562,34 @@ model).
    AD-37 made the real gate (size) explicit on both sides.
 
 ---
+
+## Sprint 23 PR B — Asset Library (Phase 6)
+
+**Date:** 2026-05-29 · **PR:** #186 · **Migration head:** 039 → **040** ·
+**Tests:** 786 → **799** (+13). **Sprint 23 fully closed (PR A #185 + PR B #186).**
+
+Four stories (FPRM-393…396), 9 subtasks (FPRM-409…417). FR-PORT-020 → FR-PORT-023.
+
+### Stories / subtasks
+
+| Story | Summary |
+|---|---|
+| S7 FPRM-393 (S7.1/S7.2) | Models (`AssetCategory`, `Asset`, `AssetDownloadLog`) + migration 040 (3 tables, FK-safe downgrade) + `assets_router.py`: partner `GET /assets` + `GET /assets/{id}/download`; internal `GET/POST/PATCH/DELETE /internal/assets` + `/internal/assets/{id}/download-logs`; `GET/POST/PATCH/DELETE /internal/asset-categories`. 13 tests. |
+| S8 FPRM-394 (S8.1/S8.2) | `PortalAssets.jsx` at `/portal/assets`; portal nav placeholder "Assets" enabled + renamed **Resources**; card grid + category filter + search + pagination (20/page) + fetch+Blob download (AD-20). |
+| S9 FPRM-395 (S9.1/S9.2) | `InternalAssets.jsx` at `/internal/assets`; **Assets** nav added to InternalLayout between Quotes and Users; upload modal (file→base64, 10 MB guard) + list filters + per-row edit/activate + download-count → log drill-down modal + category management (add/rename/reorder/deactivate). |
+| S10 FPRM-396 (S10.1/S10.2/S10.3) | These four canonical-doc updates + AD-39. |
+
+### New endpoints
+`GET /assets`, `GET /assets/{id}/download`, `GET /internal/assets`, `POST /internal/assets`, `PATCH /internal/assets/{id}`, `DELETE /internal/assets/{id}`, `GET /internal/assets/{id}/download-logs`, `GET/POST /internal/asset-categories`, `PATCH/DELETE /internal/asset-categories/{id}`.
+
+### Migration 040
+Creates `asset_categories`, `assets` (base64 `file_data`), `asset_download_logs`. Existence-checked creates; `downgrade()` drops in FK-safe order (logs → assets → categories).
+
+### AD recorded
+AD-39 — asset base64 storage; 10 MB cap (independent of the 25 MB partner-documents cap); `file_data` never in list responses; soft-delete; visibility `all`/`tier:`/`category:`.
+
+### Lessons
+1. **Enable the placeholder, don't duplicate it.** PartnerPortalLayout already had a disabled "Assets" nav item at `/portal/assets`; the right move was to enable + rename it to "Resources", not add a second nav row.
+2. **Partners have no category-list endpoint.** Categories are internal-only, so the portal filter derives its options from the assets it can see (a broad page-size fetch) rather than calling a partner categories API that doesn't exist.
+
+---

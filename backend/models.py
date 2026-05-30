@@ -1739,3 +1739,86 @@ class DocumentTypeRule(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+# ============================================================
+# Sprint 23 PR B / AD-39 -- Asset Library
+# ============================================================
+
+
+class AssetCategory(Base):
+    """Marketing / enablement asset category (Sprint 23 / FPRM-393)."""
+
+    __tablename__ = "asset_categories"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(150), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Asset(Base):
+    """A downloadable enablement asset.
+
+    AD-39: binary content is stored base64-encoded in ``file_data`` (the
+    AD-17/AD-19 pattern -- Railway has no persistent local filesystem).
+    ``file_data`` is NEVER returned by list endpoints; only the dedicated
+    download endpoint streams the decoded bytes (AD-20). ``visibility`` is
+    one of ``all`` | ``tier:<tier>`` | ``category:<code>``.
+    """
+
+    __tablename__ = "assets"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    file_name = Column(String(255), nullable=False)
+    file_type = Column(String(100), nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
+    file_data = Column(Text, nullable=False)
+    thumbnail_data = Column(Text, nullable=True)
+    visibility = Column(String(100), nullable=False, default="all")
+    is_active = Column(Boolean, nullable=False, default=True)
+    uploaded_by = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    download_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False,
+    )
+
+    category = relationship("AssetCategory")
+
+
+class AssetDownloadLog(Base):
+    """One row per asset download (Sprint 23 / FPRM-393)."""
+
+    __tablename__ = "asset_download_logs"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    downloaded_by = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id"),
+        nullable=True,
+    )
+    downloaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
