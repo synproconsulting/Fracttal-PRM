@@ -413,6 +413,7 @@ The canonical copy of `CLAUDE.md`, `PROJECT_CONTEXT.md`, `CLAUDE_HISTORY.md`, an
 | Partner_admin can revert own-org document versions (Sprint 23 / FPRM-390, AD-36) | Supersedes the Sprint 22 internal-only rule. Revert emits a `document.version_reverted` audit event; the UI shows a confirm dialog. `partner_user` still excluded. | Revert button appears in the version-history panel for internal roles and `partner_admin`. Another org → 403/404. |
 | Document uploads gated by **size (25 MB)**, not type (Sprint 23 / FPRM-391, AD-37) | The PDF/JPG/PNG allowlist is removed (it only ever lived in the browser `accept` filter; the backend never enforced type). `POST /partners/{id}/documents` and `.../versions` reject `file_size_bytes > 26214400`. Asset Library (PR B) keeps its own 10 MB cap. | Any file type ≤25 MB uploads; >25 MB → 422 "Maximum upload size is 25 MB." |
 | Document types are data-driven (Sprint 23 / FPRM-387, AD-38) | Two tables: `document_types` = vocabulary (the dropdown list, served by `GET /config/document-types`); `document_type_rules` = approval policy. Migration 039 seeds both. `GET /config/document-types` was NOT repurposed to return rules. | Manage selectable types + rules in Program Config → Document Rules (the type field is now a dropdown + "Add new type"). |
+| Asset Library (Sprint 23 PR B / FPRM-393, AD-39) | Enablement assets stored base64 in `assets.file_data`; **10 MB upload cap** (channel_ops_admin+, `POST /internal/assets`); `file_data` never in list responses; download (`GET /assets/{id}/download`) is logged (`asset_download_logs`) + increments `download_count`. Deletes are **soft** (`is_active=false`, system_admin). Visibility: `all` / `tier:<tier>` / `category:<code>` enforced on the partner list + download. | Partners browse at **/portal/assets** ("Resources" nav); internal manage at **/internal/assets** ("Assets" nav). Visibility-denied download → 404. The 10 MB asset cap is independent of the 25 MB partner-documents cap. |
 
 ---
 
@@ -1236,5 +1237,7 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 *Sources: Sprint 1–3 Console Dialog, Sprint 4 Console Dialog, Sprint 5–22 closeout, Sprint 21 hotfix, Sprint 22 hotfix #2.*
 *Sprint 23 PR A (2026-05-29, PR #185): migration 039 (dual-table document-type seed/reconcile); partner self-accept own quotes (AD-35); partner_admin version revert (AD-36); 25 MB upload size cap replaces type allowlist (AD-37); two-table document model (AD-38). +17 tests (769 → 786).*
 
-*Last updated: 2026-05-29 — Sprint 23 PR A (PR #185).*
+*Sprint 23 PR B (2026-05-29, PR #186): Asset Library — migration 040 (asset_categories, assets, asset_download_logs); base64 storage + 10 MB cap (AD-39); /assets + /internal/assets endpoints; PortalAssets ("Resources") + InternalAssets ("Assets") pages. +13 tests (786 → 799). Sprint 23 closed (PR A #185 + PR B #186).*
+
+*Last updated: 2026-05-29 — Sprint 23 PR B (PR #186).*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

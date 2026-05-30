@@ -268,6 +268,16 @@
 - `GET /partners/{id}/documents/{doc_id}/versions` — each row now includes `uploaded_by_name`.
 - Upload size cap on `POST /partners/{id}/documents` and `POST .../versions` raised to **25 MB**; no file-type allowlist (AD-37).
 
+**Sprint 23 PR B — Asset Library endpoints (AD-39):**
+- `GET /assets` — any authenticated user; partner portal list (active + visibility-eligible; `?category_id=&search=&page=&page_size=20`); never returns `file_data`.
+- `GET /assets/{id}/download` — visibility-checked; increments `download_count`; writes an `asset_download_logs` row; streams decoded bytes (AD-20).
+- `GET /internal/assets` — `asset:read_all` (channel_manager+); includes inactive; `?category_id=&is_active=&search=`.
+- `POST /internal/assets` — `asset:create` (channel_ops_admin+); base64 body; 10 MB cap → 422; audit `asset.uploaded`.
+- `PATCH /internal/assets/{id}` — `asset:update_all`; metadata only (not `file_data`); audit `asset.updated`.
+- `DELETE /internal/assets/{id}` — system_admin only; soft delete; audit `asset.deactivated`.
+- `GET /internal/assets/{id}/download-logs` — `asset:read_all`; per-asset download log.
+- `GET /internal/asset-categories` (any internal) · `POST` (asset:create) · `PATCH /{id}` (asset:update_all) · `DELETE /{id}` (system_admin, soft).
+
 
 
 ---
@@ -352,6 +362,8 @@
 - New migration files committed to the repo are picked up and applied automatically on the next Railway deploy — no manual intervention required
 
 **Migration 039 (Sprint 23 PR A — data only, no schema change).** Head moves 038 → **039**. Seeds the canonical KYC + contract document types into BOTH `document_types` (vocabulary: code, label, is_active) and `document_type_rules` (approval policy: requires_approval, auto_approve), same keys; reconciles every DISTINCT in-use `partner_documents.document_type` into both tables so nothing is left ungoverned/unselectable. No tables created or altered. Idempotent (`WHERE NOT EXISTS`); `downgrade()` removes only the five rule rows it introduced. See AD-38 (two-table document model).
+
+**Migration 040 (Sprint 23 PR B — Asset Library).** Head moves 039 → **040**. Creates three tables: `asset_categories` (id, name unique, description, display_order, is_active, created_at); `assets` (id, category_id FK→asset_categories SET NULL, title, description, file_name, file_type, file_size_bytes, `file_data` TEXT base64, thumbnail_data, visibility default `all`, is_active default true, uploaded_by FK→users SET NULL, download_count default 0, created_at, updated_at); `asset_download_logs` (id, asset_id FK→assets CASCADE, downloaded_by FK→users SET NULL, partner_org_id FK→partner_organizations, downloaded_at). Existence-checked creates; `downgrade()` drops in FK-safe order (logs → assets → categories). See AD-39.
 
 
 
@@ -476,7 +488,9 @@ frontend/src/
     ├── QuoteForm.jsx                # Sprint 16 / FPRM-254 — quote create + new-version form with sticky live-preview panel; Sprint 18 / FPRM-283 — scenario selector greys out already-created labels in new-version mode and surfaces an "All 3 scenarios created" hint.
     ├── QuoteDetail.jsx              # Sprint 16 / FPRM-254 — version browser + line-item table + status state machine + PDF generate/download; Sprint 18 / FPRM-283 — scenario comparison panel between Versions and Line Items renders only when /quotes/{id}/scenarios returns at least one entry. "Select This Option" PATCHes /active-scenario then /active-version. Version lock applies to accepted/expired/cancelled only — draft and sent remain fully editable. PR #174 fix.
     ├── InternalQuotes.jsx           # Sprint 18 / FPRM-287 — cross-deal quote dashboard at /internal/quotes. Summary card row (Total / Draft / Sent / Accepted / Pipeline Value), status / plan / search filters, paginated table; row links to /internal/deals/:id. Uses shared `utils/currency.js` for amounts.
-    └── PortalQuotes.jsx             # Sprint 18 / FPRM-291 — partner-facing quote history at /portal/quotes inside PartnerPortalLayout. Read-only table with status filter; row links back to /portal/deals/:id. Internal users redirected by ProtectedRoute (partner roles only). Rebuilt PR #172 to match InternalQuotes.jsx design — 7 summary cards, full filter bar, SortableTh table, isReadOnly QuoteDetail modal, Partner column removed. QuoteDetail opens as modal overlay — PR #174 fix.
+    ├── PortalQuotes.jsx             # Sprint 18 / FPRM-291 — partner-facing quote history at /portal/quotes inside PartnerPortalLayout. Read-only table with status filter; row links back to /portal/deals/:id. Internal users redirected by ProtectedRoute (partner roles only). Rebuilt PR #172 to match InternalQuotes.jsx design — 7 summary cards, full filter bar, SortableTh table, isReadOnly QuoteDetail modal, Partner column removed. QuoteDetail opens as modal overlay — PR #174 fix.
+    ├── PortalAssets.jsx             # Sprint 23 PR B / FPRM-394 — partner Resources page at /portal/assets (PartnerPortalLayout "Resources" nav). Card grid (file-type icon, title, description, category badge, download count, Download via fetch+Blob AD-20), category filter + search, pagination (20/page), empty state. Consumes GET /assets + GET /assets/{id}/download. No upload.
+    └── InternalAssets.jsx           # Sprint 23 PR B / FPRM-395 — internal Assets management at /internal/assets (InternalLayout "Assets" nav, between Quotes and Users). List + filters (category/active/search); upload modal (file→base64, 10 MB guard); per-row edit modal + activate toggle; download-count → asset_download_logs drill-down modal; category management sub-section (add/rename/reorder/deactivate). Consumes /internal/assets + /internal/asset-categories.
 
 ```
 
@@ -1253,6 +1267,16 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 **Consequence:** `GET /config/document-types` is NOT repurposed — it stays the vocabulary endpoint. The admin Document Rules dropdown reads the vocabulary and cross-references existing rules; "Add new type" POSTs a vocabulary row then the rule. The approval-rule lookup fires on every upload path (partner-documents, version, quote-attach) through the shared case-insensitive + trimmed `_find_rule_for_type` helper (FPRM-386). No Postgres ENUM for document_type (AD-33).
 
 **Do not:** Make `GET /config/document-types` return `document_type_rules`. Do not let any upload path set status without the `_find_rule_for_type` lookup. Do not add a DB ENUM for document types.
+
+### AD-39 — Asset Library binaries are base64 in `assets.file_data`; `file_data` never in list responses (Sprint 23 / FPRM-393)
+
+**Decision:** Enablement assets store binary content base64-encoded in `assets.file_data` (the AD-17/AD-19 pattern). List endpoints (`GET /assets`, `GET /internal/assets`) never return `file_data`; only `GET /assets/{id}/download` streams the decoded bytes (AD-20). Upload cap is **10 MB** (independent of the 25 MB partner-documents cap, AD-37). Deletes are **soft** (`is_active=false`). Visibility is `all` | `tier:<tier>` | `category:<code>`.
+
+**Why:** Railway has no persistent local filesystem across deploys; DB base64 storage keeps assets durable and atomically tied to their row (same rationale as AD-19 for quote PDFs). Excluding `file_data` from lists keeps list payloads small and avoids shipping megabytes per page.
+
+**Consequence:** `assets_router.py` serialises assets without `file_data` everywhere except download. The download endpoint increments `download_count` and writes an `asset_download_logs` row (downloaded_by + partner_org_id). Visibility is enforced in the handler for partner roles (internal roles bypass); a visibility-denied download returns 404 (not 403) so a guessed id can't reveal a restricted asset. `system_admin` only for asset/category delete; `channel_ops_admin`+ for create/update; `channel_manager`+ for internal reads.
+
+**Do not:** Return `file_data` from any list endpoint. Do not hard-delete assets (soft-delete only). Do not raise the 10 MB cap to match the 25 MB document cap — they are intentionally independent.
 
 ---
 
