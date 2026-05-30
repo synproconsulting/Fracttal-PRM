@@ -150,6 +150,31 @@ curl -X POST "https://fracttal-prm-backend-production.up.railway.app/partners/<p
 
 Discovered Sprint 10 — tracked as FPRM-174. The same field names apply to the public application upload endpoint `POST /applications/{id}/documents?draft_token=...`.
 
+> **Note (Sprint 24):** `document_type` values are validated against the `document_types` table
+> (the vocabulary, AD-38), not a fixed enum — any active type, including admin-added ones, is
+> accepted. See the shared-dropdown note below.
+
+### Document-type dropdowns use one shared component (Sprint 24 / AD-40)
+
+Every document-type `<select>` in the frontend is the shared `DocumentTypeSelect`
+(`frontend/src/components/DocumentTypeSelect.jsx`), sourced from `GET /config/document-types`.
+**Never add a per-surface document-type list or filter the vocabulary on any one surface** — that
+is exactly the divergence bug FPRM-418 fixed (quote-attach had shown a 4-item hardcoded list
+while the Documents page showed the full KYC vocabulary, with `nda` missing on one). New
+vocabulary entries are added in Program Config → **Document Types** tab (reuses the existing
+`POST /config/document-types`, system_admin + channel_ops_admin); they then appear on all
+surfaces automatically.
+
+### Logout purges tenant client state + revokes preview blob URLs (Sprint 24 / FPRM-420)
+
+Logout (both `InternalLayout` and `PartnerPortalLayout`) calls `clearSession()` from
+`frontend/src/utils/session.js`, which revokes any tracked document/asset **preview** blob
+object-URLs and clears tenant-scoped web storage (`localStorage` token + `sessionStorage`).
+Preview code registers its URL via `trackPreviewUrl(...)`. This closes a cross-tenant leak where
+a prior org's preview stayed openable after logout → login as a different-org user until a hard
+refresh. The backend already 403s the cross-org re-fetch; this is the client cache. If you add a
+new in-browser preview that keeps a blob URL alive, wrap it in `trackPreviewUrl`.
+
 ### Invite Flow Test
 
 ```cmd
@@ -358,6 +383,15 @@ Before opening any PR, verify zero open PRs via the GitHub API. The auto-merger 
 ### Build PR bodies from a file, never from an inline shell command with backticks
 
 When creating/updating a PR via the GitHub API, read the body from a file (e.g. a file-based PATCH, or `gh pr create --body-file`), not from an inline `python -c "..."` / shell string that contains backticks. In a double-quoted shell command, backticks trigger command-substitution **before** the script runs, so any `` `code spans` `` in the body get executed as commands and stripped — the published PR body comes out mangled. Observed on the PR #184 docs PR; fixed there with a file-based PATCH. Markdown bodies (which always contain backticks) must go through a file.
+
+### Tool-output buffering — drive multi-step git/PR flows through one self-guarding script
+
+When tool output buffers or interleaves unpredictably, do not fire git/PR steps one at a time and
+guess at their result. Put the whole sequence (branch create → tree/commit → ref → PR open) into a
+single self-guarding script that checks each step's exit/HTTP status and **fails loudly**, then
+read the script's log back to verify the outcome rather than trusting the live console. Combined
+with building PR bodies from a file (above), this keeps the PR flow deterministic. Carried forward
+from the PR #187 session.
 
 ---
 
@@ -1239,5 +1273,7 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 23 PR B (2026-05-29, PR #186): Asset Library — migration 040 (asset_categories, assets, asset_download_logs); base64 storage + 10 MB cap (AD-39); /assets + /internal/assets endpoints; PortalAssets ("Resources") + InternalAssets ("Assets") pages. +13 tests (786 → 799). Sprint 23 closed (PR A #185 + PR B #186).*
 
-*Last updated: 2026-05-30 — docs PR: Phase 6 Backlog / Sprint Candidates section added to CLAUDE.md (PR #187).*
+*Sprint 24 PR A (2026-05-30, PR #188): Sprint 23 carry-forward bugs — shared `DocumentTypeSelect` over `GET /config/document-types` on every upload surface + Document Types vocabulary admin tab (AD-40); asset download-log modal resolves user/org names not UUIDs (FPRM-419); logout purges tenant client state + revokes preview blob URLs (FPRM-420). No migration (head stays 040). +3 tests (799 → 802).*
+
+*Last updated: 2026-05-30 — Sprint 24 PR A (PR #188): AD-40 shared document-type vocabulary, download-log names, logout purge.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

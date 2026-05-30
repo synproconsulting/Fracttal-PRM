@@ -2595,3 +2595,38 @@ AD-39 — asset base64 storage; 10 MB cap (independent of the 25 MB partner-docu
 ---
 
 > *Docs PR (2026-05-30): added a "Phase 6 Backlog / Sprint Candidates" section to CLAUDE.md (sibling to Phase 7 Backlog) capturing three product gaps from Sprint 23 UI testing — partner deal messaging, asset reactivate, PortalAssets redesign. No code change. PR #187.*
+
+---
+
+## Sprint 24 PR A — Sprint 23 carry-forward bugs (Phase 6)
+
+**Date:** 2026-05-30 · **PR:** #188 · **Migration head:** **040 (unchanged — no migration)** ·
+**Tests:** 799 → **802** (+3). First of a two-PR Sprint 24 (PR B = Channel Manager
+Assignment + approval routing, migration 041, runs only after PR A merges).
+
+Four stories (FPRM-418…421). Subtasks omit fixVersions / customfield_10020 per AD-10.
+
+### Stories / subtasks
+
+| Story | Summary |
+|---|---|
+| S1 FPRM-418 (S1.1/S1.2) | **Unify document-type dropdown + vocabulary admin (AD-40).** New shared `frontend/src/components/DocumentTypeSelect.jsx` sourced only from `GET /config/document-types`; swapped into every surface — PartnerDocuments upload modal **and** the list type-filter, QuoteDetail quote-attach (replaced a hardcoded 4-item list — the divergence bug), and the Program Config Document Rules picker. New Program Config **Document Types** tab (`DocumentTypesTab`) is the vocabulary admin: view all (incl. archived) + add + archive/reactivate, reusing the existing `POST /config/document-types` + `PATCH /config/document-types/{id}` (**no new endpoint** — the config-admin POST already existed). The Document Rules tab's inline "Add new type" was removed (vocabulary now lives in the Document Types tab). |
+| S2 FPRM-419 (S2.1) | **Download-log names not UUIDs.** `GET /internal/assets/{id}/download-logs` now batch-resolves `user_name` (`users.full_name`) + `partner_org_name` (`partner_organizations.legal_name`); raw ids retained for a null-name fallback. `InternalAssets.jsx` LogsModal renders names with id fallback. |
+| S3 FPRM-420 (S3.1) | **Cross-tenant preview leak on logout (security).** New `frontend/src/utils/session.js` `clearSession()` revokes tracked preview blob object-URLs + clears tenant web storage; both layouts' `logout()` call it; PartnerDocuments preview registers its URL via `trackPreviewUrl`. Closes the leak where a prior org's preview stayed openable after logout→login until a hard refresh (backend already 403s the cross-org re-fetch). |
+| S4 FPRM-421 (S4.1/S4.2) | These four canonical-doc updates + AD-40. |
+
+### Backend changes
+`backend/routers/assets_router.py` — `asset_download_logs` joins User + PartnerOrganization for names (batched, no N+1). No schema/migration change. No change to `config_router.py` (the vocabulary POST/PATCH already existed) and **`test_document_types_config.py` is unchanged** per the prompt constraint.
+
+### Tests (+3)
+`tests/test_assets.py::test_download_logs_resolve_user_and_org_names`; new file
+`tests/test_document_type_vocab_unification.py` (2 tests — single-source vocabulary incl. `nda`; an admin-added type appears in the shared list). Frontend has no blocking JS test runner, so the divergence fix is verified by `npm run build` + the API-level unification tests.
+
+### AD recorded
+AD-40 — one shared document-type vocabulary (`GET /config/document-types`) via a single `DocumentTypeSelect` on every upload surface; never filtered/overridden per surface; vocabulary admin = Program Config Document Types tab over the existing POST/PATCH.
+
+### Lessons
+1. **The fix already had half its plumbing.** The config-admin `POST /config/document-types` and `PATCH` existed; S1 only needed the shared component + a tab, not a new endpoint. Reading `config_router.py` first avoided adding a duplicate.
+2. **A security leak can live entirely in the client cache.** The backend already 403'd cross-org fetches; the leak was a `blob:` URL surviving a 30s timer across a session switch. Tracking preview URLs and revoking on logout is the seam.
+3. **Process:** built the PR body from a file (not inline backticks); drove the git/PR flow through one self-guarding script and read the log back to verify (carried from PR #187).
+

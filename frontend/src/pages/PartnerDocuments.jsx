@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useOutletContext, useParams } from 'react-router-dom'
 import { SortableTh } from '../components/SortableTh.jsx'
+import DocumentTypeSelect from '../components/DocumentTypeSelect.jsx'
+import { trackPreviewUrl } from '../utils/session.js'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -41,19 +43,6 @@ function StatusBadge({ status }) {
   )
 }
 
-const DOCUMENT_TYPES = [
-  { value: 'id_legal_representative', label: 'ID of legal representative' },
-  { value: 'power_of_attorney', label: 'Power of attorney' },
-  { value: 'articles_of_incorporation', label: 'Articles of incorporation' },
-  { value: 'beneficial_owners_list', label: 'Beneficial owners list' },
-  { value: 'fiscal_id', label: 'Fiscal ID' },
-  { value: 'proof_of_fiscal_domicile', label: 'Proof of fiscal domicile' },
-  { value: 'bank_certificate', label: 'Bank certificate' },
-  { value: 'nda', label: 'NDA' },
-  { value: 'insurance', label: 'Insurance certificate' },
-  { value: 'other', label: 'Other' },
-]
-
 // AD-37 (FPRM-391): the file-type allowlist is removed -- any file type is
 // accepted; uploads are gated on size only.
 const MAX_FILE_BYTES = 25 * 1024 * 1024  // 25 MB
@@ -63,20 +52,6 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
-  // S2 (FPRM-388): document-type options come from the vocabulary endpoint
-  // GET /config/document-types; fall back to the built-in list if it fails.
-  const [docTypeOptions, setDocTypeOptions] = useState(DOCUMENT_TYPES)
-  useEffect(() => {
-    fetch(`${API}/config/document-types`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        const items = data?.items || []
-        if (items.length) {
-          setDocTypeOptions(items.map((t) => ({ value: t.code, label: t.label || t.code })))
-        }
-      })
-      .catch(() => {})
-  }, [token])
 
   function onFileChange(e) {
     const f = e.target.files?.[0] || null
@@ -149,15 +124,14 @@ function UploadModal({ partnerId, token, onClose, onUploaded }) {
         <p className="fp-modal__subtitle">Any file type — max 25 MB.</p>
 
         <div className="fp-field fp-field--filled">
-          <select
+          {/* FPRM-418 / AD-40: shared vocabulary dropdown -- identical list on
+              every upload surface. */}
+          <DocumentTypeSelect
             id="upload-doc-type"
+            token={token}
             value={docType}
-            onChange={(e) => setDocType(e.target.value)}
-          >
-            {docTypeOptions.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
+            onChange={setDocType}
+          />
           <label htmlFor="upload-doc-type">Document type</label>
         </div>
 
@@ -477,7 +451,9 @@ export default function PartnerDocuments() {
           throw new Error(body.detail || `HTTP ${r.status}`)
         }
         const blob = await r.blob()
-        const url = URL.createObjectURL(blob)
+        // FPRM-420: track the preview blob URL so logout revokes it immediately
+        // (otherwise it survives the 30s timer into the next org's session).
+        const url = trackPreviewUrl(URL.createObjectURL(blob))
         window.open(url, '_blank', 'noopener,noreferrer')
         // Revoke after a short delay so the new tab has time to read.
         setTimeout(() => URL.revokeObjectURL(url), 30_000)
@@ -586,13 +562,14 @@ export default function PartnerDocuments() {
           that this avoids a backend query-param round-trip. */}
       <section className="fp-card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
-            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
-            <option value="">All document types</option>
-            {DOCUMENT_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
+          {/* FPRM-418 / AD-40: same shared vocabulary as the upload dropdown. */}
+          <DocumentTypeSelect
+            token={token}
+            value={typeFilter}
+            onChange={setTypeFilter}
+            placeholder="All document types"
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
+          />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}>
             <option value="">All statuses</option>

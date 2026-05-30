@@ -181,8 +181,10 @@ function LogsModal({ token, asset, onClose }) {
                 {logs.map((l) => (
                   <tr key={l.id}>
                     <td>{l.downloaded_at ? new Date(l.downloaded_at).toLocaleString() : '—'}</td>
-                    <td style={{ fontSize: 12, color: '#64748B' }}>{l.downloaded_by || '—'}</td>
-                    <td style={{ fontSize: 12, color: '#64748B' }}>{l.partner_org_id || '—'}</td>
+                    {/* FPRM-419: show resolved names; fall back to the raw id only
+                        when a name is null (e.g. a deleted user/org). */}
+                    <td style={{ fontSize: 12, color: '#64748B' }}>{l.user_name || l.downloaded_by || '—'}</td>
+                    <td style={{ fontSize: 12, color: '#64748B' }}>{l.partner_org_name || l.partner_org_id || '—'}</td>
                   </tr>
                 ))}
               </tbody>

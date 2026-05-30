@@ -363,7 +363,12 @@ def asset_download_logs(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("asset:read_all")),
 ):
-    """Download-log detail for the internal download-count drill-down."""
+    """Download-log detail for the internal download-count drill-down.
+
+    FPRM-419: resolve ``downloaded_by`` / ``partner_org_id`` to human-readable
+    ``user_name`` / ``partner_org_name`` (mirrors the FPRM-371 uploaded-by name
+    pattern). The raw ids are still returned for a subtle fallback when a name
+    is null (e.g. a deleted user)."""
     if db.query(Asset).filter(Asset.id == asset_id).first() is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     rows = (
@@ -372,12 +377,30 @@ def asset_download_logs(
         .order_by(AssetDownloadLog.downloaded_at.desc())
         .all()
     )
+
+    # Batch-resolve names to avoid an N+1 query per log row.
+    user_ids = {r.downloaded_by for r in rows if r.downloaded_by}
+    org_ids = {r.partner_org_id for r in rows if r.partner_org_id}
+    user_names = {
+        u.id: u.full_name
+        for u in (db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else [])
+    }
+    org_names = {
+        o.id: o.legal_name
+        for o in (
+            db.query(PartnerOrganization).filter(PartnerOrganization.id.in_(org_ids)).all()
+            if org_ids else []
+        )
+    }
+
     return {
         "items": [
             {
                 "id": str(r.id),
                 "downloaded_by": str(r.downloaded_by) if r.downloaded_by else None,
+                "user_name": user_names.get(r.downloaded_by),
                 "partner_org_id": str(r.partner_org_id) if r.partner_org_id else None,
+                "partner_org_name": org_names.get(r.partner_org_id),
                 "downloaded_at": r.downloaded_at.isoformat() if r.downloaded_at else None,
             }
             for r in rows

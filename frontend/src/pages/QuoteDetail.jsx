@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { formatCurrency as fmtMoney, CURRENCY_SYMBOL } from '../utils/currency.js'
+import DocumentTypeSelect from '../components/DocumentTypeSelect.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -959,17 +960,15 @@ export default function QuoteDetail({ quoteId, onClose, onAddVersion, includeInP
               <div style={{ display: 'grid', gap: 8 }}>
                 <label style={{ display: 'block', fontSize: 13 }}>
                   <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Document type</span>
-                  <select
+                  {/* FPRM-418 / AD-40: shared vocabulary -- identical list to the
+                      Documents page; replaces the divergent 4-item list. */}
+                  <DocumentTypeSelect
+                    token={token}
                     value={attachType}
-                    onChange={(e) => setAttachType(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA', minWidth: 220 }}
+                    onChange={setAttachType}
                     disabled={attachSaving}
-                  >
-                    <option value="quote_acceptance">Quote Acceptance</option>
-                    <option value="purchase_order">Purchase Order</option>
-                    <option value="signed_proposal">Signed Proposal</option>
-                    <option value="other">Other</option>
-                  </select>
+                    style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E0E4EA', minWidth: 220 }}
+                  />
                 </label>
                 {/* Sprint 22 / FPRM-378 -- acceptance gate UI feedback. */}
                 {(() => {
