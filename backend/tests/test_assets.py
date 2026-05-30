@@ -257,3 +257,36 @@ def test_upload_with_category_and_download_logs_endpoint(client, db):
     _auth(_user(db, UserRole.channel_manager.value))
     logs = client.get(f"/internal/assets/{asset_id}/download-logs").json()["items"]
     assert len(logs) == 1
+
+
+def test_download_logs_resolve_user_and_org_names(client, db):
+    """FPRM-419: the download-log response resolves names, not raw UUIDs."""
+    _auth(_user(db, UserRole.channel_ops_admin.value))
+    asset_id = _upload(client, db).json()["id"]
+
+    org = PartnerOrganization(
+        id=uuid.uuid4(), legal_name="Acme Reseller SA",
+        program_type="distributor", partner_category=PartnerCategory.reseller,
+        status="active", tier=PartnerTier.gold,
+    )
+    db.add(org)
+    downloader = User(
+        id=uuid.uuid4(), email=f"dl-{uuid.uuid4().hex[:6]}@t", hashed_password="x",
+        role=UserRole.partner_user.value, is_active=True, partner_org_id=org.id,
+        full_name="Dana Downloader",
+    )
+    db.add(downloader)
+    db.commit()
+
+    _auth(downloader)
+    assert client.get(f"/assets/{asset_id}/download").status_code == 200
+
+    _auth(_user(db, UserRole.channel_manager.value))
+    logs = client.get(f"/internal/assets/{asset_id}/download-logs").json()["items"]
+    assert len(logs) == 1
+    row = logs[0]
+    assert row["user_name"] == "Dana Downloader"
+    assert row["partner_org_name"] == "Acme Reseller SA"
+    # raw ids retained for the null-name fallback
+    assert row["downloaded_by"] == str(downloader.id)
+    assert row["partner_org_id"] == str(org.id)

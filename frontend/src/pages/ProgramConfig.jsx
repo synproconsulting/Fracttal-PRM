@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
+import DocumentTypeSelect from '../components/DocumentTypeSelect.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -10,6 +11,8 @@ const TABS = [
   { key: 'criteria',   label: 'Activation Checklist' },
   { key: 'pricing',    label: 'Pricing' },
   { key: 'commission', label: 'Commission Rates' },
+  // Sprint 24 / FPRM-418 -- document-type vocabulary admin (AD-40)
+  { key: 'doc_types',  label: 'Document Types', adminOnly: true },
   // Sprint 22 / FPRM-377 -- system_admin-only tab
   { key: 'doc_rules',  label: 'Document Rules', adminOnly: true },
 ]
@@ -1399,6 +1402,7 @@ export default function ProgramConfig() {
         {active === 'criteria'   && <ActivationTab       token={token} onUpdate={onUpdate} onError={onError} />}
         {active === 'pricing'    && <PricingTab          token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
         {active === 'commission' && <CommissionRatesTab  token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
+        {active === 'doc_types'  && <DocumentTypesTab    token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
         {active === 'doc_rules'  && <DocumentRulesTab    token={token} role={ctx?.payload?.role} onUpdate={onUpdate} onError={onError} />}
       </div>
 
@@ -1796,6 +1800,180 @@ function CommissionRatesTab({ token, role, onUpdate, onError }) {
 
 
 
+// ---- Tab - Document Types vocabulary admin (Sprint 24 / FPRM-418 / AD-40) -
+//
+// View every document type and add a new one. This is the single vocabulary
+// surfaced by GET /config/document-types and consumed by the shared
+// DocumentTypeSelect on every upload surface -- so a type added here appears
+// everywhere. system_admin only (the tab is adminOnly); the POST endpoint also
+// allows channel_ops_admin.
+
+function DocumentTypesTab({ token, role, onUpdate, onError }) {
+  const [types, setTypes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [form, setForm] = useState({ code: '', label: '' })
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
+  const canWrite = role === 'system_admin' || role === 'channel_ops_admin'
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await fetch(`${API}/config/document-types?include_inactive=true`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const data = await r.json()
+      setTypes(data?.items || [])
+    } catch (e) {
+      onError?.(e.message || String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [token, onError])
+
+  useEffect(() => { reload() }, [reload])
+
+  async function addType() {
+    setSaving(true); setFormError(null)
+    try {
+      const code = form.code.trim()
+      const label = form.label.trim() || code
+      if (!code) { setFormError('Enter a code (e.g. tax_clearance)'); return }
+      const r = await fetch(`${API}/config/document-types`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code, label }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (r.status === 409) { setFormError(data.detail || 'This document type code already exists'); return }
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
+      setAdding(false)
+      setForm({ code: '', label: '' })
+      reload()
+      onUpdate?.('Document type added')
+    } catch (e) {
+      setFormError(e.message || String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function toggleActive(t) {
+    try {
+      const r = await fetch(`${API}/config/document-types/${t.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ is_active: !t.is_active }),
+      })
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${r.status}`)
+      }
+      reload()
+      onUpdate?.(t.is_active ? 'Document type archived' : 'Document type reactivated')
+    } catch (e) {
+      onError?.(e.message || String(e))
+    }
+  }
+
+  const activeCount = types.filter((t) => t.is_active).length
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <SummaryCard label="Total Types" value={types.length} />
+        <SummaryCard label="Active" value={activeCount} color="#1B8743" />
+      </div>
+
+      <div className="fp-card" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <p style={{ margin: 0, color: '#5A6478', fontSize: 13 }}>
+          The document-type vocabulary. Every upload surface (Documents, quote-attach,
+          Document Rules) sources its dropdown from this single list — add a type here and
+          it appears everywhere.
+        </p>
+        {canWrite && !adding && (
+          <button type="button" onClick={() => { setForm({ code: '', label: '' }); setFormError(null); setAdding(true) }}
+            className="fp-btn fp-btn--primary">
+            + Add Type
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <div className="fp-card" style={{ marginBottom: 16, display: 'grid', gap: 8, maxWidth: 520 }}>
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Code</span>
+            <input type="text" placeholder="e.g. tax_clearance" value={form.code} disabled={saving}
+              onChange={(e) => setForm({ ...form, code: e.target.value })}
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          </label>
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: 'block', color: '#64748B', marginBottom: 4 }}>Label</span>
+            <input type="text" placeholder="e.g. Tax Clearance" value={form.label} disabled={saving}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }} />
+          </label>
+          {formError && <div className="fp-alert fp-alert--danger">{formError}</div>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button type="button" onClick={() => setAdding(false)} disabled={saving} className="fp-btn fp-btn--ghost">Cancel</button>
+            <button type="button" onClick={addType} disabled={saving || !form.code.trim()} className="fp-btn fp-btn--primary">
+              {saving ? 'Saving...' : 'Add'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: '#64748B', padding: 12 }}>Loading document types…</div>
+      ) : types.length === 0 ? (
+        <div className="fp-card" style={{ textAlign: 'center', padding: 32, color: '#94A3B8' }}>
+          No document types configured yet.
+        </div>
+      ) : (
+        <table className="fp-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Label</th>
+              <th>Status</th>
+              <th style={{ textAlign: 'right' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {types.map((t) => (
+              <tr key={t.id || t.code}>
+                <td><code style={{ fontSize: 13 }}>{t.code}</code></td>
+                <td>{t.label}</td>
+                <td>
+                  <span style={{
+                    display: 'inline-block', padding: '2px 8px', borderRadius: 12,
+                    background: t.is_active ? '#E6F4EA' : '#F5F7FA',
+                    color: t.is_active ? '#2E7D32' : '#64748B',
+                    fontSize: 12, fontWeight: 600,
+                  }}>
+                    {t.is_active ? 'Active' : 'Archived'}
+                  </span>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  {canWrite && (
+                    <button type="button" onClick={() => toggleActive(t)}
+                      className="fp-btn fp-btn--ghost fp-btn--sm">
+                      {t.is_active ? 'Archive' : 'Reactivate'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+
 // ---- Tab 6 - Document Rules (Sprint 22 / FPRM-377) -----------------------
 //
 // Admin UI for ``document_type_rules`` -- decides which document types auto-
@@ -1813,12 +1991,6 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
   })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState(null)
-  // S2 (FPRM-388): document-type vocabulary for the Add Rule dropdown, sourced
-  // from GET /config/document-types. "Add new type…" reveals code/label inputs
-  // that create a new DocumentTypeConfig vocabulary entry before the rule.
-  const [vocab, setVocab] = useState([])
-  const [newTypeMode, setNewTypeMode] = useState(false)
-  const [newType, setNewType] = useState({ code: '', label: '' })
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -1835,24 +2007,10 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
     }
   }, [token, onError])
 
-  const loadVocab = useCallback(async () => {
-    try {
-      const r = await fetch(`${API}/config/document-types`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!r.ok) return
-      const data = await r.json()
-      setVocab((data?.items || []).map((t) => ({ code: t.code, label: t.label || t.code })))
-    } catch (_) { /* dropdown falls back to free-text via "Add new type" */ }
-  }, [token])
-
   useEffect(() => { reload() }, [reload])
-  useEffect(() => { loadVocab() }, [loadVocab])
 
   function openNew() {
     setForm({ document_type: '', requires_approval: true, auto_approve: false, description: '' })
-    setNewTypeMode(false)
-    setNewType({ code: '', label: '' })
     setFormError(null)
     setEditing('new')
   }
@@ -1897,23 +2055,10 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
         return
       }
 
-      // New rule. Resolve the document type from the dropdown, or create a
-      // brand-new vocabulary entry first when "Add new type…" is selected.
-      let docType = form.document_type
-      if (newTypeMode) {
-        docType = newType.code.trim()
-        if (!docType) { setFormError('Enter a code for the new document type'); return }
-        const vr = await fetch(`${API}/config/document-types`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ code: docType, label: (newType.label || docType).trim() }),
-        })
-        // 409 = the vocabulary entry already exists, which is fine -- proceed.
-        if (!vr.ok && vr.status !== 409) {
-          const vd = await vr.json().catch(() => ({}))
-          throw new Error(vd.detail || `HTTP ${vr.status}`)
-        }
-      }
+      // New rule. The document type is chosen from the shared vocabulary
+      // dropdown (AD-40); new vocabulary entries are added in the Document
+      // Types tab, not inline here.
+      const docType = (form.document_type || '').trim()
       if (!docType) { setFormError('Choose a document type'); return }
 
       const r = await fetch(`${API}/admin/document-type-rules`, {
@@ -1933,7 +2078,6 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
       }
       if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`)
       setEditing(null)
-      loadVocab()
       reload()
       onUpdate?.('Rule created')
     } catch (e) {
@@ -2071,51 +2215,19 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
                     style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
                   />
                 ) : (
-                  <select
-                    value={newTypeMode ? '__new__' : form.document_type}
+                  // FPRM-418 / AD-40: shared vocabulary dropdown. Types that
+                  // already have a rule are greyed out (one rule per type); new
+                  // vocabulary entries are added in the Document Types tab.
+                  <DocumentTypeSelect
+                    token={token}
+                    value={form.document_type}
+                    onChange={(v) => setForm((f) => ({ ...f, document_type: v }))}
                     disabled={saving}
-                    onChange={(e) => {
-                      if (e.target.value === '__new__') {
-                        setNewTypeMode(true)
-                      } else {
-                        setNewTypeMode(false)
-                        setForm({ ...form, document_type: e.target.value })
-                      }
-                    }}
+                    placeholder="Select a document type…"
+                    disabledValues={rules.map((r) => r.document_type)}
+                    disabledSuffix=" — rule exists"
                     style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
-                  >
-                    <option value="">Select a document type…</option>
-                    {vocab.map((t) => {
-                      const hasRule = rules.some(
-                        (r) => (r.document_type || '').trim().toLowerCase() === t.code.trim().toLowerCase(),
-                      )
-                      return (
-                        <option key={t.code} value={t.code} disabled={hasRule}>
-                          {t.label}{hasRule ? ' — rule exists' : ''}
-                        </option>
-                      )
-                    })}
-                    <option value="__new__">Add new type…</option>
-                  </select>
-                )}
-                {editing === 'new' && newTypeMode && (
-                  <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-                    <input
-                      type="text" placeholder="code (e.g. tax_clearance)"
-                      value={newType.code} disabled={saving}
-                      onChange={(e) => setNewType({ ...newType, code: e.target.value })}
-                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
-                    />
-                    <input
-                      type="text" placeholder="label (e.g. Tax Clearance)"
-                      value={newType.label} disabled={saving}
-                      onChange={(e) => setNewType({ ...newType, label: e.target.value })}
-                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14 }}
-                    />
-                    <span style={{ fontSize: 12, color: '#64748B' }}>
-                      Creates a new document type in the vocabulary, then this rule.
-                    </span>
-                  </div>
+                  />
                 )}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
@@ -2150,9 +2262,7 @@ function DocumentRulesTab({ token, role, onUpdate, onError }) {
                   Cancel
                 </button>
                 <button type="button" onClick={save}
-                  disabled={saving || (editing === 'new' && (
-                    newTypeMode ? !newType.code.trim() : !form.document_type.trim()
-                  ))}
+                  disabled={saving || (editing === 'new' && !form.document_type.trim())}
                   className="fp-btn fp-btn--primary">
                   {saving ? 'Saving...' : (editing === 'new' ? 'Create' : 'Save')}
                 </button>

@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Frontend Fix Session 2026-05-26 (PRs #169–#173, migration head 033, 711 tests)
+> Last updated: Sprint 24 PR A 2026-05-30 (PR #188, migration head 040, 802 tests) — AD-40 shared document-type vocabulary
 
 
 
@@ -1278,6 +1278,16 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 
 **Do not:** Return `file_data` from any list endpoint. Do not hard-delete assets (soft-delete only). Do not raise the 10 MB cap to match the 25 MB document cap — they are intentionally independent.
 
+### AD-40 — One shared document-type vocabulary surfaced via a single `DocumentTypeSelect` on every upload surface (Sprint 24 / FPRM-418)
+
+**Decision:** The document-type dropdown on every surface (partner Documents page upload + filter, quote-attach in QuoteDetail, the Program Config Document Rules type picker) is rendered by one shared component, `frontend/src/components/DocumentTypeSelect.jsx`, sourced exclusively from the `GET /config/document-types` vocabulary (AD-38). No surface defines its own list or filters/overrides the vocabulary. Vocabulary entries are viewed and added in a dedicated Program Config **Document Types** tab, which reuses the existing `POST /config/document-types` (`system_config:update_all` → `system_admin` + `channel_ops_admin`) and `PATCH /config/document-types/{id}` endpoints — no new endpoint was added.
+
+**Why:** Sprint 23 UI testing found the lists diverged — quote-attach showed a hardcoded 4-item list (`quote_acceptance`/`purchase_order`/`signed_proposal`/`other`) while the Documents page showed the full KYC vocabulary, and `nda` was missing on one surface. A single component over a single endpoint makes divergence structurally impossible, and a vocabulary admin UI was missing entirely.
+
+**Consequence:** `DocumentTypeSelect` fetches `/config/document-types`, falls back to a canonical in-code list only on fetch failure, and accepts `disabledValues`/`disabledSuffix` to grey out (never hide) contextually-unavailable options (e.g. a type that already has a rule in the Document Rules tab) so the list stays identical everywhere. The `GET /config/document-types` contract and `test_document_types_config.py` are unchanged. The Document Rules tab no longer creates vocabulary inline — new types are added in the Document Types tab.
+
+**Do not:** Reintroduce a per-surface document-type array or filter the vocabulary on any surface. Do not repurpose `GET /config/document-types` to return rules (AD-38). Do not hide options to express unavailability — disable them so every surface shows the same set.
+
 ---
 
 ## Section 7 — Frontend Design Standards
@@ -1298,6 +1308,7 @@ Every list page follows this structure:
 ### Shared Components
 
 - `SortableTh` — sortable column header with ↕/↑/↓ glyph and `aria-sort` attribute. Source: `frontend/src/components/SortableTh.jsx`.
+- `DocumentTypeSelect` — the single shared document-type dropdown (AD-40), sourced from `GET /config/document-types`. Used on every upload surface so the vocabulary can never diverge. Also exports `fetchDocumentTypes(token)` and a canonical fallback list. Source: `frontend/src/components/DocumentTypeSelect.jsx`.
 - `StatusBadge` — tinted-background status chip (AD-27).
 - `formatCurrency(amount, currencyCode)` — currency formatting with symbol map. Source: `frontend/src/utils/currency.js`.
 - `formatMoney(amount)` — whole-dollar formatting for pipeline / deal values (the partner-portal variant; same module).

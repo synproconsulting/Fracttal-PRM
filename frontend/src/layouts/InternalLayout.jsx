@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { clearSession } from '../utils/session.js'
 
 const INTERNAL_ROLES = new Set([
   'system_admin',
@@ -228,7 +229,9 @@ export default function InternalLayout() {
   const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(payload.role))
 
   function logout() {
-    localStorage.removeItem('token')
+    // FPRM-420: purge tenant-scoped client state + revoke preview blob URLs so
+    // a prior org's data cannot linger into the next session.
+    clearSession()
     navigate('/login', { replace: true })
   }
 

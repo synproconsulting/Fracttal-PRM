@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { clearSession } from '../utils/session.js'
 
-const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+const API =(typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
 const PARTNER_ROLES = new Set(['partner_user', 'partner_admin'])
@@ -141,7 +142,9 @@ export default function PartnerPortalLayout() {
   }
 
   function logout() {
-    localStorage.removeItem('token')
+    // FPRM-420: purge tenant-scoped client state + revoke preview blob URLs so
+    // a prior org's data cannot linger into the next session.
+    clearSession()
     navigate('/login', { replace: true })
   }
 
