@@ -1239,5 +1239,5 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 23 PR B (2026-05-29, PR #186): Asset Library — migration 040 (asset_categories, assets, asset_download_logs); base64 storage + 10 MB cap (AD-39); /assets + /internal/assets endpoints; PortalAssets ("Resources") + InternalAssets ("Assets") pages. +13 tests (786 → 799). Sprint 23 closed (PR A #185 + PR B #186).*
 
-*Last updated: 2026-05-30 — docs PR: Phase 6 Backlog / Sprint Candidates section added to CLAUDE.md (PR #PRNUM).*
+*Last updated: 2026-05-30 — docs PR: Phase 6 Backlog / Sprint Candidates section added to CLAUDE.md (PR #187).*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

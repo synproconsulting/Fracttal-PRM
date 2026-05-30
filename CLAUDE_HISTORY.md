@@ -2594,4 +2594,4 @@ AD-39 — asset base64 storage; 10 MB cap (independent of the 25 MB partner-docu
 
 ---
 
-> *Docs PR (2026-05-30): added a "Phase 6 Backlog / Sprint Candidates" section to CLAUDE.md (sibling to Phase 7 Backlog) capturing three product gaps from Sprint 23 UI testing — partner deal messaging, asset reactivate, PortalAssets redesign. No code change. PR #PRNUM.*
+> *Docs PR (2026-05-30): added a "Phase 6 Backlog / Sprint Candidates" section to CLAUDE.md (sibling to Phase 7 Backlog) capturing three product gaps from Sprint 23 UI testing — partner deal messaging, asset reactivate, PortalAssets redesign. No code change. PR #187.*
