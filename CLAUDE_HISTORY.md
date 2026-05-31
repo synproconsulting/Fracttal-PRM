@@ -2630,3 +2630,56 @@ AD-40 — one shared document-type vocabulary (`GET /config/document-types`) via
 2. **A security leak can live entirely in the client cache.** The backend already 403'd cross-org fetches; the leak was a `blob:` URL surviving a 30s timer across a session switch. Tracking preview URLs and revoking on logout is the seam.
 3. **Process:** built the PR body from a file (not inline backticks); drove the git/PR flow through one self-guarding script and read the log back to verify (carried from PR #187).
 
+
+---
+
+## Sprint 24 PR B — Channel Manager Assignment + Partner-Scoped Approval Routing (Phase 6)
+
+**Date:** 2026-05-30 · **PR:** #189 · **Migration head:** 040 → **041** ·
+**Tests:** 802 → **816** (+14). **Sprint 24 fully closed (PR A #188 + PR B #189).**
+
+Five stories (FPRM-422…426). Subtasks omit fixVersions / customfield_10020 per AD-10.
+An enhancement of the EXISTING approval workflow via one shared resolver — NOT a new engine,
+and the existing per-router guards were left untouched (that is Phase 7 Dynamic RBAC).
+
+### Stories / subtasks
+
+| Story | Summary |
+|---|---|
+| S5 FPRM-422 | Migration **041** `partner_channel_managers` (id, partner_org_id FK, user_id FK, assigned_by FK, assigned_at; `unique(partner_org_id, user_id)`) + `PartnerChannelManager` model + new `partner_channel_managers_router`: `GET/POST/DELETE /partners/{id}/channel-managers` + `GET /internal/channel-managers` (picker). POST requires the target hold `channel_manager` (422), dedupes (409), write-gated to system_admin + channel_ops_admin; audit `partner.channel_manager_assigned`/`_unassigned`. |
+| S6 FPRM-423 (AD-41) | Shared resolver in `permissions.py`: `ALL_PARTNERS` sentinel, `get_all_channel_managers`, `get_assigned_partner_ids`, `assignments_exist` (request-cached global switch), `resolve_cm_scope`, `apply_cm_scope_to_query`, `enforce_cm_scope`, `cm_scope_label`. Queue filter on `GET /internal/deals` + `/internal/quotes`; 403 action guard on deal won/conflict-check/override-conflict, quote status/versions/active-version/active-scenario/pipeline-inclusion, partner activation training-complete/reset. CM-only; admins always unscoped; applications excluded. |
+| S7 FPRM-424 | `ChannelManagersPanel` on the internal partner detail page (`PartnerProfile.jsx`, internal mode only): list assigned (name+email) + searchable add picker + remove; add/remove gated to system_admin + channel_ops_admin; bootstrap empty-state copy. |
+| S8 FPRM-425 | `CmScopeBanner.jsx` on Deals + Quotes queues: "Showing your assigned partners" (scoped) vs "Showing all partners (no assignments configured yet)" (bootstrap). Driven by a `cm_scope` field added to both queue responses. |
+| S9 FPRM-426 | These four canonical-doc updates + AD-41 + Phase 6 backlog line (CM notifications). |
+
+### New endpoints
+`GET/POST/DELETE /partners/{id}/channel-managers`, `GET /internal/channel-managers`. Both
+`/internal/deals` and `/internal/quotes` responses gain a `cm_scope` field (`assigned`|`all`|null).
+
+### Migration 041
+Creates `partner_channel_managers` with the unique constraint + two indexes; existence-checked;
+`downgrade()` drops the table. No data seeded — bootstrap fallback means an empty table = every CM
+sees all.
+
+### The global-fallback decision (Option B)
+When NO assignment exists anywhere, every channel_manager stays unscoped (sees/acts on all). This
+keeps the rollout non-blocking: assignment never *removes* access until someone is actually
+assigned. The first assignment anywhere flips the switch for ALL channel managers at once — so the
+operational rule is **assign everyone before assigning anyone**.
+
+### AD recorded
+AD-41 — one shared `resolve_cm_scope()` resolver; global switch; admins always unscoped;
+applications excluded; existing guards NOT centralized (Phase 7); no notifications.
+
+### Lessons
+1. **One seam, applied many places — never per-router logic.** Every queue/action calls the same
+   `resolve_cm_scope`/`enforce_cm_scope`; new approval types inherit routing for free. Centralizing
+   the *existing guards* was explicitly out of scope (Phase 7).
+2. **The internal partner detail page is `PartnerProfile.jsx` in internalMode**, not a separate
+   component — the assignment panel keys on `!!params.id`.
+3. **channel_ops_admin can't use the system_admin-only `/internal/users`** — added a scoped
+   `GET /internal/channel-managers` candidate endpoint for the picker rather than widening that
+   endpoint.
+4. **Global-fallback keeps existing tests green** — with no assignments, CMs see all, so the
+   pre-existing deal/quote queue tests were unaffected (+0 regressions).
+

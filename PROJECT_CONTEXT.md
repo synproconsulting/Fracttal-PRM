@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 24 PR A 2026-05-30 (PR #188, migration head 040, 802 tests) — AD-40 shared document-type vocabulary
+> Last updated: Sprint 24 PR B 2026-05-30 (PR #189, migration head 041, 816 tests) — AD-41 channel-manager assignment + partner-scoped approval routing
 
 
 
@@ -1287,6 +1287,16 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 **Consequence:** `DocumentTypeSelect` fetches `/config/document-types`, falls back to a canonical in-code list only on fetch failure, and accepts `disabledValues`/`disabledSuffix` to grey out (never hide) contextually-unavailable options (e.g. a type that already has a rule in the Document Rules tab) so the list stays identical everywhere. The `GET /config/document-types` contract and `test_document_types_config.py` are unchanged. The Document Rules tab no longer creates vocabulary inline — new types are added in the Document Types tab.
 
 **Do not:** Reintroduce a per-surface document-type array or filter the vocabulary on any surface. Do not repurpose `GET /config/document-types` to return rules (AD-38). Do not hide options to express unavailability — disable them so every surface shows the same set.
+
+### AD-41 — Partner-scoped approvals route through one shared `resolve_cm_scope()` resolver; global fallback; admin always unscoped (Sprint 24 PR B / FPRM-423)
+
+**Decision:** Channel-manager↔partner assignment (`partner_channel_managers`, migration 041) routes the EXISTING approval workflow through a SINGLE shared seam in `permissions.py`. `resolve_cm_scope(db, user, request=None)` returns `ALL_PARTNERS` (unscoped) or a `set` of assigned `partner_org_id`s; `enforce_cm_scope(...)` 403s a scoped CM acting outside its set; `apply_cm_scope_to_query(...)` filters a queue; `cm_scope_label(...)` returns the UI hint; `assignments_exist(db, request)` is the request-cached global switch. These helpers sit AFTER each existing role guard and narrow ONLY the `channel_manager` role. The existing per-router guard helpers (`_require_review_role`, `_check_write_role`, `OVERRIDE_ROLES`, etc.) are **not** modified or centralized.
+
+**Why:** The requirement was to enhance the existing workflow, not rebuild it. A single resolver means every partner-scoped approval (current and future) inherits routing without per-type code, and the blast radius is one file. Centralizing the guards themselves is the separate, deferred Phase 7 Dynamic RBAC work.
+
+**Consequence:** `system_admin` + `channel_ops_admin` are ALWAYS unscoped. A `channel_manager` is unscoped while NO assignment exists anywhere (bootstrap/global fallback); once any assignment exists, every CM is scoped to its assigned set (possibly empty → sees nothing). Applied as a queue filter on `GET /internal/deals` + `GET /internal/quotes` and as a 403 action guard on deal won/conflict-check/override-conflict, quote status/versions/active-version/active-scenario/pipeline-inclusion, and partner activation training-complete/reset. Both queue responses carry a `cm_scope` field (`assigned`|`all`|null) driving `CmScopeBanner`. Applications are excluded (no `partner_org_id` until provisioning). No notification surfaces were added. New endpoints: `GET/POST/DELETE /partners/{id}/channel-managers`, `GET /internal/channel-managers`. Frontend: `ChannelManagersPanel` in `PartnerProfile.jsx` (internal mode), `CmScopeBanner.jsx` on the Deals + Quotes queues.
+
+**Do not:** Duplicate routing logic per workflow — always call the shared resolver. Do not modify or centralize the existing role guards (Phase 7). Do not scope `channel_ops_admin`/`system_admin`. Do not key applications on assignment. Do not run the `assignments_exist` switch per row — it is request-cached and called once.
 
 ---
 

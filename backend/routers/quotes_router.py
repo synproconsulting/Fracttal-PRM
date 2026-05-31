@@ -54,7 +54,7 @@ from models import (
     QuoteVersion,
     User,
 )
-from permissions import has_permission
+from permissions import has_permission, apply_cm_scope_to_query, cm_scope_label, enforce_cm_scope
 from quote_engine import calculate_quote
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 from sorting import apply_sort
@@ -480,6 +480,7 @@ def add_quote_version(
     """
     _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
+    enforce_cm_scope(db, current_user, quote.partner_org_id, request)  # AD-41
 
     if not payload.get("feature_plan"):
         raise HTTPException(status_code=422, detail="feature_plan is required")
@@ -529,6 +530,7 @@ def set_active_version(
     """Re-point ``quotes.active_version``. Internal write roles only."""
     _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
+    enforce_cm_scope(db, current_user, quote.partner_org_id, request)  # AD-41
 
     target = payload.get("version_number")
     if target is None:
@@ -611,6 +613,7 @@ def update_quote_status(
             )
     else:
         _check_write_role(current_user)
+        enforce_cm_scope(db, current_user, quote.partner_org_id, request)  # AD-41
 
     allowed = ALLOWED_STATUS_TRANSITIONS.get(quote.status, set())
     if new_status not in allowed:
@@ -727,6 +730,7 @@ def update_pipeline_inclusion(
     """
     _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
+    enforce_cm_scope(db, current_user, quote.partner_org_id, request)  # AD-41
 
     raw = payload.get("include_in_pipeline")
     if not isinstance(raw, bool):
@@ -1154,6 +1158,7 @@ def set_active_scenario(
     """
     _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
+    enforce_cm_scope(db, current_user, quote.partner_org_id, request)  # AD-41
 
     scenario_label = payload.get("scenario_label")
     if scenario_label is not None and not isinstance(scenario_label, str):
@@ -1294,6 +1299,8 @@ def list_internal_quotes(
         .join(DealRegistration, DealRegistration.id == Quote.deal_id)
         .join(PartnerOrganization, PartnerOrganization.id == Quote.partner_org_id)
     )
+    # AD-41: a scoped channel_manager sees only their assigned partners' quotes.
+    base = apply_cm_scope_to_query(base, db, current_user, Quote.partner_org_id)
     if status:
         base = base.filter(Quote.status == status)
     if partner_org_id:
@@ -1426,6 +1433,7 @@ def list_internal_quotes(
         "page": page,
         "page_size": page_size,
         "summary": summary,
+        "cm_scope": cm_scope_label(db, current_user),  # AD-41 queue indicator
     }
 
 
@@ -1468,6 +1476,8 @@ def export_internal_quotes_csv(
         .join(DealRegistration, DealRegistration.id == Quote.deal_id)
         .join(PartnerOrganization, PartnerOrganization.id == Quote.partner_org_id)
     )
+    # AD-41: a scoped channel_manager sees only their assigned partners' quotes.
+    base = apply_cm_scope_to_query(base, db, current_user, Quote.partner_org_id)
     if status:
         base = base.filter(Quote.status == status)
     if partner_org_id:

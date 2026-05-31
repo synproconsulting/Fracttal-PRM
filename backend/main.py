@@ -27,6 +27,7 @@ from routers.reports_router import router as reports_router
 from routers.quotes_router import router as quotes_router
 from routers.pricing_admin_router import router as pricing_admin_router
 from routers.assets_router import router as assets_router
+from routers.partner_channel_managers_router import router as partner_channel_managers_router
 
 load_dotenv()
 
@@ -68,6 +69,7 @@ app.include_router(reports_router)
 app.include_router(quotes_router)
 app.include_router(pricing_admin_router)
 app.include_router(assets_router)
+app.include_router(partner_channel_managers_router)
 
 
 @app.get("/")

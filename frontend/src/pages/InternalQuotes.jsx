@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { formatCurrency } from '../utils/currency.js'
 import { SortableTh } from '../components/SortableTh.jsx'
+import CmScopeBanner from '../components/CmScopeBanner.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -73,6 +74,7 @@ export default function InternalQuotes() {
   const [items, setItems] = useState([])
   const [summary, setSummary] = useState(null)
   const [total, setTotal] = useState(0)
+  const [cmScope, setCmScope] = useState(null)  // FPRM-425: 'assigned' | 'all' | null
   const [filters, setFilters] = useState({ status: '', search: '', feature_plan: '' })
   // Pipeline-only is a client-side filter — the backend endpoint doesn't
   // accept it as a query param yet, and include_in_pipeline is already on
@@ -113,6 +115,7 @@ export default function InternalQuotes() {
       setItems(body.items || [])
       setSummary(body.summary || null)
       setTotal(body.total || 0)
+      setCmScope(body.cm_scope || null)
     } catch (e) {
       setError(e.message || String(e))
     } finally {
@@ -160,6 +163,8 @@ export default function InternalQuotes() {
           {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
       </div>
+
+      <CmScopeBanner scope={cmScope} />
 
       {summary && (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>

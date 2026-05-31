@@ -39,6 +39,7 @@ from audit import log_audit_event
 from csv_export import csv_response
 from conflict_checker import check_deal_conflict
 from database import get_db
+from permissions import apply_cm_scope_to_query, cm_scope_label, enforce_cm_scope
 from sorting import apply_sort
 from models import (
     AuditLog,
@@ -894,6 +895,7 @@ def post_deal_won(
     """
     _require_review_role(current_user)
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-41
     if deal.status != "approved":
         raise HTTPException(
             status_code=422,
@@ -1083,6 +1085,9 @@ def list_internal_deals(
             PartnerOrganization.id == DealRegistration.partner_org_id,
         )
     )
+    # AD-41: a scoped channel_manager sees only their assigned partners' deals.
+    # No-op for admins / for any CM while no assignment exists (global fallback).
+    query = apply_cm_scope_to_query(query, db, current_user, DealRegistration.partner_org_id)
     if status:
         query = query.filter(DealRegistration.status == status)
     if partner_org_id is not None:
@@ -1170,6 +1175,7 @@ def list_internal_deals(
         "limit": limit,
         "offset": offset,
         "items": rows,
+        "cm_scope": cm_scope_label(db, current_user),  # AD-41 queue indicator
     }
 
 
@@ -1407,6 +1413,7 @@ def rerun_conflict_check(
     """
     _require_review_role(current_user)
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-41
 
     before_status = deal.conflict_status
     result = check_deal_conflict(db, deal.id)
@@ -1465,6 +1472,7 @@ def override_conflict(
         raise HTTPException(status_code=422, detail="override_notes is required")
 
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-41
     before_status = deal.conflict_status
     before_notes = deal.conflict_notes
     deal.conflict_status = "clear"

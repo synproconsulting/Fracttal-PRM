@@ -11,8 +11,10 @@ Actions: create, read_own, read_all, update_own, update_all,
          delete, approve, reject, export
 """
 from fastapi import Depends, HTTPException, status
+from sqlalchemy import false as _sql_false
 
 from auth import get_current_user
+from models import PartnerChannelManager, User
 from roles import UserRole, PARTNER_ROLES
 
 
@@ -252,3 +254,109 @@ def apply_tenant_filter(query, current_user, model):
     if UserRole(current_user.role) in PARTNER_ROLES:
         return query.filter(model.partner_org_id == current_user.partner_org_id)
     return query
+
+
+# ==========================================================================
+# Channel-manager <-> partner approval routing (Sprint 24 PR B / FPRM-423 / AD-41)
+#
+# A SINGLE shared seam. These helpers sit AFTER each existing role guard and
+# narrow only the ``channel_manager`` role to its assigned partners. They do
+# NOT replace or modify any existing guard (that is the deferred Phase 7
+# Dynamic RBAC work). Global fallback: while NO partner has any assignment,
+# every channel_manager sees/acts on all partners (bootstrap). ``system_admin``
+# and ``channel_ops_admin`` are ALWAYS unscoped.
+# ==========================================================================
+
+# Sentinel returned by ``resolve_cm_scope`` meaning "unscoped — sees everything".
+ALL_PARTNERS = object()
+
+
+def get_all_channel_managers(db):
+    """All active users with the ``channel_manager`` role (notification/fallback set)."""
+    return (
+        db.query(User)
+        .filter(User.role == UserRole.channel_manager.value, User.is_active.is_(True))
+        .all()
+    )
+
+
+def get_assigned_partner_ids(db, user_id) -> set:
+    """The set of partner_org_ids assigned to ``user_id``."""
+    rows = (
+        db.query(PartnerChannelManager.partner_org_id)
+        .filter(PartnerChannelManager.user_id == user_id)
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
+def assignments_exist(db, request=None) -> bool:
+    """True if ANY assignment row exists anywhere — the global switch.
+
+    This flips every channel_manager from "see all" to scoped the moment the
+    first assignment is created. Cached per-request on ``request.state`` when a
+    Request is supplied so it runs once, never per row.
+    """
+    if request is not None and hasattr(request, "state"):
+        cached = getattr(request.state, "_cm_assignments_exist", None)
+        if cached is not None:
+            return cached
+    exists = db.query(PartnerChannelManager.id).first() is not None
+    if request is not None and hasattr(request, "state"):
+        request.state._cm_assignments_exist = exists
+    return exists
+
+
+def resolve_cm_scope(db, user, request=None):
+    """Resolve a user's partner scope for partner-scoped approval surfaces.
+
+    Returns ``ALL_PARTNERS`` (unscoped) or a ``set`` of partner_org_ids:
+      * system_admin / channel_ops_admin (and any non-channel_manager role) -> ALL_PARTNERS, always.
+      * channel_manager -> ALL_PARTNERS if no assignments exist anywhere
+        (bootstrap); otherwise the user's assigned id set (may be EMPTY -> sees
+        / acts on nothing).
+    """
+    if UserRole(user.role) != UserRole.channel_manager:
+        return ALL_PARTNERS
+    if not assignments_exist(db, request):
+        return ALL_PARTNERS
+    return get_assigned_partner_ids(db, user.id)
+
+
+def apply_cm_scope_to_query(query, db, user, partner_org_id_column, request=None):
+    """Filter a queue query to the channel_manager's assigned partners.
+
+    No-op for unscoped users; an empty assigned set yields zero rows.
+    """
+    scope = resolve_cm_scope(db, user, request)
+    if scope is ALL_PARTNERS:
+        return query
+    if not scope:
+        return query.filter(_sql_false())
+    return query.filter(partner_org_id_column.in_(scope))
+
+
+def cm_scope_label(db, user, request=None):
+    """UI hint for the queue indicator (FPRM-425). Returns:
+      * ``"assigned"`` -- channel_manager, assignments exist (queue is scoped).
+      * ``"all"``      -- channel_manager, bootstrap (sees all partners).
+      * ``None``       -- any other role (no indicator).
+    """
+    if UserRole(user.role) != UserRole.channel_manager:
+        return None
+    return "assigned" if assignments_exist(db, request) else "all"
+
+
+def enforce_cm_scope(db, user, partner_org_id, request=None) -> None:
+    """403 if a scoped channel_manager targets a partner outside their scope.
+
+    No-op for unscoped users (admins, or any CM while in global-fallback).
+    """
+    scope = resolve_cm_scope(db, user, request)
+    if scope is ALL_PARTNERS:
+        return
+    if partner_org_id is None or partner_org_id not in scope:
+        raise HTTPException(
+            status_code=403,
+            detail="This partner is not assigned to you.",
+        )

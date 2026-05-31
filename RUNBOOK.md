@@ -175,6 +175,27 @@ a prior org's preview stayed openable after logout → login as a different-org 
 refresh. The backend already 403s the cross-org re-fetch; this is the client cache. If you add a
 new in-browser preview that keeps a blob URL alive, wrap it in `trackPreviewUrl`.
 
+### Channel-manager assignment + partner-scoped approval routing (Sprint 24 PR B / AD-41)
+
+`partner_channel_managers` (migration 041) assigns channel managers to partners; the EXISTING
+approval workflow is routed through one shared resolver in `permissions.py`
+(`resolve_cm_scope` / `enforce_cm_scope` / `apply_cm_scope_to_query` / `cm_scope_label`). It sits
+**after** each existing role guard and narrows ONLY the `channel_manager` role — `system_admin`
+and `channel_ops_admin` always see/act on all partners. Assign via the **Channel Managers** panel
+on the internal partner detail page (`/internal/partners/{id}/profile`), or the API:
+`GET/POST/DELETE /partners/{id}/channel-managers` (write = system_admin + channel_ops_admin; the
+assigned user must hold the `channel_manager` role or POST returns 422).
+
+> **Global-switch rollout note — assign everyone before assigning anyone.** While the
+> `partner_channel_managers` table is EMPTY, every channel_manager sees all partners (bootstrap
+> fallback, non-blocking). The moment the **first** assignment is created anywhere, EVERY channel
+> manager flips to scoped at once — any CM without an assignment then sees an empty Deals/Quotes
+> queue. So before assigning the first partner, make sure each active CM has their partners
+> assigned, or roll it out in a maintenance window. The Deals/Quotes queues show a banner
+> ("Showing your assigned partners" vs "Showing all partners (no assignments configured yet)") so a
+> CM understands why their queue is scoped. Applications are NOT routed by assignment (a partner
+> application has no `partner_org_id` until it is approved and provisioned).
+
 ### Invite Flow Test
 
 ```cmd
@@ -1275,5 +1296,7 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 24 PR A (2026-05-30, PR #188): Sprint 23 carry-forward bugs — shared `DocumentTypeSelect` over `GET /config/document-types` on every upload surface + Document Types vocabulary admin tab (AD-40); asset download-log modal resolves user/org names not UUIDs (FPRM-419); logout purges tenant client state + revokes preview blob URLs (FPRM-420). No migration (head stays 040). +3 tests (799 → 802).*
 
-*Last updated: 2026-05-30 — Sprint 24 PR A (PR #188): AD-40 shared document-type vocabulary, download-log names, logout purge.*
+*Sprint 24 PR B (2026-05-30, PR #189): Channel Manager Assignment + Partner-Scoped Approval Routing — migration 041 (`partner_channel_managers`); one shared `resolve_cm_scope` resolver applied as queue filter + action guard for channel_manager only; global-fallback (empty table = all CMs see all); assignment panel on partner detail + scoped banners on Deals/Quotes (AD-41). +14 tests (802 → 816). Sprint 24 fully closed (PR A #188 + PR B #189).*
+
+*Last updated: 2026-05-30 — Sprint 24 PR B (PR #189): AD-41 channel-manager assignment + partner-scoped approval routing; global-switch rollout note.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

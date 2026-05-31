@@ -37,7 +37,7 @@ from models import (
     QuoteVersion,
     User,
 )
-from permissions import require_permission
+from permissions import require_permission, enforce_cm_scope
 from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 
 router = APIRouter(prefix="/partners", tags=["partners"])
@@ -334,6 +334,7 @@ def _set_training(
         raise HTTPException(status_code=404, detail="Partner not found")
     if UserRole(current_user.role) not in REVIEW_ROLES:
         raise HTTPException(status_code=403, detail="Internal role required")
+    enforce_cm_scope(db, current_user, partner_id, request)  # AD-41
 
     checklist = (
         db.query(PartnerActivationChecklist)
