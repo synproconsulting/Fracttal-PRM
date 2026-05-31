@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { SortableTh } from '../components/SortableTh.jsx'
+import CmScopeBanner from '../components/CmScopeBanner.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -302,6 +303,7 @@ export default function DealQueue() {
   const [toDate, setToDate] = useState('')
   const [search, setSearch] = useState('')
   const [deals, setDeals] = useState([])
+  const [cmScope, setCmScope] = useState(null)  // FPRM-425: 'assigned' | 'all' | null
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [exporting, setExporting] = useState(false)
@@ -337,7 +339,7 @@ export default function DealQueue() {
         }
         return r.json()
       })
-      .then((data) => setDeals(data.items || []))
+      .then((data) => { setDeals(data.items || []); setCmScope(data.cm_scope || null) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }
@@ -427,6 +429,8 @@ export default function DealQueue() {
           </button>
         </div>
       </div>
+
+      <CmScopeBanner scope={cmScope} />
 
       {/* Summary cards strip — six aggregates sourced from `deals` (AD-31). */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>

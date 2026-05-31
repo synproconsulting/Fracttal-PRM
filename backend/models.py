@@ -1822,3 +1822,35 @@ class AssetDownloadLog(Base):
         nullable=True,
     )
     downloaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PartnerChannelManager(Base):
+    """Channel-manager <-> partner assignment (Sprint 24 PR B / FPRM-422 / AD-41).
+
+    Many-to-many: a partner org may have several assigned channel managers; a
+    channel manager covers many partners. The unique(partner_org_id, user_id)
+    constraint makes a repeat assignment idempotent (409 at the API)."""
+
+    __tablename__ = "partner_channel_managers"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    partner_org_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("partner_organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assigned_by = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("partner_org_id", "user_id", name="uq_partner_channel_manager"),
+    )

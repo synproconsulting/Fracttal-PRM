@@ -225,6 +225,152 @@ function ProfileEditForm({ profile, onSave, onCancel, saving }) {
   )
 }
 
+// Sprint 24 PR B / FPRM-424 / AD-41 -- channel-manager assignment panel.
+// Shown only on the internal partner-org detail page. Add/remove controls are
+// gated to system_admin + channel_ops_admin (canManage); all internal roles can
+// view the list. While NO partner has any assignment, every channel_manager
+// sees all partners (the empty-state copy explains this).
+function ChannelManagersPanel({ token, partnerOrgId, canManage }) {
+  const [assigned, setAssigned] = useState([])
+  const [candidates, setCandidates] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [pick, setPick] = useState('')
+  const [search, setSearch] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => {
+    if (!partnerOrgId || !token) return
+    let alive = true
+    setLoading(true)
+    fetch(`${API}/partners/${partnerOrgId}/channel-managers`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => { if (alive) setAssigned(d.items || []) })
+      .catch(() => { if (alive) setAssigned([]) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [partnerOrgId, token, reloadKey])
+
+  useEffect(() => {
+    if (!canManage || !token) return
+    let alive = true
+    fetch(`${API}/internal/channel-managers`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => { if (alive) setCandidates(d.items || []) })
+      .catch(() => { if (alive) setCandidates([]) })
+    return () => { alive = false }
+  }, [canManage, token, reloadKey])
+
+  const assignedIds = new Set(assigned.map((a) => a.user_id))
+  const available = candidates
+    .filter((c) => !assignedIds.has(c.user_id))
+    .filter((c) => {
+      const q = search.trim().toLowerCase()
+      if (!q) return true
+      return (c.full_name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q)
+    })
+
+  async function add() {
+    if (!pick) return
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch(`${API}/partners/${partnerOrgId}/channel-managers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ user_id: pick }),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        throw new Error(d.detail || `HTTP ${r.status}`)
+      }
+      setPick(''); setSearch(''); setAdding(false); setReloadKey((k) => k + 1)
+    } catch (e) { setError(e.message || String(e)) } finally { setBusy(false) }
+  }
+
+  async function remove(userId) {
+    if (!window.confirm('Remove this channel manager from the partner?')) return
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch(`${API}/partners/${partnerOrgId}/channel-managers/${userId}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        throw new Error(d.detail || `HTTP ${r.status}`)
+      }
+      setReloadKey((k) => k + 1)
+    } catch (e) { setError(e.message || String(e)) } finally { setBusy(false) }
+  }
+
+  return (
+    <section className="fp-card" style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h2 className="fp-section-title" style={{ margin: 0 }}>Channel Managers</h2>
+        {canManage && !adding && (
+          <button type="button" className="fp-btn fp-btn--primary fp-btn--sm" onClick={() => { setError(null); setAdding(true) }}>
+            + Assign
+          </button>
+        )}
+      </div>
+
+      {error && <div className="fp-alert fp-alert--danger" style={{ marginBottom: 12 }}>{error}</div>}
+
+      {adding && canManage && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          <input type="search" placeholder="Search channel managers…" value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14, flex: 1, minWidth: 180 }} />
+          <select value={pick} onChange={(e) => setPick(e.target.value)} disabled={busy}
+            style={{ padding: '8px 10px', border: '1px solid #E0E4EA', borderRadius: 6, fontSize: 14, minWidth: 220 }}>
+            <option value="">Select a channel manager…</option>
+            {available.map((c) => (
+              <option key={c.user_id} value={c.user_id}>{c.full_name || c.email}</option>
+            ))}
+          </select>
+          <button type="button" className="fp-btn fp-btn--primary fp-btn--sm" onClick={add} disabled={busy || !pick}>
+            {busy ? 'Saving…' : 'Add'}
+          </button>
+          <button type="button" className="fp-btn fp-btn--ghost fp-btn--sm" onClick={() => { setAdding(false); setPick(''); setSearch('') }} disabled={busy}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: '#64748B' }}>Loading…</div>
+      ) : assigned.length === 0 ? (
+        <p style={{ color: '#64748B', fontSize: 13, margin: 0 }}>
+          No managers assigned — while no partner has any assignment, all channel managers see all partners.
+        </p>
+      ) : (
+        <table className="fp-table">
+          <thead><tr><th>Name</th><th>Email</th>{canManage && <th style={{ textAlign: 'right' }}>Actions</th>}</tr></thead>
+          <tbody>
+            {assigned.map((a) => (
+              <tr key={a.id}>
+                <td>{a.full_name || '—'}</td>
+                <td style={{ color: '#64748B' }}>{a.email || '—'}</td>
+                {canManage && (
+                  <td style={{ textAlign: 'right' }}>
+                    <button type="button" className="fp-btn fp-btn--danger fp-btn--sm" onClick={() => remove(a.user_id)} disabled={busy}>
+                      Remove
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
+
 export default function PartnerProfile() {
   const params = useParams()
   const ctx = useOutletContext() || {}
@@ -391,6 +537,9 @@ export default function PartnerProfile() {
       {!loading && (
         <>
           <OrgSummary org={org} />
+          {internalMode && (
+            <ChannelManagersPanel token={token} partnerOrgId={partnerOrgId} canManage={canManageStatus} />
+          )}
           {profile ? (
             editing ? (
               <ProfileEditForm
