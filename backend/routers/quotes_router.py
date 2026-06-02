@@ -334,6 +334,10 @@ def create_quote_for_deal(
     elif role not in WRITE_ROLES:
         raise HTTPException(status_code=403, detail="Permission denied")
 
+    # AD-42: scope the internal-write path to the CM's assigned partners. No-op
+    # for partner_admin (own-org checked above) + admins (always unscoped).
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)
+
     if deal.status in ("rejected", "cancelled"):
         raise HTTPException(
             status_code=422,
@@ -1034,6 +1038,7 @@ def generate_pdf_for_version(
     """
     _check_write_role(current_user)
     quote = _get_quote_or_404(db, quote_id)
+    enforce_cm_scope(db, current_user, quote.partner_org_id, request)  # AD-42
     version = (
         db.query(QuoteVersion)
         .filter(

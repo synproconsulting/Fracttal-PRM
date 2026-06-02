@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 24 PR B 2026-05-30 (PR #189, migration head 041, 816 tests) — AD-41 channel-manager assignment + partner-scoped approval routing
+> Last updated: Sprint 24 hotfix 2026-06-02 (PR #190, migration head 041, 852 tests) — AD-42 cm_scope on all CM-reachable actions + scoped CM partner-edit + portal CM read (FPRM-443/444/445). Prior: Sprint 24 PR B (PR #189) — AD-41 channel-manager assignment + partner-scoped approval routing
 
 
 
@@ -1297,6 +1297,18 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 **Consequence:** `system_admin` + `channel_ops_admin` are ALWAYS unscoped. A `channel_manager` is unscoped while NO assignment exists anywhere (bootstrap/global fallback); once any assignment exists, every CM is scoped to its assigned set (possibly empty → sees nothing). Applied as a queue filter on `GET /internal/deals` + `GET /internal/quotes` and as a 403 action guard on deal won/conflict-check/override-conflict, quote status/versions/active-version/active-scenario/pipeline-inclusion, and partner activation training-complete/reset. Both queue responses carry a `cm_scope` field (`assigned`|`all`|null) driving `CmScopeBanner`. Applications are excluded (no `partner_org_id` until provisioning). No notification surfaces were added. New endpoints: `GET/POST/DELETE /partners/{id}/channel-managers`, `GET /internal/channel-managers`. Frontend: `ChannelManagersPanel` in `PartnerProfile.jsx` (internal mode), `CmScopeBanner.jsx` on the Deals + Quotes queues.
 
 **Do not:** Duplicate routing logic per workflow — always call the shared resolver. Do not modify or centralize the existing role guards (Phase 7). Do not scope `channel_ops_admin`/`system_admin`. Do not key applications on assignment. Do not run the `assignments_exist` switch per row — it is request-cached and called once.
+
+---
+
+### AD-42 — Every CM-reachable mutating endpoint calls `enforce_cm_scope` after its role guard; one parametrized test is the canonical list; CM partner-detail edit is granted but scoped (Sprint 24 hotfix / FPRM-443/444/445)
+
+**Decision:** AD-41's first pass guarded only the endpoints it enumerated, leaving the pre-existing deal-review verbs unguarded (the #7 leak — a scoped CM could act on a non-assigned partner via direct link). The rule: **every** channel_manager-reachable mutating endpoint must call `enforce_cm_scope(db, current_user, <entity>.partner_org_id, request)` immediately after its existing role guard / entity load, before any mutation. The COMPLETE set is enumerated once in `backend/tests/test_channel_manager_assignment.py` → `CM_SCOPED_ACTIONS`, a parametrized recurrence test (assigned→success / unassigned→403). `permissions.py` carries a comment pointing at it. Separately, `channel_manager` is granted **assigned-only** partner-detail editing: `PATCH /partners/{id}` + `PATCH /partner-profiles/{id}` add `channel_manager` to their writer set, then `enforce_cm_scope` narrows it.
+
+**Why:** A written endpoint list silently rots — the durable guard is an enumerated test that fails CI when any CM action lacks the scope check. The S2 edit grant was a deliberate product decision (assigned CM edits, audited; unassigned blocked); before it, CM had no partner-edit path at all (the `partner_*:update_all` matrix permissions were inert — no route consumed them).
+
+**Consequence:** The 9 newly-guarded endpoints: deal `approve`/`reject`/terminal-`status`/`start-review`/`request-info`/`cancel-info-request`/`messages`, quote `create` (internal-write branch) + `generate-pdf`. Edits are audited via the existing `log_audit_event`. Partner-detail **viewing** is NOT scoped (scope the action, not the visibility). `GET /partners/{id}/channel-managers` now returns a `can_edit` flag mirroring the edit guard (drives the frontend Edit button so button-visible == save-succeeds) and is widened so own-org `partner_admin`/`partner_user` may read their assigned managers (name+email) for the portal's read-only Channel Manager(s) section in `PartnerProfile.jsx` (portal mode).
+
+**Do not:** Add a CM-reachable mutating endpoint without adding it to `CM_SCOPED_ACTIONS`. Do not scope partner-detail *viewing*. Do not drive the Edit button from a client-side role guess — use the `can_edit` flag. Do not re-add a hardcoded role list that excludes a future CM action (Phase 7 Dynamic RBAC remains the long-term fix).
 
 ---
 

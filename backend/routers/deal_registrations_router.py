@@ -838,6 +838,7 @@ def patch_deal_status(
         )
 
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-42
     allowed_from = _TERMINAL_STATUS_TRANSITIONS[new_status]
     if deal.status not in allowed_from:
         raise HTTPException(
@@ -1189,6 +1190,7 @@ def start_review(
     """submitted -> under_review. Records the reviewer."""
     _require_review_role(current_user)
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-42
     if deal.status != "submitted":
         raise HTTPException(
             status_code=400,
@@ -1237,6 +1239,7 @@ def approve_deal(
         raise HTTPException(status_code=422, detail="review_notes is required")
 
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-42
     if deal.status != "under_review":
         raise HTTPException(
             status_code=400,
@@ -1343,6 +1346,7 @@ def reject_deal(
         raise HTTPException(status_code=422, detail="review_notes is required")
 
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-42
     if deal.status != "under_review":
         raise HTTPException(
             status_code=400,
@@ -1560,6 +1564,9 @@ def post_deal_message(
     """
     deal = _get_deal_or_404(deal_id, db)
     _enforce_tenant_read(current_user, deal)
+    # AD-42: a scoped channel_manager may not post on a non-assigned partner's
+    # deal. No-op for partner roles + admins (resolve_cm_scope narrows only CM).
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)
     sender_type = _resolve_sender_type(current_user)
 
     message_text = (payload.get("message") or "").strip() if payload else ""
@@ -1605,6 +1612,7 @@ def request_info(
         raise HTTPException(status_code=422, detail="message is required")
 
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-42
     if deal.status != "under_review":
         raise HTTPException(
             status_code=400,
@@ -1657,6 +1665,7 @@ def cancel_info_request(
     """
     _require_review_role(current_user)
     deal = _get_deal_or_404(deal_id, db)
+    enforce_cm_scope(db, current_user, deal.partner_org_id, request)  # AD-42
     if deal.status != "info_required":
         raise HTTPException(
             status_code=400,

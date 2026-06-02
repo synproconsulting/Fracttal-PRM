@@ -230,7 +230,7 @@ function ProfileEditForm({ profile, onSave, onCancel, saving }) {
 // gated to system_admin + channel_ops_admin (canManage); all internal roles can
 // view the list. While NO partner has any assignment, every channel_manager
 // sees all partners (the empty-state copy explains this).
-function ChannelManagersPanel({ token, partnerOrgId, canManage }) {
+function ChannelManagersPanel({ token, partnerOrgId, canManage, partnerView = false }) {
   const [assigned, setAssigned] = useState([])
   const [candidates, setCandidates] = useState([])
   const [loading, setLoading] = useState(true)
@@ -309,7 +309,9 @@ function ChannelManagersPanel({ token, partnerOrgId, canManage }) {
   return (
     <section className="fp-card" style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h2 className="fp-section-title" style={{ margin: 0 }}>Channel Managers</h2>
+        <h2 className="fp-section-title" style={{ margin: 0 }}>
+          {partnerView ? 'Channel Manager(s)' : 'Channel Managers'}
+        </h2>
         {canManage && !adding && (
           <button type="button" className="fp-btn fp-btn--primary fp-btn--sm" onClick={() => { setError(null); setAdding(true) }}>
             + Assign
@@ -344,7 +346,9 @@ function ChannelManagersPanel({ token, partnerOrgId, canManage }) {
         <div style={{ color: '#64748B' }}>Loading…</div>
       ) : assigned.length === 0 ? (
         <p style={{ color: '#64748B', fontSize: 13, margin: 0 }}>
-          No managers assigned — while no partner has any assignment, all channel managers see all partners.
+          {partnerView
+            ? 'No channel manager assigned yet.'
+            : 'No managers assigned — while no partner has any assignment, all channel managers see all partners.'}
         </p>
       ) : (
         <table className="fp-table">
@@ -381,7 +385,15 @@ export default function PartnerProfile() {
 
   const partnerOrgId = internalMode ? params.id : payload?.partner_org_id
   const isInternal = INTERNAL_ROLES.has(payload?.role)
-  const canEdit = isInternal || payload?.role === 'partner_admin'
+  const isCM = payload?.role === 'channel_manager'
+
+  // AD-42 (FPRM-444): a channel_manager may edit only the partners assigned to
+  // them. Mirror the backend authority (GET .../channel-managers -> can_edit) so
+  // the Edit button is visible exactly when the save would succeed. Admins and
+  // partner_admin do not depend on assignment, so they keep the synchronous
+  // check (no load flicker).
+  const [cmCanEdit, setCmCanEdit] = useState(false)
+  const canEdit = isCM ? cmCanEdit : (isInternal || payload?.role === 'partner_admin')
 
   const [org, setOrg] = useState(null)
   const [profile, setProfile] = useState(null)
@@ -444,6 +456,19 @@ export default function PartnerProfile() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [partnerOrgId, token])
+
+  // AD-42: resolve the channel_manager's edit authority for THIS partner.
+  useEffect(() => {
+    if (!isCM || !partnerOrgId || !token) return
+    let alive = true
+    fetch(`${API}/partners/${partnerOrgId}/channel-managers`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : { can_edit: false }))
+      .then((d) => { if (alive) setCmCanEdit(!!d.can_edit) })
+      .catch(() => { if (alive) setCmCanEdit(false) })
+    return () => { alive = false }
+  }, [isCM, partnerOrgId, token])
 
   const completeness = useMemo(() => profile?.profile_completeness_pct ?? 0, [profile])
 
@@ -537,8 +562,10 @@ export default function PartnerProfile() {
       {!loading && (
         <>
           <OrgSummary org={org} />
-          {internalMode && (
+          {internalMode ? (
             <ChannelManagersPanel token={token} partnerOrgId={partnerOrgId} canManage={canManageStatus} />
+          ) : (
+            <ChannelManagersPanel token={token} partnerOrgId={partnerOrgId} canManage={false} partnerView />
           )}
           {profile ? (
             editing ? (

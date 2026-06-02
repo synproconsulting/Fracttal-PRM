@@ -25,6 +25,7 @@ from auth import get_current_user
 from audit import log_audit_event
 from database import get_db
 from models import PartnerProfile, User
+from permissions import enforce_cm_scope
 from roles import PARTNER_ROLES, UserRole
 
 router = APIRouter(prefix="/partner-profiles", tags=["partner-profiles"])
@@ -73,7 +74,7 @@ def _enforce_tenant(current_user: User, partner_org_id: uuid.UUID, *, write: boo
         if role == UserRole.partner_admin:
             if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_org_id):
                 raise HTTPException(status_code=403, detail="Access denied")
-        elif role not in {UserRole.channel_ops_admin, UserRole.system_admin}:
+        elif role not in {UserRole.channel_ops_admin, UserRole.system_admin, UserRole.channel_manager}:
             raise HTTPException(status_code=403, detail="Insufficient permissions to update partner profile")
         return
 
@@ -111,6 +112,9 @@ def update_partner_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="Partner profile not found")
     _enforce_tenant(current_user, partner_org_id, write=True)
+    # AD-42 (FPRM-444): channel_manager may edit only assigned partners' profiles;
+    # no-op for partner_admin (own-org checked above) + admins (always unscoped).
+    enforce_cm_scope(db, current_user, partner_org_id, request)
 
     before = jsonable_encoder(_serialize(profile))
     for key, value in payload.items():

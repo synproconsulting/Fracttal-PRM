@@ -265,6 +265,13 @@ def apply_tenant_filter(query, current_user, model):
 # Dynamic RBAC work). Global fallback: while NO partner has any assignment,
 # every channel_manager sees/acts on all partners (bootstrap). ``system_admin``
 # and ``channel_ops_admin`` are ALWAYS unscoped.
+#
+# AD-42 (FPRM-443): the COMPLETE set of CM-scoped *action* endpoints that must
+# call ``enforce_cm_scope`` after their role guard is enumerated in
+# ``backend/tests/test_channel_manager_assignment.py`` -> ``CM_SCOPED_ACTIONS``.
+# That parametrized recurrence test asserts assigned->success / unassigned->403
+# for every entry, so a newly-added action left unguarded will fail CI. Keep the
+# list in that test in sync with the endpoints whenever you add a CM action.
 # ==========================================================================
 
 # Sentinel returned by ``resolve_cm_scope`` meaning "unscoped — sees everything".

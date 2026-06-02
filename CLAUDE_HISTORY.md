@@ -2683,3 +2683,78 @@ applications excluded; existing guards NOT centralized (Phase 7); no notificatio
 4. **Global-fallback keeps existing tests green** — with no assignments, CMs see all, so the
    pre-existing deal/quote queue tests were unaffected (+0 regressions).
 
+
+## Sprint 24 hotfix — Channel-manager scope leak (#7) + assignment surfaces (Phase 6)
+
+**Started:** 2026-06-02
+**Closed:** 2026-06-02
+**Fix Version ID:** `10967` (Sprint 24 — reused) · **Native Sprint ID:** `940` (reused)
+**Migration head:** unchanged — **041** (no schema change)
+**Tests:** 816 → **852** (+36). **Last PR: #190.**
+
+### Why
+UI testing (#7) found that AD-41's first pass added `enforce_cm_scope` only to the endpoints
+AD-41 explicitly enumerated. The deal-review lifecycle verbs that pre-dated PR B were left
+unguarded, so a scoped `channel_manager` could still ACT on a non-assigned partner's deal/quote
+via a direct link, even though the queue lists filtered correctly. Two assignment surfaces were
+also extended.
+
+### Stories
+| Key | Story | Notes |
+|---|---|---|
+| FPRM-443 | cm_scope on the unguarded CM action endpoints + AD-42 recurrence test | the #7 fix |
+| FPRM-444 | grant `channel_manager` scoped (assigned-only) partner-profile edit, audited | capability grant |
+| FPRM-445 | portal: partners view their assigned channel managers (read-only) | own-org read |
+
+### The 9 endpoints guarded (S1 / FPRM-443)
+`deal_registrations_router.py`: `approve`, `reject`, terminal `PATCH /deal-registrations/{id}/status`
+(lost/withdrawn), `start-review`, `request-info`, `cancel-info-request`, `POST .../messages`.
+`quotes_router.py`: `POST /deals/{id}/quotes` (internal-write branch only — the partner_admin
+own-org branch was already tenant-checked) and `POST /quotes/{id}/versions/{n}/generate-pdf`.
+Each adds one line — `enforce_cm_scope(db, current_user, <entity>.partner_org_id, request)` — right
+after the existing role guard / entity load, before mutation. No role guards changed; no
+already-guarded endpoint touched.
+
+### The recurrence test (S1.2 / AD-42)
+`CM_SCOPED_ACTIONS` in `test_channel_manager_assignment.py` enumerates the COMPLETE CM-scoped
+mutating action set (the 9 fixed here + the 10 already-guarded: won, conflict-check,
+override-conflict, quote versions/active-version/status/pipeline-inclusion/active-scenario,
+training-complete/reset + the 2 new FPRM-444 edit endpoints = 21). The parametrized test asserts a
+scoped CM gets **403** on every one against a non-assigned partner; a success test spot-checks the
+assigned path. A `permissions.py` comment points to this list as canonical — a future unguarded
+CM action fails CI.
+
+### S2 (FPRM-444) — deliberate capability grant
+Decision: assigned CM **must** be able to edit partner details (audited); unassigned CM must not.
+Before this hotfix `channel_manager` had NO partner-edit path at all (both `PATCH /partners/{id}`
+and `PATCH /partner-profiles/{id}` hardcoded their writer set to partner_admin own-org +
+channel_ops_admin + system_admin; the `partner_*:update_all` matrix permissions were inert). So
+S2 = add `channel_manager` to both writer sets, then `enforce_cm_scope` after the guard. Editing is
+audited via the existing `log_audit_event`. Viewing is intentionally NOT scoped. The frontend Edit
+button is gated on a `can_edit` flag returned by `GET /partners/{id}/channel-managers` (mirrors the
+guard exactly) so **button-visible == save-succeeds** for every role/assignment combo, including the
+bootstrap (no assignments anywhere → CM unscoped → can edit).
+
+### S3 (FPRM-445)
+`GET /partners/{id}/channel-managers` widened so own-org `partner_admin`/`partner_user` can read
+their assigned managers (name+email); cross-org 403. The portal partner profile — the SAME shared
+`PartnerProfile.jsx`, portal mode (`!params.id`) — renders a read-only **Channel Manager(s)**
+section (empty state "No channel manager assigned yet").
+
+### AD recorded
+AD-42 — every CM-reachable mutating endpoint calls `enforce_cm_scope` after its role guard; the
+parametrized `CM_SCOPED_ACTIONS` test is the canonical list; CM partner-detail edit is granted but
+assigned-only (view not scoped).
+
+### Lessons
+1. **Per-endpoint scoping keyed to a written list silently rots.** AD-41 instrumented "the
+   endpoints AD-41 lists" and missed every verb that pre-dated it. The durable fix is not "find the
+   missing ones" but an **enumerated recurrence test** that fails when any CM action lacks the
+   guard — the list lives in code, exercised by CI, not in prose.
+2. **A "scope leak" can turn out to be a missing capability.** S2's premise (CM can edit all
+   partners) was false — CM couldn't edit any. Verifying against the code before implementing
+   turned a dead-code guard into a deliberate, audited capability grant.
+3. **button-visible == save-succeeds** is the right invariant for a scoped UI control — drive it
+   from a backend flag that mirrors the guard, never from a client-side role guess, so the bootstrap
+   edge case stays correct.
+
