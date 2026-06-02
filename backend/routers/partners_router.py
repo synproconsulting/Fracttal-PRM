@@ -171,8 +171,12 @@ def update_partner(
     if role == UserRole.partner_admin:
         if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner.id):
             raise HTTPException(status_code=403, detail="Access denied")
-    elif role not in {UserRole.channel_ops_admin, UserRole.system_admin}:
+    elif role not in {UserRole.channel_ops_admin, UserRole.system_admin, UserRole.channel_manager}:
         raise HTTPException(status_code=403, detail="Insufficient permissions to update partner")
+    else:
+        # AD-42 (FPRM-444): channel_manager may edit only partners assigned to
+        # them; enforce_cm_scope is a no-op for channel_ops_admin + system_admin.
+        enforce_cm_scope(db, current_user, partner.id, request)
 
     before = jsonable_encoder(_serialize(partner))
     immutable = {"id", "created_at"}

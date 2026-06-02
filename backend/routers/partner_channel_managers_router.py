@@ -20,8 +20,8 @@ from auth import get_current_user
 from audit import log_audit_event
 from database import get_db
 from models import PartnerChannelManager, PartnerOrganization, User
-from permissions import get_all_channel_managers
-from roles import INTERNAL_ROLES, UserRole
+from permissions import ALL_PARTNERS, get_all_channel_managers, resolve_cm_scope
+from roles import INTERNAL_ROLES, PARTNER_ROLES, UserRole
 
 router = APIRouter(tags=["channel-manager-assignment"])
 
@@ -73,15 +73,47 @@ def list_channel_manager_candidates(
     }
 
 
+def _caller_can_edit_partner(db: Session, current_user: User, partner_id: uuid.UUID) -> bool:
+    """Whether ``current_user`` may edit this partner's org/profile -- the exact
+    mirror of the PATCH /partners/{id} + PATCH /partner-profiles/{id} guards
+    (AD-42). The portal/internal Edit button is gated on this so button-visible
+    always equals save-succeeds for every role/assignment combination.
+    """
+    role = UserRole(current_user.role)
+    if role in {UserRole.channel_ops_admin, UserRole.system_admin}:
+        return True
+    if role == UserRole.partner_admin:
+        return (
+            current_user.partner_org_id is not None
+            and str(current_user.partner_org_id) == str(partner_id)
+        )
+    if role == UserRole.channel_manager:
+        scope = resolve_cm_scope(db, current_user)
+        return scope is ALL_PARTNERS or partner_id in scope
+    return False  # partner_user, sales_rep, sales_ops, finance_approver
+
+
 @router.get("/partners/{partner_id}/channel-managers")
 def list_channel_managers(
     partner_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List the channel managers assigned to a partner. Any internal role."""
-    if UserRole(current_user.role) not in INTERNAL_ROLES:
-        raise HTTPException(status_code=403, detail="Internal role required")
+    """List the channel managers assigned to a partner.
+
+    Internal roles see any partner (FPRM-422). Partner roles may read their OWN
+    org's managers (FPRM-445 / S3) -- tenant-checked here per AD-9 -- so the
+    portal profile can show who to contact. ``can_edit`` reports whether the
+    caller may edit this partner (AD-42), driving the Edit button.
+    """
+    role = UserRole(current_user.role)
+    is_own_partner = (
+        role in PARTNER_ROLES
+        and current_user.partner_org_id is not None
+        and str(current_user.partner_org_id) == str(partner_id)
+    )
+    if role not in INTERNAL_ROLES and not is_own_partner:
+        raise HTTPException(status_code=403, detail="Access denied")
     _partner_or_404(db, partner_id)
     rows = (
         db.query(PartnerChannelManager)
@@ -92,7 +124,10 @@ def list_channel_managers(
     users = {
         u.id: u for u in (db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else [])
     }
-    return {"items": [_serialize(r, users.get(r.user_id)) for r in rows]}
+    return {
+        "items": [_serialize(r, users.get(r.user_id)) for r in rows],
+        "can_edit": _caller_can_edit_partner(db, current_user, partner_id),
+    }
 
 
 @router.post("/partners/{partner_id}/channel-managers", status_code=201)

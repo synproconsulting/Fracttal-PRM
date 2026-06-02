@@ -31,6 +31,7 @@ from models import (
     PartnerCategory,
     PartnerChannelManager,
     PartnerOrganization,
+    PartnerProfile,
     ProgramType,
     User,
     VolumeDiscountTier,
@@ -60,9 +61,11 @@ def db(engine):
         yield s
     finally:
         s.rollback()
-        for tbl in ("partner_channel_managers", "quote_line_items", "quote_versions",
-                    "quotes", "feature_plan_prices", "volume_discount_tiers",
-                    "deal_registrations", "users", "partner_organizations", "audit_log"):
+        for tbl in ("partner_channel_managers", "deal_messages", "quote_line_items",
+                    "quote_versions", "quotes", "feature_plan_prices",
+                    "volume_discount_tiers", "deal_registrations",
+                    "partner_activation_checklists", "partner_profiles",
+                    "users", "partner_organizations", "audit_log"):
             try: s.execute(text(f"DELETE FROM {tbl}"))
             except Exception: pass
         s.commit(); s.close()
@@ -268,3 +271,262 @@ def test_quote_queue_and_action_scoped(client, db):
     assert client.patch(f"/quotes/{qb}/status", json={"status": "sent"}).status_code == 403
     # status action on A's quote -> allowed
     assert client.patch(f"/quotes/{qa}/status", json={"status": "sent"}).status_code == 200
+
+
+# ============== AD-42 recurrence: the FULL CM-scoped action set (S1.2) ==============
+# Canonical enumeration of EVERY channel_manager-reachable mutating endpoint that
+# must call enforce_cm_scope after its role guard (FPRM-443). The 403 test runs
+# ALL of them against a NON-assigned partner; the success test spot-checks a
+# representative subset (incl. the FPRM-444 partner-edit endpoints) against an
+# ASSIGNED partner. A new CM action left unguarded must be added here or it fails.
+# Referenced from permissions.py (AD-42 comment) as the canonical list.
+
+def _admin_auth(db):
+    _auth(_user(db, UserRole.system_admin.value))
+
+
+def _profile(db, org_id):
+    p = PartnerProfile(id=uuid.uuid4(), partner_org_id=org_id)
+    db.add(p); db.commit()
+    return p
+
+
+def _quote_v1(client, db, org_id):
+    _admin_auth(db)
+    return _quote(client, _deal(db, org_id).id)
+
+
+# Each builder runs as system_admin (unscoped) to set up the entity on `org`,
+# then returns (http_method, url, json_body) for the channel_manager to call.
+def b_approve(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="under_review")
+    return "post", f"/internal/deals/{d.id}/approve", {"review_notes": "ok"}
+
+
+def b_reject(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="under_review")
+    return "post", f"/internal/deals/{d.id}/reject", {"review_notes": "no"}
+
+
+def b_deal_status(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="approved")
+    return "patch", f"/deal-registrations/{d.id}/status", {"status": "withdrawn"}
+
+
+def b_start_review(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="submitted")
+    return "post", f"/internal/deals/{d.id}/start-review", None
+
+
+def b_request_info(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="under_review")
+    return "post", f"/internal/deals/{d.id}/request-info", {"message": "more?"}
+
+
+def b_cancel_info(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="info_required")
+    return "post", f"/internal/deals/{d.id}/cancel-info-request", None
+
+
+def b_deal_message(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="under_review")
+    return "post", f"/deal-registrations/{d.id}/messages", {"message": "hi"}
+
+
+def b_won(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="approved")
+    return "post", f"/internal/deals/{d.id}/won", None
+
+
+def b_conflict_check(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="submitted")
+    return "post", f"/internal/deals/{d.id}/conflict-check", None
+
+
+def b_override_conflict(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="conflict_detected")
+    return "post", f"/internal/deals/{d.id}/override-conflict", {"override_notes": "cleared"}
+
+
+def b_create_quote(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id, status="approved")
+    return "post", f"/deals/{d.id}/quotes", {
+        "feature_plan": "starter", "qty_transactional_users": 1, "qty_limited_tech_users": 0}
+
+
+def b_quote_versions(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "post", f"/quotes/{qid}/versions", {
+        "feature_plan": "starter", "qty_transactional_users": 1, "qty_limited_tech_users": 0}
+
+
+def b_active_version(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "patch", f"/quotes/{qid}/active-version", {"version_number": 1}
+
+
+def b_quote_status(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "patch", f"/quotes/{qid}/status", {"status": "sent"}
+
+
+def b_pipeline(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "patch", f"/quotes/{qid}/pipeline-inclusion", {"include_in_pipeline": True}
+
+
+def b_active_scenario(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "patch", f"/quotes/{qid}/active-scenario", {"scenario_label": None}
+
+
+def b_generate_pdf(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "post", f"/quotes/{qid}/versions/1/generate-pdf", None
+
+
+def b_training_complete(client, db, org):
+    _admin_auth(db)
+    return "post", f"/partners/{org.id}/activation/training-complete", None
+
+
+def b_training_reset(client, db, org):
+    _admin_auth(db)
+    return "post", f"/partners/{org.id}/activation/training-reset", None
+
+
+def b_patch_partner(client, db, org):
+    _admin_auth(db)
+    return "patch", f"/partners/{org.id}", {"website": "https://x.example"}
+
+
+def b_patch_profile(client, db, org):
+    _admin_auth(db); _profile(db, org.id)
+    return "patch", f"/partner-profiles/{org.id}", {"year_established": 2001}
+
+
+CM_SCOPED_ACTIONS = [
+    ("approve", b_approve), ("reject", b_reject), ("deal_status", b_deal_status),
+    ("start_review", b_start_review), ("request_info", b_request_info),
+    ("cancel_info", b_cancel_info), ("deal_message", b_deal_message),
+    ("won", b_won), ("conflict_check", b_conflict_check),
+    ("override_conflict", b_override_conflict), ("create_quote", b_create_quote),
+    ("quote_versions", b_quote_versions), ("active_version", b_active_version),
+    ("quote_status", b_quote_status), ("pipeline_inclusion", b_pipeline),
+    ("active_scenario", b_active_scenario), ("generate_pdf", b_generate_pdf),
+    ("training_complete", b_training_complete), ("training_reset", b_training_reset),
+    ("patch_partner", b_patch_partner), ("patch_profile", b_patch_profile),
+]
+
+# The subset where a single success assertion is unambiguous (incl. FPRM-444).
+SUCCESS_ACTIONS = [
+    ("conflict_check", b_conflict_check), ("start_review", b_start_review),
+    ("deal_status", b_deal_status), ("quote_status", b_quote_status),
+    ("pipeline_inclusion", b_pipeline), ("training_complete", b_training_complete),
+    ("patch_partner", b_patch_partner), ("patch_profile", b_patch_profile),
+]
+
+
+def _call(client, method, url, body):
+    fn = getattr(client, method)
+    return fn(url, json=body) if body is not None else fn(url)
+
+
+@pytest.mark.parametrize("name,builder", CM_SCOPED_ACTIONS, ids=[n for n, _ in CM_SCOPED_ACTIONS])
+def test_scoped_cm_blocked_on_unassigned_partner(client, db, name, builder):
+    """AD-42: a scoped channel_manager gets 403 on EVERY mutating action against a
+    partner they are not assigned to (the #7 direct-link leak)."""
+    a, b = _org(db), _org(db)
+    cm = _user(db, UserRole.channel_manager.value)
+    _assign(db, a.id, cm.id)  # assignments exist -> cm scoped to {a}; b excluded
+    method, url, body = builder(client, db, b)  # build on the NON-assigned org
+    _auth(cm)
+    r = _call(client, method, url, body)
+    assert r.status_code == 403, f"{name}: expected 403, got {r.status_code}: {r.text}"
+
+
+@pytest.mark.parametrize("name,builder", SUCCESS_ACTIONS, ids=[n for n, _ in SUCCESS_ACTIONS])
+def test_scoped_cm_allowed_on_assigned_partner(client, db, name, builder):
+    """A scoped channel_manager may act on a partner assigned to them."""
+    a = _org(db)
+    cm = _user(db, UserRole.channel_manager.value)
+    _assign(db, a.id, cm.id)
+    method, url, body = builder(client, db, a)
+    _auth(cm)
+    r = _call(client, method, url, body)
+    assert r.status_code in (200, 201), f"{name}: expected success, got {r.status_code}: {r.text}"
+
+
+# ============== S2 (FPRM-444): scoped partner-edit + admins unaffected ==============
+
+def test_admin_can_edit_any_partner_when_scoped(client, db):
+    a, b = _org(db), _org(db)
+    _profile(db, b.id)
+    cm = _user(db, UserRole.channel_manager.value)
+    _assign(db, a.id, cm.id)  # scoping active
+    for role in (UserRole.channel_ops_admin.value, UserRole.system_admin.value):
+        _auth(_user(db, role))
+        assert client.patch(f"/partners/{b.id}", json={"website": "https://z"}).status_code == 200
+        assert client.patch(f"/partner-profiles/{b.id}", json={"year_established": 1999}).status_code == 200
+
+
+def test_partner_admin_can_edit_own_profile(client, db):
+    org = _org(db)
+    _profile(db, org.id)
+    pa = _user(db, UserRole.partner_admin.value, org_id=org.id)
+    _auth(pa)
+    assert client.patch(f"/partner-profiles/{org.id}", json={"year_established": 2010}).status_code == 200
+
+
+def test_partner_user_cannot_edit_profile(client, db):
+    org = _org(db)
+    _profile(db, org.id)
+    pu = _user(db, UserRole.partner_user.value, org_id=org.id)
+    _auth(pu)
+    assert client.patch(f"/partner-profiles/{org.id}", json={"year_established": 2010}).status_code == 403
+
+
+# ============== S3 (FPRM-445): own-org partner read + can_edit ==============
+
+def test_partner_admin_reads_own_channel_managers(client, db):
+    org = _org(db)
+    cm = _user(db, UserRole.channel_manager.value)
+    _admin_auth(db)
+    assert client.post(f"/partners/{org.id}/channel-managers", json={"user_id": str(cm.id)}).status_code == 201
+    pa = _user(db, UserRole.partner_admin.value, org_id=org.id)
+    _auth(pa)
+    r = client.get(f"/partners/{org.id}/channel-managers")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["full_name"] == cm.full_name
+    assert body["items"][0]["email"] == cm.email
+    assert body["can_edit"] is True  # partner_admin, own org
+
+
+def test_partner_user_reads_own_but_can_edit_false(client, db):
+    org = _org(db)
+    pu = _user(db, UserRole.partner_user.value, org_id=org.id)
+    _auth(pu)
+    r = client.get(f"/partners/{org.id}/channel-managers")
+    assert r.status_code == 200
+    assert r.json()["can_edit"] is False
+
+
+def test_partner_cross_org_channel_managers_403(client, db):
+    org_x, org_y = _org(db), _org(db)
+    pa = _user(db, UserRole.partner_admin.value, org_id=org_x.id)
+    _auth(pa)
+    assert client.get(f"/partners/{org_y.id}/channel-managers").status_code == 403
+
+
+def test_can_edit_field_tracks_cm_assignment(client, db):
+    a, b = _org(db), _org(db)
+    cm = _user(db, UserRole.channel_manager.value)
+    _auth(cm)
+    # bootstrap (no assignments anywhere) -> CM can edit any partner
+    assert client.get(f"/partners/{b.id}/channel-managers").json()["can_edit"] is True
+    _assign(db, a.id, cm.id)  # now scoped to {a}
+    _auth(cm)
+    assert client.get(f"/partners/{a.id}/channel-managers").json()["can_edit"] is True
+    assert client.get(f"/partners/{b.id}/channel-managers").json()["can_edit"] is False
