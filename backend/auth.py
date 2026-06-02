@@ -44,6 +44,11 @@ def decode_access_token(token: str) -> dict:
             detail="Token has been invalidated",
         )
     try:
+        # S2 (FPRM-452): pin the signing algorithm explicitly. Passing a single-
+        # element ``algorithms`` list makes PyJWT reject any client-supplied
+        # ``alg`` from the token header — including ``none`` and HS/RS
+        # algorithm-confusion attacks — and only accept JWT_ALGORITHM (HS256).
+        # Never widen this list or omit it.
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(

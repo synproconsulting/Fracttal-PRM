@@ -447,6 +447,10 @@ def get_quote(
     """Full quote: header + active_version_data with ordered line items."""
     quote = _get_quote_or_404(db, quote_id)
     _check_tenant_read(current_user, quote.partner_org_id)
+    # AD-45 (FPRM-454): a scoped channel_manager may not READ a non-assigned
+    # partner's quote detail by direct URL. No-op for admins, partner roles, and
+    # bootstrap CMs (resolve_cm_scope narrows only channel_manager).
+    enforce_cm_scope(db, current_user, quote.partner_org_id)
     active = (
         db.query(QuoteVersion)
         .filter(

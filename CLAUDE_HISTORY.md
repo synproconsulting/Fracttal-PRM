@@ -2758,3 +2758,66 @@ assigned-only (view not scoped).
    from a backend flag that mirrors the guard, never from a client-side role guess, so the bootstrap
    edge case stays correct.
 
+
+## Sprint 25 PR A — Security hardening + CM detail-read isolation (Phase 6)
+
+**Started:** 2026-06-02
+**Closed:** 2026-06-02
+**Fix Version ID:** `11000` (Sprint 25) · **Native Sprint ID:** `973`
+**Migration head:** unchanged — **041** (no schema change)
+**Tests:** 852 → **865** (+13). **PR #191.** First of a two-PR Sprint 25 (PR B = rate limiting +
+password policy + tenant-isolation sweep, opens after PR A merges). Theme: defensive hardening
+scoped tightly against the Phase 7 boundary (MFA/refresh, persistent blacklist, login-history,
+centralised audit_log, Dynamic RBAC, row-level export, `datetime.utcnow()` sweep, **CORS** — all
+left untouched).
+
+### Stories
+| Key | Story | Notes |
+|---|---|---|
+| FPRM-451 | Security response-headers middleware | AD-43 |
+| FPRM-452 | JWT validation hardening (algorithm pinning) | Hard Rule added |
+| FPRM-453 | Generic 500 error handler | 4xx details preserved |
+| FPRM-454 | CM detail-read isolation on deals/quotes | AD-45 (amends AD-41/42) |
+
+### What landed
+- **S1 (AD-43):** one `@app.middleware("http")` in `main.py` sets HSTS, `X-Content-Type-Options`,
+  `X-Frame-Options: DENY`, `Referrer-Policy`, baseline CSP on every response (`setdefault` so a
+  route can override). CORS untouched.
+- **S2:** `auth.py` `decode_access_token` already passed `algorithms=[JWT_ALGORITHM]` (HS256) — the
+  decode was *already* safe against `alg:none`/confusion. This story **locked and documented** it
+  (explicit comment + a new Hard Rule) and added regression tests (alg:none rejected, HS512 token
+  rejected, normal token validates). No runtime change. Recorded as a Hard Rule, not an AD.
+- **S3:** `@app.exception_handler(Exception)` returns `{"detail":"Internal server error"}` 500 and
+  logs the full exception; FastAPI's own `HTTPException`/`RequestValidationError` handlers run first,
+  so 4xx detail strings are untouched. Tested with throwaway boom/teapot routes (the 500 test uses
+  `TestClient(raise_server_exceptions=False)`).
+- **S4 (AD-45):** `enforce_cm_scope` added after the existing tenant-read guard on
+  `GET /deal-registrations/{id}` and `GET /quotes/{id}` — closes the Sprint 24 assumption-5
+  deferral (detail-read was consciously left open). Reused the existing resolver; the two read paths
+  were appended to `CM_SCOPED_ACTIONS` (and the success list) rather than a parallel list, plus
+  explicit admin-reads-any and bootstrap-CM-reads-any tests. **Phase 6 Backlog has no
+  "deferred CM read-isolation" line** (the Sprint 24 deferral lived in AD-41/history, not the
+  backlog) so none was added or annotated — the fix is recorded as AD-45, per the spec.
+
+### CM-scope evolution
+Sprint 24 PR B (AD-41): queue filter. Sprint 24 hotfix (AD-42): + every mutating action +
+recurrence test. Sprint 25 PR A (AD-45): + detail-read on deals/quotes. The resolver in
+`permissions.py` is unchanged across all three — only the set of call sites grows, all tracked by
+the one `CM_SCOPED_ACTIONS` list.
+
+### ADs / rules recorded
+AD-43 (security headers), AD-45 (CM detail-read scope, amends AD-41/42). New Hard Rule: JWT decode
+must pin the algorithm and reject `alg:none`. (AD-44 — rate limiting — is reserved for PR B.)
+
+### Lessons
+1. **"Hardening" sometimes means lock + test what's already correct.** The JWT decode was already
+   pinned; the value of S2 was making the property explicit, adding a Hard Rule, and regression
+   tests that fail loudly if someone ever widens `algorithms`. Verifying first avoided a pointless
+   "fix."
+2. **A generic Exception handler does not touch 4xx.** FastAPI registers `HTTPException` /
+   `RequestValidationError` handlers ahead of the catch-all, so the generic 500 only swallows truly
+   unhandled errors — but the 500 test needs `raise_server_exceptions=False` or TestClient re-raises.
+3. **Grow the canonical list, don't fork it.** Detail-read joined `CM_SCOPED_ACTIONS` so there is
+   still exactly one enumerated source of CM-scoped endpoints (AD-42's recurrence guarantee now also
+   covers reads).
+

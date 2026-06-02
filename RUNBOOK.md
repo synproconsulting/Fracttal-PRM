@@ -1305,5 +1305,13 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 - **Assigned-only CM edit:** an assigned channel_manager may edit partner details (audited); an unassigned CM gets 403; admins + partner_admin are unchanged. Verify with `cmtest`/`cmtest2` against an assigned vs non-assigned partner — the Edit button appears only where the save will succeed.
 - **Partners view their channel managers:** the portal profile (`/portal/profile`) shows a read-only Channel Manager(s) list (name + email) for the partner's own org; no add/remove controls are exposed to partners.
 
-*Last updated: 2026-06-02 — Sprint 24 hotfix (PR #190): AD-42 cm_scope on all CM-reachable actions + recurrence-test gate; scoped CM partner-edit; portal CM read-only view.*
+*Sprint 25 PR A (2026-06-02, PR #191): security hardening + CM detail-read isolation — security response-headers middleware (AD-43); JWT algorithm pinning locked + Hard Rule (FPRM-452); generic 500 handler (FPRM-453); CM detail-read isolation on deals/quotes (AD-45, amends AD-41/42). No migration (head stays 041). +13 tests (852 → 865). First of a two-PR Sprint 25 (PR B = rate limiting + password policy + tenant sweep).*
+
+**Operational notes (Sprint 25 PR A):**
+- **Security response headers are applied globally** by one middleware in `main.py` on every response: `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. Hardcoded — no env var. **CORS is unchanged** (`FRONTEND_URL` stays `*`; CORS allowlist tightening deferred to a later sprint).
+- **JWT algorithm pinning:** `decode_access_token` pins `algorithms=["HS256"]` and rejects `alg:none` / algorithm-confusion. This is now a Hard Rule — never widen or omit the `algorithms` list. No new env var.
+- **Generic 500:** unhandled exceptions return `{"detail":"Internal server error"}` (500) with the full exception logged server-side; intended `HTTPException` 4xx detail strings are preserved. If you see a generic 500 in prod, check the backend logs for the real traceback.
+- **CM detail-read is now scoped:** a `channel_manager` scoped to a partner set gets 403 opening a non-assigned deal/quote detail by direct URL (`GET /deal-registrations/{id}`, `GET /quotes/{id}`); admins unscoped; bootstrap (no assignments anywhere) still lets all CMs read all. Verify with `cmtest`/`cmtest2`.
+
+*Last updated: 2026-06-02 — Sprint 25 PR A (PR #191): AD-43 security headers, AD-45 CM detail-read scope, JWT alg-pinning Hard Rule, generic 500 handler.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

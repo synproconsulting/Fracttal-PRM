@@ -405,6 +405,17 @@ def b_patch_profile(client, db, org):
     return "patch", f"/partner-profiles/{org.id}", {"year_established": 2001}
 
 
+# AD-45 (FPRM-454) — detail-READ paths now scoped for channel_manager.
+def b_deal_read(client, db, org):
+    _admin_auth(db); d = _deal(db, org.id)
+    return "get", f"/deal-registrations/{d.id}", None
+
+
+def b_quote_read(client, db, org):
+    qid = _quote_v1(client, db, org.id)
+    return "get", f"/quotes/{qid}", None
+
+
 CM_SCOPED_ACTIONS = [
     ("approve", b_approve), ("reject", b_reject), ("deal_status", b_deal_status),
     ("start_review", b_start_review), ("request_info", b_request_info),
@@ -416,6 +427,8 @@ CM_SCOPED_ACTIONS = [
     ("active_scenario", b_active_scenario), ("generate_pdf", b_generate_pdf),
     ("training_complete", b_training_complete), ("training_reset", b_training_reset),
     ("patch_partner", b_patch_partner), ("patch_profile", b_patch_profile),
+    # AD-45 (Sprint 25 / FPRM-454): detail-READ paths joined the canonical list.
+    ("deal_detail_read", b_deal_read), ("quote_detail_read", b_quote_read),
 ]
 
 # The subset where a single success assertion is unambiguous (incl. FPRM-444).
@@ -424,6 +437,7 @@ SUCCESS_ACTIONS = [
     ("deal_status", b_deal_status), ("quote_status", b_quote_status),
     ("pipeline_inclusion", b_pipeline), ("training_complete", b_training_complete),
     ("patch_partner", b_patch_partner), ("patch_profile", b_patch_profile),
+    ("deal_detail_read", b_deal_read), ("quote_detail_read", b_quote_read),
 ]
 
 
@@ -530,3 +544,32 @@ def test_can_edit_field_tracks_cm_assignment(client, db):
     _auth(cm)
     assert client.get(f"/partners/{a.id}/channel-managers").json()["can_edit"] is True
     assert client.get(f"/partners/{b.id}/channel-managers").json()["can_edit"] is False
+
+
+# ============== S4 (FPRM-454 / AD-45): detail-read isolation specifics ==============
+
+def test_admin_reads_any_deal_quote_detail_when_cm_scoped(client, db):
+    """AD-45: channel_ops_admin + system_admin keep unscoped detail-read even
+    while a channel_manager is scoped (b is not assigned to the CM)."""
+    a, b = _org(db), _org(db)
+    cm = _user(db, UserRole.channel_manager.value)
+    _assign(db, a.id, cm.id)  # scoping active; b unassigned to the CM
+    _admin_auth(db)
+    deal_b = _deal(db, b.id)
+    qid_b = _quote(client, _deal(db, b.id).id)
+    for role in (UserRole.channel_ops_admin.value, UserRole.system_admin.value):
+        _auth(_user(db, role))
+        assert client.get(f"/deal-registrations/{deal_b.id}").status_code == 200
+        assert client.get(f"/quotes/{qid_b}").status_code == 200
+
+
+def test_bootstrap_cm_reads_any_detail(client, db):
+    """AD-45 preserves the Sprint 24 global-switch: with NO assignment anywhere,
+    a channel_manager may still read any deal/quote detail."""
+    b = _org(db)
+    _admin_auth(db)
+    deal_b = _deal(db, b.id)
+    qid_b = _quote(client, _deal(db, b.id).id)
+    _auth(_user(db, UserRole.channel_manager.value))  # no assignments exist
+    assert client.get(f"/deal-registrations/{deal_b.id}").status_code == 200
+    assert client.get(f"/quotes/{qid_b}").status_code == 200
