@@ -531,6 +531,10 @@ def get_deal(
 ):
     deal = _get_deal_or_404(deal_id, db)
     _enforce_tenant_read(current_user, deal)
+    # AD-45 (FPRM-454): a scoped channel_manager may not READ a non-assigned
+    # partner's deal detail by direct URL (amends AD-41/AD-42 which scoped only
+    # queue + action). No-op for admins, partner roles, and bootstrap CMs.
+    enforce_cm_scope(db, current_user, deal.partner_org_id)
     # Include partner_legal_name for the internal detail page (FPRM-143).
     # Partner users see their own org so the field is still useful & not leaky.
     data = _serialize_with_org(deal, db)

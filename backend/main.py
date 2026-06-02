@@ -1,10 +1,14 @@
+import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
+
+logger = logging.getLogger("fracttal_prm")
 
 from rate_limiter import limiter
 from routers.health import router as health_router
@@ -47,6 +51,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# AD-43 (FPRM-451) — security response-headers baseline. Set centrally on every
+# response; never per-router. Hardcoded baseline values (no env var). CORS is
+# intentionally NOT touched here (Sprint 25 scope decision).
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    # Baseline CSP for a JSON API that serves no HTML/JS of its own.
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+}
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
+
+# S3 (FPRM-453) — generic 500 for UNHANDLED exceptions only. FastAPI's own
+# handlers for HTTPException (4xx) and RequestValidationError (422) run first and
+# are untouched, so intended detail strings are preserved. The full exception is
+# logged server-side; the client only ever sees the generic body.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 app.include_router(health_router)
 app.include_router(auth_router)

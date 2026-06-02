@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 24 hotfix 2026-06-02 (PR #190, migration head 041, 852 tests) — AD-42 cm_scope on all CM-reachable actions + scoped CM partner-edit + portal CM read (FPRM-443/444/445). Prior: Sprint 24 PR B (PR #189) — AD-41 channel-manager assignment + partner-scoped approval routing
+> Last updated: Sprint 25 PR A 2026-06-02 (PR #191, migration head 041, 865 tests) — AD-43 security headers, AD-45 CM detail-read scope (amends AD-41/42), JWT alg-pinning Hard Rule + generic 500 handler (FPRM-451/452/453/454). Prior: Sprint 24 hotfix (PR #190) — AD-42 cm_scope on all CM-reachable actions + scoped CM partner-edit + portal CM read
 
 
 
@@ -41,6 +41,11 @@
 
 
 **Base URL:** `https://fracttal-prm-backend-production.up.railway.app` (live since Sprint 1 closeout)
+
+**Global response behaviour (Sprint 25 PR A):**
+- Every response carries the AD-43 security headers (`Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, CSP `default-src 'none'; frame-ancestors 'none'`).
+- Unhandled/unexpected exceptions return a generic `500 {"detail": "Internal server error"}` (full exception logged server-side; no traceback in the body). Intended `HTTPException` 4xx responses keep their original `detail` strings — only truly unhandled errors are caught (FPRM-453).
+- `GET /deal-registrations/{id}` and `GET /quotes/{id}` detail reads are now CM-scoped (AD-45): a scoped `channel_manager` gets 403 on a non-assigned partner's detail; admins unscoped.
 
 
 
@@ -1308,7 +1313,29 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 
 **Consequence:** The 9 newly-guarded endpoints: deal `approve`/`reject`/terminal-`status`/`start-review`/`request-info`/`cancel-info-request`/`messages`, quote `create` (internal-write branch) + `generate-pdf`. Edits are audited via the existing `log_audit_event`. Partner-detail **viewing** is NOT scoped (scope the action, not the visibility). `GET /partners/{id}/channel-managers` now returns a `can_edit` flag mirroring the edit guard (drives the frontend Edit button so button-visible == save-succeeds) and is widened so own-org `partner_admin`/`partner_user` may read their assigned managers (name+email) for the portal's read-only Channel Manager(s) section in `PartnerProfile.jsx` (portal mode).
 
-**Do not:** Add a CM-reachable mutating endpoint without adding it to `CM_SCOPED_ACTIONS`. Do not scope partner-detail *viewing*. Do not drive the Edit button from a client-side role guess — use the `can_edit` flag. Do not re-add a hardcoded role list that excludes a future CM action (Phase 7 Dynamic RBAC remains the long-term fix).
+**Do not:** Add a CM-reachable mutating endpoint without adding it to `CM_SCOPED_ACTIONS`. Do not scope partner-detail *viewing* (note AD-45 below tightens deal/quote detail-read but NOT partner-profile viewing). Do not drive the Edit button from a client-side role guess — use the `can_edit` flag. Do not re-add a hardcoded role list that excludes a future CM action (Phase 7 Dynamic RBAC remains the long-term fix).
+
+---
+
+### AD-43 — Security response-headers baseline, set centrally in `main.py` (Sprint 25 PR A / FPRM-451)
+
+**Decision:** A single `@app.middleware("http")` in `backend/main.py` sets a baseline of security headers on every response: `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and CSP `default-src 'none'; frame-ancestors 'none'`. Hardcoded values (no env var); `setdefault` so a route can override.
+
+**Why:** Defence-in-depth baseline appropriate to a JSON API, applied once rather than per-router so it cannot be forgotten on a new endpoint. CORS allowlist tightening is a separate, later concern.
+
+**Consequence:** Every response (public, authenticated, and error) carries these headers. The middleware does not read or modify CORS config. `FRONTEND_URL` / `CORSMiddleware` are unchanged this sprint by deliberate scope decision.
+
+**Do not:** Add per-router header code (set them centrally). Do not alter CORS while touching this middleware. Do not make the CSP env-toggleable without recording the var name/format/target service in the AC.
+
+### AD-45 — Channel-manager scope covers queue + action + detail-read (Sprint 25 PR A / FPRM-454; amends AD-41/AD-42)
+
+**Decision:** The shared CM-scope resolver now also guards the **detail-READ** endpoints. `enforce_cm_scope(db, current_user, <entity>.partner_org_id)` is called after the existing tenant-read guard on `GET /deal-registrations/{id}` (after `_enforce_tenant_read`) and `GET /quotes/{id}` (after `_check_tenant_read`). This amends the Sprint 24 decision, which scoped queue + action only and consciously left detail-read open.
+
+**Why:** A scoped `channel_manager` could still open a non-assigned deal/quote *detail* by direct URL even though the queue was filtered and actions 403'd — the consciously-deferred Sprint 24 assumption-5 leak. Closing it makes read match action.
+
+**Consequence:** An unassigned CM hitting a non-assigned deal/quote detail gets 403 (same verb/message as the action guard). `channel_ops_admin` + `system_admin` keep unscoped read; the bootstrap global-switch is preserved (no assignments anywhere → all CMs read all). Scope is **deals + quotes detail-read only** — partner-profile viewing stays open (AD-42 unchanged); applications remain excluded. The two read paths were appended to the canonical `CM_SCOPED_ACTIONS` recurrence list (Section 1 endpoints unchanged in shape — only the guard was added).
+
+**Do not:** Scope partner-profile viewing or applications under this AD. Do not write a parallel scoped-read list — extend `CM_SCOPED_ACTIONS`. Do not scope reads for `channel_ops_admin`/`system_admin`. (AD-44 — auth rate limiting — is introduced in Sprint 25 PR B.)
 
 ---
 
