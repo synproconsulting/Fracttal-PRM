@@ -2821,3 +2821,61 @@ must pin the algorithm and reject `alg:none`. (AD-44 — rate limiting — is re
    still exactly one enumerated source of CM-scoped endpoints (AD-42's recurrence guarantee now also
    covers reads).
 
+
+## Sprint 25 PR B — Auth-abuse mitigation + tenant-isolation assurance (Phase 6)
+
+**Started:** 2026-06-02
+**Closed:** 2026-06-02
+**Fix Version ID:** `11000` (Sprint 25) · **Native Sprint ID:** `973`
+**Migration head:** unchanged — **041** (no schema change)
+**Tests:** 865 → **888** (+23). **PR #192.** Second and final PR of Sprint 25.
+**Sprint 25 fully closed (PR A #191 + PR B #192).**
+
+### Stories
+| Key | Story | Notes |
+|---|---|---|
+| FPRM-455 | Rate limiting on auth + public endpoints (slowapi) | AD-44 |
+| FPRM-456 | Server-side password-strength enforcement | shared validator |
+| FPRM-457 | Tenant-isolation regression sweep (test-only) | no leak found |
+
+### What landed
+- **S5 (AD-44):** `slowapi` (already pinned — `requirements.txt` untouched) wired as per-IP limits on
+  `POST /auth/login`, `POST /auth/password-reset/request`, `POST /auth/password-reset/confirm`, and
+  the public draft-token application endpoints (`POST /applications`, `PATCH /applications/{id}`,
+  `POST .../submit`, `POST .../documents`). Limits read from env at request time via getter callables
+  (`RATE_LIMIT_LOGIN` 10/min, `RATE_LIMIT_PASSWORD_RESET` 5/min, `RATE_LIMIT_PUBLIC_APP` 20/min) so
+  Railway can tune without a redeploy. 429 on exceed. `main.py` already had `app.state.limiter` + the
+  `RateLimitExceeded` handler from a prior sprint — only the decorators + env getters were added.
+- **S6:** one shared `backend/password_policy.py` `validate_password_strength` (≥12 chars + upper +
+  lower + digit; symbol recommended). Applied on `accept_invite` (after invite validation) and
+  `password_reset_confirm` (after token validation) so invalid-token / expired-invite cases keep their
+  own 400/404 and only a *valid* request reaches the 422 policy check. `TestPass123!` /
+  `PartnerPass123!` satisfy it. Frontend AcceptInvite + ResetPassword forms surface the 422 message +
+  a static policy hint. One test fixture password (`test_partner_users.py` happy-path accept-invite)
+  was bumped from `Pass1234!` (9 chars) to `PartnerPass123!`.
+- **S7:** `PARTNER_SCOPED_ENDPOINTS` in `test_tenant_isolation_sweep.py` — 12 partner-scoped endpoints
+  (partner detail, profile get/patch, activation, activation-criteria, dashboard summary,
+  commission-rates, pipeline, partner users, documents, deal detail, quote detail). Each asserts an
+  org-A `partner_admin` gets 403/404 (never 200) on an org-B resource. **No leak found — test-only, no
+  production change, no bug ticket.**
+
+### Test-isolation detail
+The new rate limits would otherwise trip the shared `testclient` source IP across the whole suite, so
+a session-autouse conftest fixture sets `limiter.enabled = False`; `test_rate_limiting.py` re-enables
+it locally with low limits and `limiter.reset()` around the assertions.
+
+### ADs recorded
+AD-44 (auth/public rate limiting). (JWT alg-pinning Hard Rule + AD-43/AD-45 were PR A.)
+
+### Lessons
+1. **Shared limiter state needs a global off-switch in tests.** slowapi keys by source IP; with one
+   `testclient` IP, any real limit will eventually 429 unrelated tests. Disable suite-wide, enable per
+   dedicated test, reset around it.
+2. **Order the policy check after the cheap rejections.** Putting `validate_password_strength` after
+   token/invite validation kept every existing negative test (bad/used/expired token, expired/accepted
+   invite) returning its original 400/404 instead of a 422 — only genuine password-set attempts hit
+   the policy.
+3. **A sweep is most valuable when it can fail.** The tenant sweep asserts `!= 200` first; it passed
+   (isolation already held from AD-9/AD-33), but it now fails loudly if a future endpoint forgets the
+   `partner_org_id` guard — the same recurrence-guard philosophy as `CM_SCOPED_ACTIONS`.
+

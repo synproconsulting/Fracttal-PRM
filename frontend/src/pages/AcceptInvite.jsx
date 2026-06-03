@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { PASSWORD_POLICY_HINT, isPasswordCompliant } from './ResetPassword.jsx'
 
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
@@ -24,8 +25,9 @@ export default function AcceptInvite() {
   async function onSubmit(e) {
     e.preventDefault()
     setError(null)
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
+    // FPRM-456 — mirror the server-side policy (final enforcement is the API's 422).
+    if (!isPasswordCompliant(password)) {
+      setError(PASSWORD_POLICY_HINT)
       return
     }
     if (password !== confirm) {
@@ -95,6 +97,9 @@ export default function AcceptInvite() {
             />
             <label htmlFor="invite-password">Password</label>
           </div>
+          <p style={{ marginTop: -6, marginBottom: 12, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+            {PASSWORD_POLICY_HINT}
+          </p>
           <div className="fp-field">
             <input
               id="invite-confirm"

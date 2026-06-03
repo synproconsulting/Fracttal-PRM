@@ -8,6 +8,18 @@ import pytest
 import models  # noqa: F401  ensures all models register with Base.metadata
 from database import engine
 from models import Base
+from rate_limiter import limiter
+
+
+@pytest.fixture(scope="session", autouse=True)
+def disable_rate_limiter():
+    """Sprint 25 PR B / FPRM-455 — disable slowapi globally for the suite so the
+    new per-IP limits on login / password-reset / public-application endpoints do
+    not trip across the many tests that share the ``testclient`` source IP. The
+    dedicated rate-limit test (test_rate_limiting.py) re-enables it locally."""
+    limiter.enabled = False
+    yield
+    limiter.enabled = True
 
 
 @pytest.fixture(scope="session", autouse=True)

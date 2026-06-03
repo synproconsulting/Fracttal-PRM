@@ -4,6 +4,17 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 const API = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
   || 'https://fracttal-prm-backend-production.up.railway.app'
 
+// FPRM-456 — keep in sync with backend/password_policy.py (server enforces 422).
+export const PASSWORD_POLICY_HINT =
+  'Password must be at least 12 characters and include an uppercase letter, a lowercase letter, and a digit.'
+
+export function isPasswordCompliant(pw) {
+  return (
+    typeof pw === 'string' && pw.length >= 12 &&
+    /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw)
+  )
+}
+
 export default function ResetPassword() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -21,8 +32,9 @@ export default function ResetPassword() {
   async function onSubmit(e) {
     e.preventDefault()
     setError(null)
-    if (newPassword.length < 8) {
-      setError('Password must be at least 8 characters.')
+    // FPRM-456 — mirror the server-side policy (final enforcement is the API's 422).
+    if (!isPasswordCompliant(newPassword)) {
+      setError(PASSWORD_POLICY_HINT)
       return
     }
     if (newPassword !== confirm) {
@@ -77,6 +89,9 @@ export default function ResetPassword() {
               />
               <label htmlFor="reset-new">New password</label>
             </div>
+            <p style={{ marginTop: -6, marginBottom: 12, fontSize: 'var(--fp-fs-sm)', color: 'var(--fp-text-secondary)' }}>
+              {PASSWORD_POLICY_HINT}
+            </p>
             <div className="fp-field">
               <input
                 id="reset-confirm"

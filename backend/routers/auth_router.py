@@ -20,8 +20,21 @@ from auth import (
 )
 from rate_limiter import limiter
 from roles import UserRole
+from password_policy import validate_password_strength
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+# AD-44 (FPRM-455) — rate limits are read from env at request time (via these
+# callables) so they are tunable in Railway without a code change, while safe
+# defaults apply when the var is unset. Never broaden these to authenticated
+# app traffic — only the sensitive unauthenticated paths.
+def _login_limit() -> str:
+    return os.getenv("RATE_LIMIT_LOGIN", "10/minute")
+
+
+def _password_reset_limit() -> str:
+    return os.getenv("RATE_LIMIT_PASSWORD_RESET", "5/minute")
 
 
 def _token_payload(user: User) -> dict:
@@ -84,7 +97,7 @@ def register(request: Request, req: RegisterRequest, db: Session = Depends(get_d
 
 
 @router.post("/login")
-@limiter.limit("10/minute")
+@limiter.limit(_login_limit)
 def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password):
@@ -136,7 +149,8 @@ def me(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/password-reset/request")
-def password_reset_request(req: PasswordResetRequest, db: Session = Depends(get_db)):
+@limiter.limit(_password_reset_limit)
+def password_reset_request(request: Request, req: PasswordResetRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if user:
         reset_token = PasswordResetToken(
@@ -166,6 +180,10 @@ def accept_invite(req: AcceptInviteRequest, request: Request, db: Session = Depe
     existing = db.query(User).filter(User.email == invite.email).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
+
+    # FPRM-456 — enforce password policy after the invite is validated, so
+    # not-found/accepted/expired/duplicate cases still return their own status.
+    validate_password_strength(req.password)
 
     user = User(
         id=uuid.uuid4(),
@@ -212,7 +230,8 @@ def accept_invite(req: AcceptInviteRequest, request: Request, db: Session = Depe
 
 
 @router.post("/password-reset/confirm")
-def password_reset_confirm(req: PasswordResetConfirm, db: Session = Depends(get_db)):
+@limiter.limit(_password_reset_limit)
+def password_reset_confirm(request: Request, req: PasswordResetConfirm, db: Session = Depends(get_db)):
     token_record = db.query(PasswordResetToken).filter(
         PasswordResetToken.token == req.token
     ).first()
@@ -225,6 +244,9 @@ def password_reset_confirm(req: PasswordResetConfirm, db: Session = Depends(get_
     user = db.query(User).filter(User.id == token_record.user_id).first()
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
+    # FPRM-456 — enforce password policy only after the token is validated, so
+    # invalid/used/expired-token requests still fail at 400 (not 422).
+    validate_password_strength(req.new_password)
     user.hashed_password = hash_password(req.new_password)
     token_record.used = True
     db.commit()
