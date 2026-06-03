@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 25 PR A 2026-06-02 (PR #191, migration head 041, 865 tests) — AD-43 security headers, AD-45 CM detail-read scope (amends AD-41/42), JWT alg-pinning Hard Rule + generic 500 handler (FPRM-451/452/453/454). Prior: Sprint 24 hotfix (PR #190) — AD-42 cm_scope on all CM-reachable actions + scoped CM partner-edit + portal CM read
+> Last updated: Sprint 25 PR B 2026-06-02 (PR #192, migration head 041, 888 tests) — AD-44 auth/public rate limiting + server-side password policy + tenant-isolation sweep (FPRM-455/456/457). Sprint 25 closed (PR A #191 + PR B #192). Prior: Sprint 25 PR A (PR #191) — AD-43 security headers, AD-45 CM detail-read scope, JWT alg-pinning Hard Rule + generic 500 handler
 
 
 
@@ -46,6 +46,8 @@
 - Every response carries the AD-43 security headers (`Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, CSP `default-src 'none'; frame-ancestors 'none'`).
 - Unhandled/unexpected exceptions return a generic `500 {"detail": "Internal server error"}` (full exception logged server-side; no traceback in the body). Intended `HTTPException` 4xx responses keep their original `detail` strings — only truly unhandled errors are caught (FPRM-453).
 - `GET /deal-registrations/{id}` and `GET /quotes/{id}` detail reads are now CM-scoped (AD-45): a scoped `channel_manager` gets 403 on a non-assigned partner's detail; admins unscoped.
+- **Rate limiting (Sprint 25 PR B / AD-44):** `POST /auth/login`, `POST /auth/password-reset/request|confirm`, and the public draft-token application endpoints (`POST /applications`, `PATCH /applications/{id}`, `POST /applications/{id}/submit`, `POST /applications/{id}/documents`) return **429** once the per-IP limit is exceeded (env-tunable: `RATE_LIMIT_LOGIN` 10/min, `RATE_LIMIT_PASSWORD_RESET` 5/min, `RATE_LIMIT_PUBLIC_APP` 20/min). Authenticated app traffic is not limited.
+- **Password policy (Sprint 25 PR B / FPRM-456):** `POST /auth/accept-invite` and `POST /auth/password-reset/confirm` return **422** for a password shorter than 12 chars or missing upper/lower/digit (enforced after token/invite validation, so invalid-token cases keep their 400/404).
 
 
 
@@ -1326,6 +1328,16 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 **Consequence:** Every response (public, authenticated, and error) carries these headers. The middleware does not read or modify CORS config. `FRONTEND_URL` / `CORSMiddleware` are unchanged this sprint by deliberate scope decision.
 
 **Do not:** Add per-router header code (set them centrally). Do not alter CORS while touching this middleware. Do not make the CSP env-toggleable without recording the var name/format/target service in the AC.
+
+### AD-44 — Auth / public-endpoint rate limiting via `slowapi` (Sprint 25 PR B / FPRM-455)
+
+**Decision:** `slowapi` (pinned since Sprint 19) is applied as per-IP rate limits to the sensitive unauthenticated paths only: `POST /auth/login`, `POST /auth/password-reset/request`, `POST /auth/password-reset/confirm`, and the public draft-token application endpoints (`POST /applications`, `PATCH /applications/{id}`, `POST /applications/{id}/submit`, `POST /applications/{id}/documents`). Limit strings are read from env at request time via getter callables, with safe code defaults: `RATE_LIMIT_LOGIN` (`"10/minute"`), `RATE_LIMIT_PASSWORD_RESET` (`"5/minute"`), `RATE_LIMIT_PUBLIC_APP` (`"20/minute"`). `main.py` already had `app.state.limiter` + the `RateLimitExceeded` handler.
+
+**Why:** Brute-force / abuse mitigation on the paths an unauthenticated attacker can hit, without throttling legitimate authenticated traffic. Reading env at request time means ops can tune limits on Railway (`fracttal-prm-backend`) without a redeploy; defaults keep the feature working before any var is set.
+
+**Consequence:** A caller exceeding a limit gets **429**. The limiter store is in-memory per instance (fine for the current single-instance deploy; a shared store would be needed if scaled horizontally). Tests disable the limiter suite-wide (conftest `disable_rate_limiter`) and re-enable it only in `test_rate_limiting.py`, because all tests share the `testclient` source IP.
+
+**Do not:** Apply blanket limits to authenticated app traffic. Do not hardcode the limit strings (use the env getters). Do not add a new dependency — slowapi is already pinned; never modify `requirements.txt` for this.
 
 ### AD-45 — Channel-manager scope covers queue + action + detail-read (Sprint 25 PR A / FPRM-454; amends AD-41/AD-42)
 

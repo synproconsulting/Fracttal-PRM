@@ -17,6 +17,7 @@ Sprint 6 additions (FPRM-90):
     POST   /applications/{id}/request-info       internal-JWT (channel_manager+)
     GET    /applications/{id}/timeline           public-with-draft_token OR internal-JWT
 """
+import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -46,6 +47,7 @@ from approval_helpers import (
     record_step_action,
 )
 from permissions import has_permission, require_permission
+from rate_limiter import limiter
 from notifications import (
     notify_application_approved,
     notify_application_rejected,
@@ -55,6 +57,13 @@ from notifications import (
 
 
 router = APIRouter(prefix="/applications", tags=["applications"])
+
+
+# AD-44 (FPRM-455) — per-IP limit on the unauthenticated public application
+# surface (create + draft writes). Read from env at request time so it is
+# tunable in Railway without a redeploy; safe default applies when unset.
+def _public_app_limit() -> str:
+    return os.getenv("RATE_LIMIT_PUBLIC_APP", "20/minute")
 
 
 PUBLIC_WRITABLE_FIELDS = {
@@ -122,7 +131,8 @@ def _get_application_or_404(application_id: uuid.UUID, db: Session) -> PartnerAp
 
 
 @router.post("", status_code=201)
-def create_draft(payload: dict, db: Session = Depends(get_db)):
+@limiter.limit(_public_app_limit)
+def create_draft(request: Request, payload: dict, db: Session = Depends(get_db)):
     """Public endpoint - creates a draft application and returns id + draft_token."""
     applicant_email = (payload.get("applicant_email") or "").strip()
     if not applicant_email:
@@ -257,7 +267,9 @@ def get_application(
 
 
 @router.patch("/{application_id}")
+@limiter.limit(_public_app_limit)
 def update_draft(
+    request: Request,
     application_id: uuid.UUID,
     payload: dict,
     draft_token: str = Query(...),
@@ -277,9 +289,10 @@ def update_draft(
 
 
 @router.post("/{application_id}/submit")
+@limiter.limit(_public_app_limit)
 def submit_application(
-    application_id: uuid.UUID,
     request: Request,
+    application_id: uuid.UUID,
     draft_token: str = Query(...),
     db: Session = Depends(get_db),
 ):
@@ -339,7 +352,9 @@ def submit_application(
 
 
 @router.post("/{application_id}/documents", status_code=201)
+@limiter.limit(_public_app_limit)
 def upload_document_metadata(
+    request: Request,
     application_id: uuid.UUID,
     payload: dict,
     draft_token: str = Query(...),

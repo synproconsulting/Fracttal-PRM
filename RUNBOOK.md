@@ -1313,5 +1313,16 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 - **Generic 500:** unhandled exceptions return `{"detail":"Internal server error"}` (500) with the full exception logged server-side; intended `HTTPException` 4xx detail strings are preserved. If you see a generic 500 in prod, check the backend logs for the real traceback.
 - **CM detail-read is now scoped:** a `channel_manager` scoped to a partner set gets 403 opening a non-assigned deal/quote detail by direct URL (`GET /deal-registrations/{id}`, `GET /quotes/{id}`); admins unscoped; bootstrap (no assignments anywhere) still lets all CMs read all. Verify with `cmtest`/`cmtest2`.
 
-*Last updated: 2026-06-02 — Sprint 25 PR A (PR #191): AD-43 security headers, AD-45 CM detail-read scope, JWT alg-pinning Hard Rule, generic 500 handler.*
+*Sprint 25 PR B (2026-06-02, PR #192): auth-abuse mitigation + tenant-isolation assurance — rate limiting on auth + public endpoints (AD-44); server-side password policy (FPRM-456); tenant-isolation regression sweep (FPRM-457, no leak found). No migration (head stays 041). +23 tests (865 → 888). Sprint 25 fully closed (PR A #191 + PR B #192).*
+
+**Operational notes (Sprint 25 PR B):**
+- **Rate-limit env vars (target service `fracttal-prm-backend`, format `"<n>/<period>"`)** — defaults apply in code, so nothing needs to be set for the feature to work; set these only to override:
+  - `RATE_LIMIT_LOGIN` — default `"10/minute"` — `POST /auth/login`
+  - `RATE_LIMIT_PASSWORD_RESET` — default `"5/minute"` — `POST /auth/password-reset/request` + `/confirm`
+  - `RATE_LIMIT_PUBLIC_APP` — default `"20/minute"` — public draft-token application endpoints (`POST /applications`, `PATCH /applications/{id}`, `POST .../submit`, `POST .../documents`)
+  Limits are read at request time, so changing a var in Railway takes effect **without a code change or redeploy** (restart picks it up; new requests read env each call). A limited request returns **429**. Authenticated app traffic is never limited. The store is in-memory per instance.
+- **Password policy:** passwords set via invite-accept and password-reset-confirm must be **≥12 chars with upper + lower + digit** (symbol recommended) — else **422**. The documented test creds `TestPass123!` and `PartnerPass123!` satisfy it. The policy lives once in `backend/password_policy.py`.
+- **Tenant-isolation sweep:** `test_tenant_isolation_sweep.py` (`PARTNER_SCOPED_ENDPOINTS`) is the canonical cross-tenant regression guard — org A cannot read/act on org B (403/404). Add any new partner-scoped endpoint to that list.
+
+*Last updated: 2026-06-02 — Sprint 25 PR B (PR #192): AD-44 rate limiting, password policy, tenant-isolation sweep. Sprint 25 closed.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

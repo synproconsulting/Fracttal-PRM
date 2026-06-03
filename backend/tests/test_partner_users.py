@@ -182,7 +182,7 @@ def test_accept_invite_full_flow(db_session):
         client = TestClient(app)
         r = client.post(
             "/auth/accept-invite",
-            json={"token": invite.token, "password": "Pass1234!", "full_name": "Newbie X"},
+            json={"token": invite.token, "password": "PartnerPass123!", "full_name": "Newbie X"},
         )
     finally:
         clear()
