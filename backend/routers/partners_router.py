@@ -564,14 +564,21 @@ def get_partner_pipeline(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Sprint 14 / FPRM-229 — partner_admin-only pipeline grouped by status."""
+    """Sprint 14 / FPRM-229 — partner-side pipeline grouped by status.
+
+    FPRM-458 (Sprint 25 hotfix) — widened from partner_admin-only to also allow
+    partner_user for their OWN org (same own-org tenant scoping as the deal list);
+    amends FPRM-229. Internal roles stay 403 by design — they use
+    /internal/reports/pipeline. Own-org scoping is unchanged, so cross-org access
+    still 403s and the tenant-isolation sweep stays green.
+    """
     partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
 
     role = UserRole(current_user.role)
-    if role != UserRole.partner_admin:
-        raise HTTPException(status_code=403, detail="partner_admin role required")
+    if role not in (UserRole.partner_admin, UserRole.partner_user):
+        raise HTTPException(status_code=403, detail="partner_admin or partner_user role required")
     if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_id):
         raise HTTPException(status_code=403, detail="Access denied")
 

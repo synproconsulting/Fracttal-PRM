@@ -2879,3 +2879,61 @@ AD-44 (auth/public rate limiting). (JWT alg-pinning Hard Rule + AD-43/AD-45 were
    (isolation already held from AD-9/AD-33), but it now fails loudly if a future endpoint forgets the
    `partner_org_id` guard — the same recurrence-guard philosophy as `CM_SCOPED_ACTIONS`.
 
+---
+
+## Sprint 25 hotfix — Rate-limit engagement + partner_user pipeline read + Partner System ID (single PR)
+
+**Date:** 2026-06-19
+**Fix Version ID:** `11000` (Sprint 25 — same release, not a new version)
+**Native Sprint ID:** `973`
+**PR:** #193 · **Migration head:** 041 (unchanged) · **Tests:** 888 → **892**
+**Tickets:** FPRM-458 (Bug), FPRM-459 (Story), FPRM-460 (Bug, release-gating). Epic FPRM-299.
+
+Three issues found during Sprint 25 UI testing, folded into the existing Sprint 25 release. No migration, no `requirements.txt` change, CORS / email / Phase-7 untouched.
+
+### FPRM-460 (AD-46) — rate limiting inert in production [release-gating]
+**Symptom (UI testing 2026-06-03):** 30 rapid `POST /auth/login` → all 401, **zero 429**, no
+`X-RateLimit-*` / `Retry-After` headers. Backend runs 1 Railway replica, so not a per-instance count split.
+**Root cause:** the AD-44 limiter keyed on `get_remote_address` (`request.client.host`). Behind Railway's
+edge proxy that peer is the proxy, and Railway routes successive requests from rotating internal source
+addresses, so every request fell into a different per-IP bucket and the counter never accumulated. CI was
+green because `TestClient` keeps one stable peer — the test could never observe the prod-only keying.
+**Fix:** `rate_limiter.get_client_ip` keys on the real client IP behind the proxy — prefer
+`X-Envoy-External-Address` (Envoy-set, overwritten each hop → not client-forgeable), else the left-most
+`X-Forwarded-For` hop, each validated as a real IP, else the TCP peer. Limiter built with
+`headers_enabled=True` so a 429 carries `Retry-After` + `X-RateLimit-*`; that required adding a
+`response: Response` param to the 8 `@limiter.limit` endpoints (login, register, password-reset
+request/confirm, the 4 public draft-token application endpoints) — slowapi raises without it. New test
+asserts the limiter engages per forwarded client IP (distinct clients = independent buckets) + emits the
+headers (would have caught the inert control). **No Railway env/start-command change required.**
+**LIVE VERIFICATION (gating):** _to be completed after the PR #193 Railway auto-deploy — see closeout._
+
+### FPRM-458 — partner_user 403 on own-org pipeline
+`GET /partners/{id}/pipeline` was `partner_admin`-only, so a `partner_user` saw a 403 banner. Widened the
+guard to allow `partner_user` for their OWN org (same own-org tenant scoping; amends Sprint 14 / FPRM-229).
+Internal roles stay 403 by design (they use `/internal/reports/pipeline`); cross-org stays 403. No frontend
+change — once the call returns 200 the banner clears. `test_pipeline.py` adds partner_user own-org (200) +
+cross-org (403); `test_tenant_isolation_sweep.py` (which lists this endpoint) stays green.
+
+### FPRM-459 — "Partner System ID" on the internal partner profile
+`PartnerProfile.jsx` `OrgSummary` now renders a read-only **"Partner System ID"** row (the org `id`) in
+INTERNAL mode only (`showSystemId={internalMode}`). Absent in portal mode; excluded from edit mode and any
+PATCH payload. No backend change.
+
+### ADs recorded
+AD-46 (proxy-aware rate-limit keying + live-verification rule) + a new CLAUDE.md Hard Rule: runtime
+security controls must be verified live on Railway, not only in CI. FPRM-458 recorded as a role amendment
+to FPRM-229 (no new AD — not a durable architectural decision).
+
+### Lessons
+1. **CI green ≠ control engaged.** A rate limiter (or any control keyed on the real request path) can be
+   fully exercised by `TestClient` yet inert behind the production proxy. The test keyed on a stable peer;
+   prod keyed on a rotating one. The fix is both code (proxy-aware key) and process (live verification is
+   now a Hard Rule + the gating step of this ticket).
+2. **`headers_enabled=True` has a contract.** slowapi injects rate-limit headers into a `response: Response`
+   parameter and raises if the decorated endpoint doesn't declare one — enabling headers means touching
+   every limited endpoint signature, not just the limiter constructor.
+3. **Widen access by widening the role set, not the scope.** FPRM-458 added `partner_user` to the allowed
+   roles but left the own-org `partner_org_id` check untouched, so the tenant-isolation sweep stayed green
+   with no new cross-org exposure.
+

@@ -91,6 +91,20 @@ def _make_partner_admin(db_session, org_id) -> User:
     return user
 
 
+def _make_partner_user(db_session, org_id) -> User:
+    user = User(
+        id=uuid.uuid4(),
+        email=f"pu-{uuid.uuid4().hex[:4]}@example.com",
+        hashed_password="x",
+        role=UserRole.partner_user.value,
+        partner_org_id=org_id,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
 def _make_deal(db_session, org_id, status: str, submitted_at: datetime = None) -> DealRegistration:
     deal = DealRegistration(
         id=uuid.uuid4(),
@@ -142,6 +156,31 @@ def test_system_admin_blocked_partner_admin_only(client, db_session):
     app.dependency_overrides[get_current_user] = lambda: admin
 
     r = client.get(f"/partners/{org.id}/pipeline")
+    assert r.status_code == 403
+
+
+def test_partner_user_fetches_own_pipeline(client, db_session):
+    """FPRM-458 — partner_user may read their own org's pipeline (200)."""
+    org = _make_partner(db_session)
+    pu = _make_partner_user(db_session, org.id)
+    app.dependency_overrides[get_current_user] = lambda: pu
+
+    r = client.get(f"/partners/{org.id}/pipeline")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("draft", "submitted", "under_review", "approved", "rejected", "info_required"):
+        assert key in body
+
+
+def test_partner_user_blocked_from_other_org(client, db_session):
+    """FPRM-458 — partner_user cannot read another org's pipeline (cross-org 403);
+    keeps test_tenant_isolation_sweep.py green."""
+    org_a = _make_partner(db_session)
+    org_b = _make_partner(db_session)
+    pu = _make_partner_user(db_session, org_a.id)
+    app.dependency_overrides[get_current_user] = lambda: pu
+
+    r = client.get(f"/partners/{org_b.id}/pipeline")
     assert r.status_code == 403
 
 
