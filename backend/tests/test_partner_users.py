@@ -3,6 +3,7 @@ import os
 import sys
 import uuid
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -94,18 +95,26 @@ def test_invite_sent_by_partner_admin(db_session):
     override(db_session, admin)
     try:
         client = TestClient(app)
-        r = client.post(
-            f"/partners/{partner.id}/users/invite",
-            json={"email": "new@test.com", "invited_role": "partner_user"},
-        )
+        with patch("routers.partner_users_router.send_email") as mock_send:
+            r = client.post(
+                f"/partners/{partner.id}/users/invite",
+                json={"email": "new@test.com", "invited_role": "partner_user"},
+            )
     finally:
         clear()
     assert r.status_code == 201
     data = r.json()
     assert data["email"] == "new@test.com"
     assert data["invited_role"] == "partner_user"
-    assert data["token"]
+    # FPRM-462 — the token must NOT be returned; it travels via the email link only.
+    assert "token" not in data
+    assert data["message"] == "Invitation sent to new@test.com"
     assert data["accepted_at"] is None
+    # The invite email is sent with the accept-invite link.
+    mock_send.assert_called_once()
+    kwargs = mock_send.call_args.kwargs
+    assert kwargs["to"] == "new@test.com"
+    assert "/accept-invite?token=" in kwargs["body_html"]
 
 
 def test_invite_denied_for_partner_admin_other_org(db_session):

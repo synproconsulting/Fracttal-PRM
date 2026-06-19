@@ -29,7 +29,7 @@ from main import app
 from auth import hash_password
 from database import Base, get_db
 import models  # noqa: F401
-from models import AuditLog, User
+from models import AuditLog, PartnerUserInvite, User
 
 
 @pytest.fixture(scope="module")
@@ -117,8 +117,18 @@ def test_phase1_full_flow(engine_with_overrides):
         headers=headers,
     )
     assert r.status_code == 201, r.json()
-    invite_token = r.json()["token"]
+    # FPRM-462 — the invite token is no longer returned in the response (it travels
+    # via the email link only); read it from the DB to continue the flow.
+    assert "token" not in r.json()
     assert r.json()["invited_role"] == "partner_admin"
+    _db = SessionLocal()
+    invite_row = (
+        _db.query(PartnerUserInvite)
+        .filter(PartnerUserInvite.email == invite_email)
+        .first()
+    )
+    invite_token = invite_row.token
+    _db.close()
 
     # ---- Step 5: accept invite ----
     r = client.post(

@@ -26,6 +26,7 @@ from models import (
     User,
 )
 from roles import PARTNER_ROLES, UserRole
+from notifications import send_email, public_app_url
 
 router = APIRouter(prefix="/partners", tags=["partner-users"])
 
@@ -109,7 +110,29 @@ def invite_partner_user(
         },
         ip_address=_client_ip(request),
     )
-    return _serialize_invite(invite)
+
+    # FPRM-462 — deliver the invite via Resend (stdout fallback in dev). Wrapped
+    # per AD-13 so an email failure never breaks the invite creation.
+    try:
+        send_email(
+            to=invite.email,
+            subject="You've been invited to Fracttal PRM",
+            body_html=(
+                f"<p>You've been invited to join Fracttal PRM as a partner user.</p>"
+                f"<p><a href='{public_app_url()}/accept-invite?token={invite.token}'>"
+                f"Accept invitation</a></p>"
+                f"<p>This invitation expires in 72 hours.</p>"
+            ),
+        )
+    except Exception:  # pragma: no cover — belt-and-braces; send_email never raises
+        pass
+
+    # FPRM-462 — the token now travels only via the email link; never return it in
+    # the API response. Non-sensitive fields remain for the management UI.
+    result = _serialize_invite(invite)
+    result.pop("token", None)
+    result["message"] = f"Invitation sent to {invite.email}"
+    return result
 
 
 @router.get("/{partner_id}/users")

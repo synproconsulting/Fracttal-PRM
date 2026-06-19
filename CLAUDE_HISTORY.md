@@ -2937,3 +2937,33 @@ to FPRM-229 (no new AD — not a durable architectural decision).
    roles but left the own-org `partner_org_id` check untouched, so the tenant-isolation sweep stayed green
    with no new cross-org exposure.
 
+---
+
+## Sprint 26 PR A — Resend API email transport
+
+**Date:** 2026-06-19
+**Fix Version ID:** `11033` (Sprint 26 — new) · **Native Sprint ID:** `1006`
+**PR:** #194 · **Migration head:** 041 (unchanged) · **Tests:** 892 → **895**
+**Tickets:** FPRM-462 (Story, 5pts — this PR). FPRM-461 (Bug — created In To Do, **not implemented**). Epic FPRM-299.
+
+First PR of Sprint 26. Wires real transactional email via the Resend HTTPS API, replacing the inert SMTP/stdout path. No migration; `requirements.txt` unchanged (`httpx` already pinned); CORS / `FRONTEND_URL` untouched.
+
+### FPRM-462 (AD-47) — Resend HTTPS email transport
+- **Transport swap (`backend/notifications.py`):** `send_email(to, subject, body_html)` now POSTs to `https://api.resend.com/emails` (Bearer `RESEND_API_KEY`, JSON `{from,to:[to],subject,html}`) via `httpx`. `smtplib`/MIME removed. **SMTP is permanently blocked on Railway on every port (25/465/587/2525)** — confirmed on SynPro VSDC — so the old transport could never deliver; Resend over 443 works and the sender domain `contact.synproconsulting.co` is already verified. Stdout fallback retained when `RESEND_API_KEY` is absent/empty (dev/CI — no network call). Never raises (warns on transport error / non-2xx, AD-13). Default sender `noreply@contact.synproconsulting.co`.
+- **Password-reset (`auth_router`):** `POST /auth/password-reset/request` now sends the reset link through `send_email`; the generic 200 response is unchanged (never leaks whether the email exists).
+- **Invite (`partner_users_router`):** `POST /partners/{id}/users/invite` emails the accept-invite link and **removes `token` from the response** (now `{id, partner_org_id, email, invited_role, expires_at, created_at, message}`). Token travels via the email link only.
+- **`PUBLIC_APP_URL`:** new `notifications.public_app_url()` helper builds all email links from `PUBLIC_APP_URL` (CI/dev fallback `http://localhost:5173` + warning). The `_frontend_url()` helper used by the `notify_*` lifecycle templates now delegates to it — fixing a latent broken-link bug (those templates previously used `FRONTEND_URL`, which is `*` on Railway).
+- **Frontend:** no change — `AcceptInvite.jsx` already reads the token from the URL query param (the email-link flow); no consumer of the invite-create response `token` exists.
+- **Tests (+3 net → 895):** `test_notifications.py` rewrote the 3 SMTP tests to Resend (mock `notifications.httpx.post`; dev-mode-no-network, correct payload, default sender, swallow transport error, swallow 4xx); `test_password_reset.py` adds a known-user send test (link + token-absent); `test_partner_users.py` invite test flips to assert `token` absent + email sent; `test_integration_phase1.py` reads the invite token from the DB instead of the response.
+
+### Railway vars (manual, post-deploy)
+`RESEND_API_KEY` (Resend secret) and `PUBLIC_APP_URL=https://fracttal-prm-frontend-production.up.railway.app` (no trailing slash) on `fracttal-prm-backend`. Until set, email falls back to stdout (no crash). Live email verification is a manual post-merge step (see the PR closeout).
+
+### Prompt discrepancy resolved
+The prompt assumed a `backend/config.py` `Settings` class for `PUBLIC_APP_URL`. **This codebase has no `config.py`/Settings** — it reads env via `os.getenv` directly throughout (e.g. `notifications._frontend_url`, the rate-limit getters). Implemented `PUBLIC_APP_URL` via the `public_app_url()` helper to match the existing pattern rather than introducing a Settings class. Recorded in CLAUDE.md/AD-47.
+
+### Lessons
+1. **Swap transport in one place; call sites stay put.** Keeping the `send_email(to, subject, body_html)` signature meant the 4 `notify_*` templates and both new call sites needed no signature changes — only the body of `send_email` changed. The internal-users welcome email got Resend for free.
+2. **`FRONTEND_URL` is not a link base.** It's the CORS allowlist (`*` on Railway). The lifecycle emails had been building links from it for sprints — invisible because everything went to stdout. The moment email goes real, that's a broken-link bug; `PUBLIC_APP_URL` is the dedicated link origin.
+3. **Don't return a secret you also email.** The invite token is a credential; returning it in the API response and emailing it are redundant attack surface. Email-only delivery (with a DB read for tests) is the right shape — assert it's *absent* so a regression fails CI.
+
