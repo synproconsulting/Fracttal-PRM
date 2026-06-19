@@ -21,6 +21,7 @@ from auth import (
 from rate_limiter import limiter
 from roles import UserRole
 from password_policy import validate_password_strength
+from notifications import send_email, public_app_url
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -161,9 +162,23 @@ def password_reset_request(request: Request, response: Response, req: PasswordRe
         )
         db.add(reset_token)
         db.commit()
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        reset_url = f"{frontend_url}/reset-password?token={reset_token.token}"
-        print(f"[PASSWORD RESET] Reset URL for {req.email}: {reset_url}")
+        reset_url = f"{public_app_url()}/reset-password?token={reset_token.token}"
+        # FPRM-462 — deliver via Resend (stdout fallback in dev). Wrapped per AD-13
+        # so an email failure never changes the generic response below.
+        try:
+            send_email(
+                to=user.email,
+                subject="Reset your Fracttal PRM password",
+                body_html=(
+                    f"<p>Click the link below to reset your password. "
+                    f"This link expires in 1 hour.</p>"
+                    f"<p><a href='{reset_url}'>Reset password</a></p>"
+                    f"<p>If you did not request this, ignore this email.</p>"
+                ),
+            )
+        except Exception:  # pragma: no cover — belt-and-braces; send_email never raises
+            pass
+    # Response is unchanged regardless of delivery — never leak whether the email exists.
     return {"message": "If that email exists, a reset link has been sent"}
 
 

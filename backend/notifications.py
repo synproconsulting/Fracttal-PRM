@@ -1,33 +1,43 @@
 """Email notification utility for partner-application lifecycle events.
 
-Sprint 6 / FPRM-93. Wraps ``smtplib`` with a dev-mode stdout fallback: if
-``SMTP_HOST``/``SMTP_USER`` env vars are missing, ``send_email`` logs the email
-content to stdout instead of attempting an SMTP connection. ``send_email``
-never raises — callers wrap their use site in ``try/except`` as defence in depth,
-but the function itself swallows SMTP errors so email failures cannot break an
-API endpoint.
+Sprint 6 / FPRM-93; transport rewritten in Sprint 26 PR A / FPRM-462 (AD-47).
+``send_email`` now delivers via the **Resend HTTPS API** (POST
+https://api.resend.com/emails over port 443) — SMTP is permanently blocked on
+Railway on every port (25/465/587/2525), so ``smtplib`` could never deliver in
+production. When ``RESEND_API_KEY`` is absent/empty (local/dev/CI) it falls back
+to logging the email to stdout so flows stay testable without credentials.
+``send_email`` never raises — callers wrap their use site in ``try/except`` as
+defence in depth (AD-13), and the function itself swallows transport errors so an
+email failure can never surface as a 500 on a user-facing endpoint.
+
+Email links are built from ``PUBLIC_APP_URL`` (see ``public_app_url``), never from
+``FRONTEND_URL`` — the latter is the CORS allowlist and is ``*`` on Railway, which
+cannot form a usable link.
 
 Notification templates are plain HTML strings; no Jinja or other template engine
 to keep the dependency footprint minimal.
 """
 import logging
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
+RESEND_ENDPOINT = "https://api.resend.com/emails"
+DEFAULT_EMAIL_FROM = "noreply@contact.synproconsulting.co"
+
 
 def send_email(to: str, subject: str, body_html: str) -> None:
-    """Send a single HTML email. Logs to stdout in dev mode. Never raises."""
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    email_from = os.getenv("EMAIL_FROM", "noreply@fracttal.com")
+    """Send a single HTML email via Resend. Logs to stdout when no API key is
+    configured (dev/CI). Never raises — a transient email error must not break
+    the calling endpoint."""
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    email_from = os.getenv("EMAIL_FROM", DEFAULT_EMAIL_FROM)
 
-    if not smtp_host or not smtp_user:
+    if not resend_api_key:
+        # Dev / CI fallback — no credentials, log to stdout so flows stay testable
+        # and CI never makes a real network call to api.resend.com.
         logger.info("[DEV MODE EMAIL] to=%s subject=%s", to, subject)
         logger.info("[DEV MODE EMAIL BODY]\n%s", body_html)
         print(f"[DEV MODE EMAIL] to={to} subject={subject}")
@@ -35,24 +45,53 @@ def send_email(to: str, subject: str, body_html: str) -> None:
         return
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = email_from
-        msg["To"] = to
-        msg.attach(MIMEText(body_html, "html"))
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.sendmail(email_from, [to], msg.as_string())
-    except Exception as exc:  # pragma: no cover  — never let email errors crash an endpoint
-        logger.error("Email send failed to=%s subject=%s: %s", to, subject, exc)
+        resp = httpx.post(
+            RESEND_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"from": email_from, "to": [to], "subject": subject, "html": body_html},
+            timeout=10.0,
+        )
+        if resp.status_code >= 400:
+            # Warning, not exception — never propagate as a 500 to the API caller.
+            logger.warning(
+                "Resend email failed to=%s subject=%s status=%s body=%s",
+                to, subject, resp.status_code, resp.text,
+            )
+    except Exception as exc:  # never let a transport error crash an endpoint
+        logger.warning("Resend email error to=%s subject=%s: %s", to, subject, exc)
 
 
 # ----- runtime config exposed to templates -----
 
 
+def public_app_url() -> str:
+    """Base URL for user-facing email links (password reset, invite accept,
+    application resume).
+
+    Uses ``PUBLIC_APP_URL`` — NOT ``FRONTEND_URL``. ``FRONTEND_URL`` is the CORS
+    allowlist and is set to ``*`` on Railway, which cannot build a usable link.
+    Production must set ``PUBLIC_APP_URL`` on the ``fracttal-prm-backend`` service;
+    when it is absent we log a warning and fall back to the local dev origin so CI
+    passes without the var rather than silently producing broken links.
+    """
+    url = os.getenv("PUBLIC_APP_URL")
+    if not url:
+        logger.warning(
+            "PUBLIC_APP_URL not set — falling back to http://localhost:5173 for email links"
+        )
+        return "http://localhost:5173"
+    return url.rstrip("/")
+
+
 def _frontend_url() -> str:
-    return os.getenv("FRONTEND_URL", "https://fracttal-prm-frontend-production.up.railway.app").rstrip("/")
+    # Email links must use PUBLIC_APP_URL (AD-47). The lifecycle templates below
+    # build links too, so this delegates rather than reading FRONTEND_URL (='*'
+    # on Railway → broken links). Kept as a thin alias to avoid churning the
+    # existing notify_* call sites.
+    return public_app_url()
 
 
 def _channel_ops_email() -> str:

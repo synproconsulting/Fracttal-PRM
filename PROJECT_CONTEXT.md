@@ -6,7 +6,7 @@
 
 > Supplements CLAUDE.md - read CLAUDE.md first for project overview, sprint history, and environment setup.
 
-> Last updated: Sprint 25 hotfix 2026-06-19 (PR #193, migration head 041, 892 tests) — FPRM-460/AD-46 proxy-aware rate-limit keying (the AD-44 limiter was inert behind Railway's proxy) + `headers_enabled`; FPRM-458 partner_user own-org pipeline read; FPRM-459 read-only "Partner System ID" on the internal partner profile. Prior: Sprint 25 PR B (PR #192, 888 tests) — AD-44 auth/public rate limiting + server-side password policy + tenant-isolation sweep (FPRM-455/456/457). Sprint 25 closed (PR A #191 + PR B #192). Prior: Sprint 25 PR A (PR #191) — AD-43 security headers, AD-45 CM detail-read scope, JWT alg-pinning Hard Rule + generic 500 handler
+> Last updated: Sprint 26 PR A 2026-06-19 (PR #194, migration head 041, 895 tests) — FPRM-462/AD-47 Resend HTTPS email transport (SMTP is dead on Railway) replacing the smtplib/stdout path; password-reset + partner-user invite routed through `send_email`; invite `token` removed from the API response; new `PUBLIC_APP_URL` for email links (never `FRONTEND_URL`). New fix version 11033 / sprint 1006. Prior: Sprint 25 hotfix (PR #193, 892 tests) — FPRM-460/AD-46 proxy-aware rate-limit keying (the AD-44 limiter was inert behind Railway's proxy) + `headers_enabled`; FPRM-458 partner_user own-org pipeline read; FPRM-459 read-only "Partner System ID" on the internal partner profile. Prior: Sprint 25 PR B (PR #192, 888 tests) — AD-44 auth/public rate limiting + server-side password policy + tenant-isolation sweep (FPRM-455/456/457). Sprint 25 closed (PR A #191 + PR B #192). Prior: Sprint 25 PR A (PR #191) — AD-43 security headers, AD-45 CM detail-read scope, JWT alg-pinning Hard Rule + generic 500 handler
 
 
 
@@ -75,7 +75,7 @@
 
 | POST | `/auth/login` | 10/min per IP | Authenticate. Body: `{email, password}` → 200 `{access_token, token_type, expires_in}`. 401 on bad credentials or inactive account. |
 
-| POST | `/auth/password-reset/request` | None | Always returns 200 `{message: "If that email exists, …"}`. If user exists, generates a UUID reset token with 1h expiry and logs URL to stdout (no email backend yet). |
+| POST | `/auth/password-reset/request` | 5/min per IP | Always returns 200 `{message: "If that email exists, …"}`. If user exists, generates a UUID reset token with 1h expiry and **sends the reset link via Resend** (`send_email`; stdout fallback when `RESEND_API_KEY` absent) — link base is `PUBLIC_APP_URL`. Response never includes the token (Sprint 26 PR A / FPRM-462). |
 
 | POST | `/auth/password-reset/confirm` | None | Body: `{token, new_password}`. 200 on success; 400 if token invalid/used/expired. |
 
@@ -131,7 +131,7 @@
 
 | PATCH | `/partners/{id}/documents/{doc_id}` | internal roles only | Review/update status, review_notes, expiry_date. Status change is logged as `partner_document.status_change`. |
 
-| POST | `/partners/{id}/users/invite` | partner_admin (own) / channel_ops_admin / system_admin | Generate a 72h invite token. Body: `{email, invited_role}` where invited_role ∈ {`partner_user`, `partner_admin`}. Audit `partner_user.invite_sent`. |
+| POST | `/partners/{id}/users/invite` | partner_admin (own) / channel_ops_admin / system_admin | Generate a 72h invite token and **email the accept-invite link via Resend** (`send_email`; stdout fallback when `RESEND_API_KEY` absent), link base `PUBLIC_APP_URL`. Body: `{email, invited_role}` where invited_role ∈ {`partner_user`, `partner_admin`}. Audit `partner_user.invite_sent`. **Sprint 26 PR A / FPRM-462: the `token` is no longer returned** — response is `{id, partner_org_id, email, invited_role, expires_at, created_at, message}` (token travels via the email link only). |
 
 | GET | `/partners/{id}/users` | any (tenant-scoped) | List users where `partner_org_id == {id}`. |
 
@@ -1358,6 +1358,16 @@ The legacy `quote_documents` table (migration 033) is retired in Sprint 21 / mig
 **Consequence:** Limits now engage per real client behind the proxy and the 429 is observable via its headers. No `requirements.txt` change and no Railway env/start-command change (the forwarded headers already exist). A new test (`test_rate_limiting.py`) asserts the limiter engages per forwarded client IP (distinct clients = independent buckets) and emits the headers — it would have caught the inert control. Durable rule (also a CLAUDE.md Hard Rule): a runtime security control whose behaviour depends on the real proxy request path (rate limiting, IP allow/deny, header-based auth) is **not done on CI green** — verify it live on the Railway deployment before Done/release.
 
 **Do not:** Re-introduce `get_remote_address` as the bare key func. Do not widen the forwarded-IP parsing to trust arbitrary inner hops (forgery/DoS). Do not remove the `response: Response` params while `headers_enabled=True` (slowapi raises without them). Do not blanket-limit authenticated traffic (AD-44 unchanged).
+
+### AD-47 — Transactional email via Resend HTTPS API; SMTP dead on Railway; email links use `PUBLIC_APP_URL` (Sprint 26 PR A / FPRM-462)
+
+**Decision:** `backend/notifications.py` `send_email(to, subject, body_html)` delivers via the **Resend HTTPS API** (`POST https://api.resend.com/emails`, `Authorization: Bearer RESEND_API_KEY`, JSON `{from, to:[to], subject, html}`) using `httpx` (already pinned — no new dep). The `smtplib`/MIME path was removed. When `RESEND_API_KEY` is absent/empty (local/dev/CI) it logs to stdout and makes **no** network call. `send_email` never raises — it warns on transport error or non-2xx (AD-13). Sender defaults to the Resend-verified `noreply@contact.synproconsulting.co` (`EMAIL_FROM` override optional). `POST /auth/password-reset/request` and `POST /partners/{id}/users/invite` route their links through `send_email`; the invite endpoint **no longer returns `token`** (email link only). Email links are built from **`PUBLIC_APP_URL`** via `notifications.public_app_url()` (CI/dev fallback `http://localhost:5173` with a warning); the `_frontend_url()` helper used by the `notify_*` lifecycle templates now delegates to `public_app_url()`.
+
+**Why:** SMTP is **permanently blocked on Railway on every port** (25/465/587/2525, confirmed on the SynPro VSDC project), so the Sprint 6 `smtplib` transport could never deliver in production — every email silently fell back to stdout. Resend over HTTPS/443 works (443 is always open) and SynPro's sender domain `contact.synproconsulting.co` is already verified, so no DNS change was needed. `FRONTEND_URL` is the CORS allowlist and is `*` on Railway — using it for links produced `*/reset-password?...` (broken), so a dedicated `PUBLIC_APP_URL` was required.
+
+**Consequence:** Real email now delivers once `RESEND_API_KEY` + `PUBLIC_APP_URL` are set on `fracttal-prm-backend` (manual ops step). Tests mock `notifications.httpx.post` and assert the stdout fallback when the key is absent (CI never hits the network). The invite token is obtainable only via the email link or a direct DB read. NB: this codebase has **no** `config.py`/`Settings` class — env is read via `os.getenv` directly, so `PUBLIC_APP_URL` lives in the `public_app_url()` helper, consistent with the existing `os.getenv` pattern.
+
+**Do not:** Add the `resend` SDK or any new dep for a plain HTTPS POST (use `httpx`/`urllib`). Do not configure `SMTP_*` on Railway or reintroduce `smtplib` for delivery. Do not build email links from `FRONTEND_URL` — use `public_app_url()`. Do not return the invite token in the API response. Do not let an email error propagate as a 500 (warn + swallow).
 
 ---
 

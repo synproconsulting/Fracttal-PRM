@@ -78,42 +78,64 @@ def clear_overrides():
     app.dependency_overrides.clear()
 
 
-# ---------------- send_email dev mode ----------------
+# ---------------- send_email transport (Resend / FPRM-462) ----------------
 
 
-def test_send_email_dev_mode_does_not_call_smtp(monkeypatch, capsys):
-    """When SMTP_HOST is unset, send_email prints to stdout and never calls smtplib."""
-    monkeypatch.delenv("SMTP_HOST", raising=False)
-    monkeypatch.delenv("SMTP_USER", raising=False)
-    with patch("smtplib.SMTP") as smtp_mock:
+def test_send_email_dev_mode_does_not_call_resend(monkeypatch, capsys):
+    """When RESEND_API_KEY is absent, send_email prints to stdout and never makes
+    a network call to api.resend.com (CI has no credentials)."""
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("notifications.httpx.post") as post_mock:
         notifications.send_email("a@b.com", "Hi", "<p>Body</p>")
-    smtp_mock.assert_not_called()
+    post_mock.assert_not_called()
     out = capsys.readouterr().out
     assert "[DEV MODE EMAIL]" in out
     assert "Hi" in out
 
 
-def test_send_email_uses_smtp_when_configured(monkeypatch):
-    """When SMTP env vars are present, send_email calls smtplib."""
-    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("SMTP_USER", "user")
-    monkeypatch.setenv("SMTP_PASSWORD", "pw")
-    monkeypatch.setenv("EMAIL_FROM", "noreply@fracttal.com")
-    with patch("smtplib.SMTP") as smtp_mock:
-        instance = smtp_mock.return_value.__enter__.return_value
+def test_send_email_uses_resend_when_configured(monkeypatch):
+    """When RESEND_API_KEY is present, send_email POSTs to the Resend API with the
+    correct from / to / subject / html and a Bearer auth header."""
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("EMAIL_FROM", "noreply@contact.synproconsulting.co")
+    with patch("notifications.httpx.post") as post_mock:
+        post_mock.return_value.status_code = 200
         notifications.send_email("a@b.com", "Hi", "<p>x</p>")
-    smtp_mock.assert_called_once()
-    instance.starttls.assert_called_once()
-    instance.login.assert_called_once_with("user", "pw")
-    instance.sendmail.assert_called_once()
+    post_mock.assert_called_once()
+    args, kwargs = post_mock.call_args
+    assert args[0] == "https://api.resend.com/emails"
+    assert kwargs["headers"]["Authorization"] == "Bearer re_test_key"
+    payload = kwargs["json"]
+    assert payload["from"] == "noreply@contact.synproconsulting.co"
+    assert payload["to"] == ["a@b.com"]
+    assert payload["subject"] == "Hi"
+    assert payload["html"] == "<p>x</p>"
 
 
-def test_send_email_swallows_smtp_errors(monkeypatch):
-    """SMTP failure must not raise — endpoints depend on this."""
-    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("SMTP_USER", "user")
-    monkeypatch.setenv("SMTP_PASSWORD", "pw")
-    with patch("smtplib.SMTP", side_effect=ConnectionRefusedError("boom")):
+def test_send_email_default_from_is_verified_sender(monkeypatch):
+    """With no EMAIL_FROM override, the verified Resend sender is used."""
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.delenv("EMAIL_FROM", raising=False)
+    with patch("notifications.httpx.post") as post_mock:
+        post_mock.return_value.status_code = 200
+        notifications.send_email("a@b.com", "Hi", "<p>x</p>")
+    assert post_mock.call_args.kwargs["json"]["from"] == "noreply@contact.synproconsulting.co"
+
+
+def test_send_email_swallows_resend_errors(monkeypatch):
+    """A Resend transport failure must not raise — endpoints depend on this."""
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    with patch("notifications.httpx.post", side_effect=ConnectionError("boom")):
+        # Must not raise
+        notifications.send_email("a@b.com", "Hi", "<p>x</p>")
+
+
+def test_send_email_swallows_resend_4xx(monkeypatch):
+    """A non-2xx Resend response is logged as a warning, not raised."""
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    with patch("notifications.httpx.post") as post_mock:
+        post_mock.return_value.status_code = 422
+        post_mock.return_value.text = "invalid from address"
         # Must not raise
         notifications.send_email("a@b.com", "Hi", "<p>x</p>")
 

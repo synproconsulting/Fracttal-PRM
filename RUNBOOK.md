@@ -1336,5 +1336,17 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 - **partner_user can read its own org's pipeline (FPRM-458).** `GET /partners/{id}/pipeline` now serves `partner_user` (own org) as well as `partner_admin`; internal roles still 403 (they use `/internal/reports/pipeline`); cross-org still 403. The `§17`/`§14` "partner_admin only by design" note now reads partner_admin **+ partner_user** for own-org.
 - **"Partner System ID" on the internal partner profile (FPRM-459):** `/internal/partners/{id}/profile` shows the org `id` as a read-only field; it is not shown on the portal profile and is never editable.
 
-*Last updated: 2026-06-19 — Sprint 25 hotfix (PR #193): FPRM-460 proxy-aware rate-limit keying (AD-46) + live-verification Hard Rule, FPRM-458 partner_user pipeline read, FPRM-459 Partner System ID.*
+*Sprint 26 PR A (2026-06-19, PR #194): Resend API email transport (FPRM-462 / AD-47). No migration (head stays 041). +3 tests (892 → 895). New fix version 11033 / native sprint 1006.*
+
+**Email — operational notes (Sprint 26 PR A / AD-47):**
+- **Transport is Resend over HTTPS — NEVER SMTP.** SMTP is permanently blocked on Railway on every port (25/465/587/2525). `backend/notifications.py` `send_email` POSTs to `https://api.resend.com/emails` (port 443). Do not set `SMTP_*` vars or expect `smtplib` to deliver — it was removed.
+- **Two Railway vars on `fracttal-prm-backend` (manual — not set by the deploy):**
+  - `RESEND_API_KEY` — the Resend API secret (`re_...`). When **absent/empty**, `send_email` logs the email to stdout (dev/CI fallback) and makes no network call — so live email needs this set.
+  - `PUBLIC_APP_URL` — base origin for email links, **no trailing slash**, e.g. `https://fracttal-prm-frontend-production.up.railway.app`. This is NOT `FRONTEND_URL` (which is `*`, the CORS allowlist, and cannot form a link). Absent → links fall back to `http://localhost:5173` with a logged warning.
+- **Sender:** `noreply@contact.synproconsulting.co` (`EMAIL_FROM` override optional). The domain `contact.synproconsulting.co` is already verified in the Resend account — no DNS change needed.
+- **What sends email:** password-reset request, partner-user invite (`POST /partners/{id}/users/invite`), the internal-user welcome invite, and the application lifecycle `notify_*` emails (submitted/approved/rejected/info-required) — all via the one `send_email`.
+- **Invite token is no longer in the API response (FPRM-462).** `POST /partners/{id}/users/invite` returns `{..., message}` without `token`. To get a usable invite token for testing, read it from the email (or query the `partner_user_invites` row by email in the DB) — there is still no GET endpoint for it.
+- **Live verify after setting the vars:** trigger a real password-reset for a test inbox and confirm the email arrives from `noreply@contact.synproconsulting.co` with a working `/reset-password?token=` link; create a partner invite for a real inbox and confirm the accept-invite link works. Check the Railway logs show the Resend POST (or a warning if it 4xx'd — e.g. unverified sender).
+
+*Last updated: 2026-06-19 — Sprint 26 PR A (PR #194): Resend email transport (AD-47) + PUBLIC_APP_URL; email-link Hard Rule. Prior same day: Sprint 25 hotfix (PR #193).*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
