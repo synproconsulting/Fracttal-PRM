@@ -67,9 +67,12 @@ const PROFILE_BOOL_FIELDS = [
   { key: 'implementation_services', label: 'Offers implementation services' },
 ]
 
-function OrgSummary({ org }) {
+function OrgSummary({ org, showSystemId }) {
   if (!org) return null
   const rows = [
+    // FPRM-459 — read-only Partner System ID, internal profile only. Never shown
+    // in partner-portal mode; not editable and not part of any PATCH payload.
+    ...(showSystemId ? [['Partner System ID', org.id]] : []),
     ['Legal name', org.legal_name],
     ['DBA', org.dba_name],
     ['Website', org.website],
@@ -561,7 +564,7 @@ export default function PartnerProfile() {
 
       {!loading && (
         <>
-          <OrgSummary org={org} />
+          <OrgSummary org={org} showSystemId={internalMode} />
           {internalMode ? (
             <ChannelManagersPanel token={token} partnerOrgId={partnerOrgId} canManage={canManageStatus} />
           ) : (

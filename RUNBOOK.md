@@ -905,7 +905,7 @@ Open `https://fracttal-prm-frontend-production.up.railway.app`:
 
 - **Report endpoints aggregate at query time (AD-17).** All counts are computed inline from the live `deal_registrations` table. Acceptable through Phase 5.
 - **CSV export uses fetch + Blob (AD-16).** `window.location.href` cannot send the Authorization header — would 401. Tests that simulate CSV download must mirror this pattern.
-- **`/partners/{id}/pipeline` is partner_admin only by design.** System admins seeking the same data go to `/internal/reports/pipeline` (which has broader aggregation).
+- **`/partners/{id}/pipeline` is partner-side only by design (partner_admin + partner_user for their own org since Sprint 25 hotfix / FPRM-458).** System admins / internal roles get 403 here and go to `/internal/reports/pipeline` (which has broader aggregation); cross-org access is 403.
 - **recharts is now a frontend dependency.** Future chart additions should reuse recharts components and the existing `PALETTE` palette in `InternalReports.jsx`. No other charting library is allowed.
 
 ---
@@ -1324,5 +1324,17 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 - **Password policy:** passwords set via invite-accept and password-reset-confirm must be **≥12 chars with upper + lower + digit** (symbol recommended) — else **422**. The documented test creds `TestPass123!` and `PartnerPass123!` satisfy it. The policy lives once in `backend/password_policy.py`.
 - **Tenant-isolation sweep:** `test_tenant_isolation_sweep.py` (`PARTNER_SCOPED_ENDPOINTS`) is the canonical cross-tenant regression guard — org A cannot read/act on org B (403/404). Add any new partner-scoped endpoint to that list.
 
-*Last updated: 2026-06-02 — Sprint 25 PR B (PR #192): AD-44 rate limiting, password policy, tenant-isolation sweep. Sprint 25 closed.*
+*Sprint 25 hotfix (2026-06-19, PR #193): rate-limit engagement + partner_user pipeline read + Partner System ID (FPRM-458/459/460). No migration (head stays 041). +4 tests (888 → 892). Folded into the existing Sprint 25 release (fix version 11000 / sprint 973).*
+
+**Operational notes (Sprint 25 hotfix):**
+- **Rate limiting now actually engages in production (FPRM-460 / AD-46).** The AD-44 limiter was *inert* behind Railway's proxy: it keyed on `get_remote_address` (the rotating proxy peer), so each request hit a fresh per-IP bucket and never accumulated — green in CI, zero 429s in prod. Now `rate_limiter.get_client_ip` keys on the real client IP (`X-Envoy-External-Address`, then left-most `X-Forwarded-For`, else TCP peer) and the limiter sets `headers_enabled=True` so a 429 returns `Retry-After` + `X-RateLimit-*`. **No env var or start-command change needed** — Railway already sets the forwarded headers. The env-var overrides above are unchanged.
+  - **Verify live (this is the rule, not a nicety):** runtime security controls keyed on the proxy path must be confirmed against the live `fracttal-prm-backend` URL, not just CI. Burst past a limit and watch for the 429 + headers:
+    ```cmd
+    for /L %i in (1,1,12) do curl -s -o NUL -w "%{http_code} " -X POST "https://fracttal-prm-backend-production.up.railway.app/auth/login" -H "Content-Type: application/json" -d "{\"email\":\"nobody@test.com\",\"password\":\"wrong\"}"
+    ```
+    Expect the first ~10 to be `401` then `429` (login is 10/min). Add `-i` on the blocked call to see `Retry-After` / `X-RateLimit-*`. Repeat against `/auth/password-reset/request` (5/min) and `POST /applications` (20/min).
+- **partner_user can read its own org's pipeline (FPRM-458).** `GET /partners/{id}/pipeline` now serves `partner_user` (own org) as well as `partner_admin`; internal roles still 403 (they use `/internal/reports/pipeline`); cross-org still 403. The `§17`/`§14` "partner_admin only by design" note now reads partner_admin **+ partner_user** for own-org.
+- **"Partner System ID" on the internal partner profile (FPRM-459):** `/internal/partners/{id}/profile` shows the org `id` as a read-only field; it is not shown on the portal profile and is never editable.
+
+*Last updated: 2026-06-19 — Sprint 25 hotfix (PR #193): FPRM-460 proxy-aware rate-limit keying (AD-46) + live-verification Hard Rule, FPRM-458 partner_user pipeline read, FPRM-459 Partner System ID.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

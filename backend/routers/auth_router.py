@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -79,7 +79,7 @@ class AcceptInviteRequest(BaseModel):
 
 @router.post("/register", status_code=201)
 @limiter.limit("10/minute")
-def register(request: Request, req: RegisterRequest, db: Session = Depends(get_db)):
+def register(request: Request, response: Response, req: RegisterRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == req.email).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -98,7 +98,7 @@ def register(request: Request, req: RegisterRequest, db: Session = Depends(get_d
 
 @router.post("/login")
 @limiter.limit(_login_limit)
-def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
+def login(request: Request, response: Response, req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -150,7 +150,7 @@ def me(current_user: User = Depends(get_current_user)):
 
 @router.post("/password-reset/request")
 @limiter.limit(_password_reset_limit)
-def password_reset_request(request: Request, req: PasswordResetRequest, db: Session = Depends(get_db)):
+def password_reset_request(request: Request, response: Response, req: PasswordResetRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if user:
         reset_token = PasswordResetToken(
@@ -231,7 +231,7 @@ def accept_invite(req: AcceptInviteRequest, request: Request, db: Session = Depe
 
 @router.post("/password-reset/confirm")
 @limiter.limit(_password_reset_limit)
-def password_reset_confirm(request: Request, req: PasswordResetConfirm, db: Session = Depends(get_db)):
+def password_reset_confirm(request: Request, response: Response, req: PasswordResetConfirm, db: Session = Depends(get_db)):
     token_record = db.query(PasswordResetToken).filter(
         PasswordResetToken.token == req.token
     ).first()

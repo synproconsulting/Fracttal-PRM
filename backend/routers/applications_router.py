@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
@@ -132,7 +132,7 @@ def _get_application_or_404(application_id: uuid.UUID, db: Session) -> PartnerAp
 
 @router.post("", status_code=201)
 @limiter.limit(_public_app_limit)
-def create_draft(request: Request, payload: dict, db: Session = Depends(get_db)):
+def create_draft(request: Request, response: Response, payload: dict, db: Session = Depends(get_db)):
     """Public endpoint - creates a draft application and returns id + draft_token."""
     applicant_email = (payload.get("applicant_email") or "").strip()
     if not applicant_email:
@@ -270,6 +270,7 @@ def get_application(
 @limiter.limit(_public_app_limit)
 def update_draft(
     request: Request,
+    response: Response,
     application_id: uuid.UUID,
     payload: dict,
     draft_token: str = Query(...),
@@ -292,6 +293,7 @@ def update_draft(
 @limiter.limit(_public_app_limit)
 def submit_application(
     request: Request,
+    response: Response,
     application_id: uuid.UUID,
     draft_token: str = Query(...),
     db: Session = Depends(get_db),
@@ -355,6 +357,7 @@ def submit_application(
 @limiter.limit(_public_app_limit)
 def upload_document_metadata(
     request: Request,
+    response: Response,
     application_id: uuid.UUID,
     payload: dict,
     draft_token: str = Query(...),
