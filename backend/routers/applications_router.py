@@ -24,6 +24,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric
 from sqlalchemy.orm import Session
 
 from auth import get_optional_bearer_user
@@ -77,6 +78,32 @@ PUBLIC_WRITABLE_FIELDS = {
     "partnership_goals", "market_growth_plan", "additional_info", "references",
     "terms_accepted",
 }
+
+
+# FPRM-464 — application columns where an empty string is an invalid value and
+# must become NULL before the DB write. The public draft create/update endpoints
+# accept a raw dict and ``setattr`` values directly, so an empty string from an
+# unfilled numeric/boolean/date form field (e.g. ``year_established``) would
+# otherwise crash on the Postgres commit. Derived from the model so any new
+# non-text column is covered automatically.
+_NON_STRING_APPLICATION_COLUMNS = frozenset(
+    name
+    for name, col in PartnerApplication.__table__.columns.items()
+    if isinstance(col.type, (Integer, Numeric, Float, Boolean, Date, DateTime))
+)
+
+
+def _coerce_blank_to_none(payload: dict) -> None:
+    """Mutate ``payload`` in place: turn an empty/whitespace-only string into
+    ``None`` for any application column that cannot accept a string (numeric,
+    boolean, date). Text/string/JSON columns keep their value. (FPRM-464)"""
+    for key, value in list(payload.items()):
+        if (
+            key in _NON_STRING_APPLICATION_COLUMNS
+            and isinstance(value, str)
+            and value.strip() == ""
+        ):
+            payload[key] = None
 
 
 # Roles allowed to drive the application review workflow (approve/reject/request-info).
@@ -138,6 +165,7 @@ def create_draft(request: Request, response: Response, payload: dict, db: Sessio
     if not applicant_email:
         raise HTTPException(status_code=422, detail="applicant_email is required")
 
+    _coerce_blank_to_none(payload)
     draft_token = uuid.uuid4().hex
     app_record = PartnerApplication(
         id=uuid.uuid4(),
@@ -280,6 +308,7 @@ def update_draft(
     app_record = _validate_draft_token(application_id, draft_token, db)
     if app_record.status not in (ApplicationStatus.draft, ApplicationStatus.info_required):
         raise HTTPException(status_code=400, detail="Application cannot be edited in current status")
+    _coerce_blank_to_none(payload)
     for key, value in payload.items():
         if key in PUBLIC_WRITABLE_FIELDS:
             setattr(app_record, key, value)

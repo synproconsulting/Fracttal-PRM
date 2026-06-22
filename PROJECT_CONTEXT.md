@@ -87,7 +87,7 @@
 
 | GET | `/applications/{id}` | None / Bearer | Fetch an application. Public via `?draft_token=...`; internal users with `partner_application:read_all` (channel_manager+) can access any application via JWT. 401 if neither is supplied. |
 
-| PATCH | `/applications/{id}` | None | Public draft update via `?draft_token=...`. Only writable fields are mutated. 400 if status ∉ {draft, info_required}; 403 on bad token; 410 if draft expired. |
+| PATCH | `/applications/{id}` | None | Public draft update via `?draft_token=...`. Only writable fields are mutated. 400 if status ∉ {draft, info_required}; 403 on bad token; 410 if draft expired. **Sprint 26 hotfix / FPRM-464: an empty/whitespace-only string is coerced server-side to `NULL` for any non-text application column (numeric/boolean/date — e.g. `year_established`, `employee_count`) before the DB write, so an unfilled form field no longer crashes the Postgres commit. Same coercion applies on `POST /applications`.** |
 
 | POST | `/applications/{id}/submit` | None | Public submit via `?draft_token=...`. Validates `legal_name`, `applicant_email`, `applicant_name`, `terms_accepted`. On success sets `status=submitted` and `submitted_at=now`. Audit logged as `partner_application.submitted` with `actor=None`. |
 
@@ -191,7 +191,7 @@
 | POST | `/internal/users/{user_id}/disable` | system_admin | Sprint 12 / FPRM-194. Sets `is_active=False`. Audit `internal_user.disabled`. |
 | POST | `/internal/users/{user_id}/reactivate` | system_admin | Sprint 12 / FPRM-194. Sets `is_active=True`. Audit `internal_user.reactivated`. |
 | GET | `/internal/partner-users` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Cross-org partner-user list (distinct from per-tenant `/partners/{id}/users`). |
-| POST | `/internal/partner-users/invite` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Invite a partner user under any org. |
+| POST | `/internal/partner-users/invite` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Invite a partner user under any org. **Sprint 26 hotfix / FPRM-463: now emails the accept-invite link via Resend** (`send_email` + `public_app_url()`; stdout fallback when `RESEND_API_KEY` absent) and the `token` is no longer returned — response is `{id, partner_org_id, email, invited_role, expires_at, message}` (token travels via the email link only, matching the `/partners/{id}/users/invite` decision). |
 | PATCH | `/internal/partner-users/{user_id}/role` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Change `partner_user` ↔ `partner_admin`. |
 | POST | `/internal/partner-users/{user_id}/disable` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Disable any partner user. |
 | POST | `/internal/partner-users/{user_id}/reactivate` | system_admin / channel_ops_admin | Sprint 12 / FPRM-202. Reactivate any partner user. |

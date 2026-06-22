@@ -202,7 +202,7 @@ assigned user must hold the `channel_manager` role or POST returns 422).
 curl -X POST "https://fracttal-prm-backend-production.up.railway.app/partners/<partner_id>/users/invite" -H "Authorization: Bearer %token%" -H "Content-Type: application/json" -d "{\"email\":\"partneradmin@testcorp.com\",\"invited_role\":\"partner_admin\"}"
 ```
 
-Copy the `token` from the response, then accept:
+The invite response no longer contains the `token` (FPRM-462/463 — it travels via the emailed accept-invite link only). Read the token from the email, or from the `partner_user_invites` row by email in the DB, then accept:
 
 ```cmd
 curl -X POST "https://fracttal-prm-backend-production.up.railway.app/auth/accept-invite" -H "Content-Type: application/json" -d "{\"token\":\"<invite_token>\",\"password\":\"PartnerPass123!\",\"full_name\":\"Partner Admin User\"}"
@@ -238,7 +238,7 @@ Expected: 201 → 200 (submitted) → 200 (approved, partner_org_id returned) �
 
 ### Known Behaviour: Invite Token Not Retrievable via GET
 
-The provisioning flow creates a PartnerUserInvite record automatically but there is no GET endpoint to retrieve the token after the fact. To get a usable invite token for testing, send a fresh invite via POST /partners/{id}/users/invite. The returned token is immediately usable.
+The provisioning flow creates a PartnerUserInvite record automatically but there is no GET endpoint to retrieve the token after the fact. As of Sprint 26 (FPRM-462/463) the invite-create endpoints (`POST /partners/{id}/users/invite` and `POST /internal/partner-users/invite`) **no longer return the token** either — it travels via the emailed accept-invite link only. To get a usable invite token for testing, read it from the email or query the `partner_user_invites` row by email directly in the DB.
 
 ### Known Behaviour: 404 vs 403 on Tenant Isolation
 
@@ -450,11 +450,11 @@ The canonical copy of `CLAUDE.md`, `PROJECT_CONTEXT.md`, `CLAUDE_HISTORY.md`, an
 | Git not initialised locally | The local repo was initialised in Sprint 4. If it ever needs reinitialising: `git init`, `git remote add origin https://github.com/synproconsulting/Fracttal-PRM.git`, `git fetch origin`, `git checkout -f main`. | |
 | `git checkout main` fails on first init | Untracked files from prior Claude Code sessions block checkout. Use `git checkout -f main` to force. | |
 | Credentials must never be pasted in chat | Jira tokens, Railway tokens, GitHub PATs — all go directly into `.env` file. Never paste into any chat interface. | Create/edit `.env` manually in VS Code or Notepad. |
-| Invite token not retrievable via GET | Provisioning creates PartnerUserInvite automatically but no GET /invites endpoint exists. | Send a fresh invite via POST /partners/{id}/users/invite to get a usable token for testing. |
+| Invite token not retrievable via GET | Provisioning creates PartnerUserInvite automatically but no GET /invites endpoint exists; as of Sprint 26 (FPRM-462/463) the invite-create endpoints no longer return the token either. | Read the token from the emailed accept-invite link, or query the `partner_user_invites` row by email directly in the DB. |
 | Notification calls must be try/except wrapped | Email failures crash the endpoint if unwrapped. AD-13. | All send_email() calls in routers wrapped in try/except. Never call unwrapped in a router. |
 | Endpoints using _user_from_bearer not testable via dependency_overrides | Manual Authorization header reads bypass FastAPI dependency injection. FPRM-104 tracks this. | Mint a real JWT in tests or use the public draft_token path. Do not use app.dependency_overrides[get_current_user] for these endpoints. |
 | JWT payload missing partner_org_id | Sprint 7 bug FPRM-119 — JWT was missing partner_org_id claim. Fixed in PR #48. | If portal pages fail to load partner data, check GET /auth/me returns partner_org_id in the response. |
-| SMTP env vars not set on Railway | Email notifications fall back to stdout logging (AD-13 dev mode). No crash. | Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM, CHANNEL_OPS_EMAIL, FRONTEND_URL on fracttal-prm-backend Railway service when ready for live email delivery. |
+| Email vars not set on Railway | Email falls back to stdout logging when `RESEND_API_KEY` is unset (AD-13 dev mode). No crash. **SMTP is dead — never set `SMTP_*` (AD-47); it is permanently blocked on Railway on every port.** | Set `RESEND_API_KEY` + `PUBLIC_APP_URL` (no trailing slash) on fracttal-prm-backend for live Resend delivery — see the §10 Email operational notes. `EMAIL_FROM` / `CHANNEL_OPS_EMAIL` optional. |
 | Partners created via POST /partners have no profile record | `profile_complete` can never flip → `activation_complete` stuck at False. Tracked in FPRM-172. | Until the fix lands, provision test partners via the application flow (POST /applications → submit → approve) — `provision_partner_from_application` is the only path that creates the PartnerProfile row. |
 | `commission_rate_snapshot` always null when `commission_type=standard` | No `standard` row exists in `commission_structures` — the lookup `(category, type, year_1)` finds no match and snapshot stays null. Tracked in FPRM-173. | Use one of the seeded vocab values: `autonomous_sell`, `indirect_sell`, `direct_sell`, `co_sell_shared`. Sprint 10 / FPRM-158 aligned the deal form to this list. |
 | Document upload fields are `document_name` + `file_path` | Sending `file_name` / `file_url` returns sequential 422s without naming the expected fields. Tracked in FPRM-174. | Use the field names from § 3 above — same shape for `POST /partners/{id}/documents` and `POST /applications/{id}/documents`. |
@@ -1344,9 +1344,11 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
   - `RESEND_API_KEY` — the Resend API secret (`re_...`). When **absent/empty**, `send_email` logs the email to stdout (dev/CI fallback) and makes no network call — so live email needs this set.
   - `PUBLIC_APP_URL` — base origin for email links, **no trailing slash**, e.g. `https://fracttal-prm-frontend-production.up.railway.app`. This is NOT `FRONTEND_URL` (which is `*`, the CORS allowlist, and cannot form a link). Absent → links fall back to `http://localhost:5173` with a logged warning.
 - **Sender:** `noreply@contact.synproconsulting.co` (`EMAIL_FROM` override optional). The domain `contact.synproconsulting.co` is already verified in the Resend account — no DNS change needed.
-- **What sends email:** password-reset request, partner-user invite (`POST /partners/{id}/users/invite`), the internal-user welcome invite, and the application lifecycle `notify_*` emails (submitted/approved/rejected/info-required) — all via the one `send_email`.
-- **Invite token is no longer in the API response (FPRM-462).** `POST /partners/{id}/users/invite` returns `{..., message}` without `token`. To get a usable invite token for testing, read it from the email (or query the `partner_user_invites` row by email in the DB) — there is still no GET endpoint for it.
-- **Live verify after setting the vars:** trigger a real password-reset for a test inbox and confirm the email arrives from `noreply@contact.synproconsulting.co` with a working `/reset-password?token=` link; create a partner invite for a real inbox and confirm the accept-invite link works. Check the Railway logs show the Resend POST (or a warning if it 4xx'd — e.g. unverified sender).
+- **What sends email:** password-reset request, **both** partner-user invite surfaces — `POST /partners/{id}/users/invite` (per-tenant; partner_admin/channel_ops_admin) **and** `POST /internal/partner-users/invite` (cross-org; system_admin/channel_ops_admin — Resend-wired in the Sprint 26 hotfix / FPRM-463) — the internal-user welcome invite, and the application lifecycle `notify_*` emails (submitted/approved/rejected/info-required) — all via the one `send_email`.
+- **Invite token is no longer in the API response (FPRM-462 + FPRM-463).** **Both** `POST /partners/{id}/users/invite` **and** `POST /internal/partner-users/invite` return `{..., message}` without `token`. To get a usable invite token for testing, read it from the email (or query the `partner_user_invites` row by email in the DB) — there is still no GET endpoint for it.
+- **Live verify after setting the vars:** trigger a real password-reset for a test inbox and confirm the email arrives from `noreply@contact.synproconsulting.co` with a working `/reset-password?token=` link; create a partner invite for a real inbox **from either invite surface** and confirm the accept-invite link works. Check the Railway logs show the Resend POST (or a warning if it 4xx'd — e.g. unverified sender).
 
-*Last updated: 2026-06-19 — Sprint 26 PR A (PR #194): Resend email transport (AD-47) + PUBLIC_APP_URL; email-link Hard Rule. Prior same day: Sprint 25 hotfix (PR #193).*
+*Sprint 26 hotfix (2026-06-22, PR #195): internal invite (`POST /internal/partner-users/invite`) wired to Resend + `token` removed (FPRM-463); `PATCH`/`POST /applications` empty-string → NULL coercion for numeric/boolean/date columns, e.g. `year_established` (FPRM-464). No migration (head stays 041). +4 tests (895 → 899). Folded into fix version 11033 / sprint 1006.*
+
+*Last updated: 2026-06-22 — Sprint 26 hotfix (PR #195): internal invite Resend wiring (FPRM-463) + application empty-string coercion (FPRM-464). Prior: Sprint 26 PR A (PR #194) Resend transport (AD-47) + PUBLIC_APP_URL.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*
