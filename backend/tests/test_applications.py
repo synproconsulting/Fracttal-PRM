@@ -125,6 +125,94 @@ def test_patch_updates_fields_with_valid_draft_token(db_session):
     assert data["year_established"] == 2010
 
 
+# ---------------- FPRM-464 — empty-string coercion on numeric fields ----------------
+
+def test_patch_year_established_empty_string_coerced_to_null(db_session):
+    override_db(db_session)
+    try:
+        client = TestClient(app)
+        body = client.post(
+            "/applications", json={"applicant_email": "coerce-empty@acme.test"}
+        ).json()
+        app_id, token = body["id"], body["draft_token"]
+
+        r = client.patch(
+            f"/applications/{app_id}?draft_token={token}",
+            json={"year_established": "", "employee_count": ""},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["year_established"] is None
+        assert r.json()["employee_count"] is None
+
+        row = (
+            db_session.query(models.PartnerApplication)
+            .filter(models.PartnerApplication.id == uuid.UUID(app_id))
+            .first()
+        )
+        assert row.year_established is None
+        assert row.employee_count is None
+    finally:
+        clear_overrides()
+
+
+def test_patch_year_established_integer_preserved(db_session):
+    override_db(db_session)
+    try:
+        client = TestClient(app)
+        body = client.post(
+            "/applications", json={"applicant_email": "coerce-int@acme.test"}
+        ).json()
+        app_id, token = body["id"], body["draft_token"]
+
+        r = client.patch(
+            f"/applications/{app_id}?draft_token={token}",
+            json={"year_established": 2020},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["year_established"] == 2020
+    finally:
+        clear_overrides()
+
+
+def test_patch_year_established_null_stays_null(db_session):
+    override_db(db_session)
+    try:
+        client = TestClient(app)
+        body = client.post(
+            "/applications", json={"applicant_email": "coerce-null@acme.test"}
+        ).json()
+        app_id, token = body["id"], body["draft_token"]
+
+        r = client.patch(
+            f"/applications/{app_id}?draft_token={token}",
+            json={"year_established": None},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["year_established"] is None
+    finally:
+        clear_overrides()
+
+
+def test_create_draft_empty_numeric_coerced_to_null(db_session):
+    override_db(db_session)
+    try:
+        client = TestClient(app)
+        r = client.post(
+            "/applications",
+            json={"applicant_email": "create-coerce@acme.test", "year_established": ""},
+        )
+        assert r.status_code == 201, r.text
+        app_id = r.json()["id"]
+        row = (
+            db_session.query(models.PartnerApplication)
+            .filter(models.PartnerApplication.id == uuid.UUID(app_id))
+            .first()
+        )
+        assert row.year_established is None
+    finally:
+        clear_overrides()
+
+
 def test_patch_with_invalid_draft_token_returns_403(db_session):
     override_db(db_session)
     try:

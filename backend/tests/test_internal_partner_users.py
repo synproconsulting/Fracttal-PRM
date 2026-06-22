@@ -5,6 +5,8 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -227,20 +229,23 @@ def test_invite_to_partner_org(client, db_session):
     org = _make_org(db_session, "Invitee Co")
     _caller(admin)
 
-    r = client.post(
-        "/internal/partner-users/invite",
-        json={
-            "email": "new.partner@example.com",
-            "partner_org_id": str(org.id),
-            "invited_role": "partner_admin",
-        },
-    )
+    with patch("routers.internal_partner_users_router.send_email") as mock_send:
+        r = client.post(
+            "/internal/partner-users/invite",
+            json={
+                "email": "new.partner@example.com",
+                "partner_org_id": str(org.id),
+                "invited_role": "partner_admin",
+            },
+        )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["email"] == "new.partner@example.com"
     assert body["invited_role"] == "partner_admin"
     assert body["partner_org_id"] == str(org.id)
-    assert body["token"]
+    # FPRM-463 — token must never be returned; it travels via the email link only.
+    assert "token" not in body
+    assert body["message"] == "Invitation sent to new.partner@example.com"
 
     invite = (
         db_session.query(PartnerUserInvite)
@@ -249,6 +254,13 @@ def test_invite_to_partner_org(client, db_session):
     )
     assert invite is not None
     assert str(invite.partner_org_id) == str(org.id)
+
+    # FPRM-463 — the invite is delivered via Resend with an accept-invite link
+    # built from public_app_url() carrying the (DB-only) token.
+    mock_send.assert_called_once()
+    kwargs = mock_send.call_args.kwargs
+    assert kwargs["to"] == "new.partner@example.com"
+    assert f"/accept-invite?token={invite.token}" in kwargs["body_html"]
 
 
 def test_invite_with_unknown_org_returns_404(client, db_session):

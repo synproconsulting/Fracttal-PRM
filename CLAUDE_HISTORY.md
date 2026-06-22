@@ -2967,3 +2967,34 @@ The prompt assumed a `backend/config.py` `Settings` class for `PUBLIC_APP_URL`. 
 2. **`FRONTEND_URL` is not a link base.** It's the CORS allowlist (`*` on Railway). The lifecycle emails had been building links from it for sprints — invisible because everything went to stdout. The moment email goes real, that's a broken-link bug; `PUBLIC_APP_URL` is the dedicated link origin.
 3. **Don't return a secret you also email.** The invite token is a credential; returning it in the API response and emailing it are redundant attack surface. Email-only delivery (with a DB read for tests) is the right shape — assert it's *absent* so a regression fails CI.
 
+---
+
+## Sprint 26 hotfix — Internal invite Resend wiring + application empty-string coercion (single PR)
+
+**Date:** 2026-06-22
+**Fix Version ID:** `11033` (Sprint 26 — existing) · **Native Sprint ID:** `1006`
+**PR:** #195 · **Migration head:** 041 (unchanged) · **Tests:** 895 → **899**
+**Tickets:** FPRM-463 (Bug, 2pts — internal invite, release-gating), FPRM-464 (Bug, 2pts — empty-string coercion). Epic FPRM-299.
+
+Two bugs found during Sprint 26 PR A live verification, folded into the existing Sprint 26 release. Backend-only; no migration; CORS / `FRONTEND_URL` / FPRM-461 untouched.
+
+> **Jira key/label note:** the prompt labelled the invite fix FPRM-464 and the coercion fix FPRM-463, but Jira assigns keys in creation order — the invite ticket (created first, as the gating item) became **FPRM-463** and the coercion ticket **FPRM-464**. Semantic content and exec order (invite = exec 1 = gating) are correct; the PR is led by FPRM-463 (the gating ticket).
+
+### FPRM-463 (release-gating) — wire the internal invite endpoint to Resend
+- Sprint 26 PR A (FPRM-462) wired `send_email` into `POST /partners/{id}/users/invite` and the internal-users welcome email, but **missed the second partner-invite call site**: `POST /internal/partner-users/invite` in `internal_partner_users_router.py` (the cross-org channel-ops invite). It never called `send_email` and still returned the raw `token` in its response.
+- Fixed by mirroring the `partner_users_router` pattern: `from notifications import send_email, public_app_url`; after the invite is committed, send the accept-invite link (`{public_app_url()}/accept-invite?token={invite.token}`) via `send_email`, wrapped in `try/except` per AD-13; the `token` is removed from the response (now `{id, partner_org_id, email, invited_role, expires_at, message}`). **AD-47 now covers both invite surfaces.**
+- A codebase grep for every `PartnerUserInvite(...)` creation confirmed **no further un-wired call sites**: `provisioning.py` creates the post-approval invite but its email is delivered via `notify_application_approved` on the approval path (`applications_router`), and `test_integration_phase1.py` reads the token from the DB.
+- Tests: `test_internal_partner_users.py::test_invite_to_partner_org` now patches `routers.internal_partner_users_router.send_email`, asserts `token` absent + `message` present, and asserts the email body carries `/accept-invite?token={invite.token}`.
+
+### FPRM-464 — coerce empty string → NULL for non-text application columns
+- `POST /applications` and `PATCH /applications/{id}` accept a raw `dict` payload and `setattr` values directly onto the model. An unfilled numeric form field arriving as `""` (e.g. `year_established: ""` into an `Integer` column) crashed on the Postgres commit (SQLite is permissive, so CI hadn't caught it — only live Postgres did).
+- Fixed with a model-derived `_coerce_blank_to_none(payload)` helper in `applications_router.py`: `_NON_STRING_APPLICATION_COLUMNS` is computed once from `PartnerApplication.__table__.columns` for any column whose type is `Integer`/`Numeric`/`Float`/`Boolean`/`Date`/`DateTime`; an empty/whitespace-only string for any such column is coerced to `None` before the write. Text/String/JSON columns keep their value. Applied in both `create_draft` and `update_draft`. New columns are covered automatically (no hardcoded field list). No migration.
+- Tests (`test_applications.py`, +4): PATCH `year_established: ""` (+ `employee_count: ""`) → 200, null in DB; PATCH `year_established: 2020` → 200, preserved; PATCH `year_established: null` → 200, null; POST create with `year_established: ""` → 201, null in DB.
+
+### Lessons
+1. **A "wire it in" sweep needs a grep, not a memory.** PR A wired the two invite sites it remembered and the history even said "both new call sites" — but a third (`/internal/partner-users/invite`) existed. Enumerating every `PartnerUserInvite(...)` would have caught it in PR A. The hotfix did the grep and confirmed no fourth.
+2. **SQLite-permissive ≠ Postgres-permissive for empty strings.** Tests on SQLite stored `""` in an INTEGER column without complaint; Postgres rejects it at commit. A runtime data-coercion bug like this hides behind a green CI suite — the same class as AD-46 (control inert in prod). Coerce at the boundary, derive the column set from the model so it can't drift.
+
+### FPRM-464 live verification (gating)
+Sending an internal invite via Channel Ops → Partner Users → + Invite User to a real inbox, confirming the email lands from `noreply@contact.synproconsulting.co` and the accept-invite link works, closes both FPRM-463 **and** FPRM-462 (the deferred live-invite verification). Recorded in the PR closeout.
+
