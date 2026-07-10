@@ -264,6 +264,7 @@ export default function InternalPartnerList() {
                   <SortableTh field="partner_category" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Category</SortableTh>
                   <SortableTh field="tier" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Tier</SortableTh>
                   <SortableTh field="status" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Status</SortableTh>
+                  <SortableTh field="channel_manager_name" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Channel Manager</SortableTh>
                   <th style={{ textAlign: 'left', padding: '10px 12px' }}>Activation</th>
                   <SortableTh field="created_at" sort={sort} onSort={toggleSort} style={{ padding: '10px 12px' }}>Created</SortableTh>
                   <th style={{ textAlign: 'right', padding: '10px 12px' }}>Docs</th>
@@ -275,7 +276,7 @@ export default function InternalPartnerList() {
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={canManageStatus ? 8 : 7} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
+                    <td colSpan={canManageStatus ? 9 : 8} style={{ padding: 18, textAlign: 'center', color: '#5A6478' }}>
                       No partner organisations found.
                     </td>
                   </tr>
@@ -291,6 +292,7 @@ export default function InternalPartnerList() {
                     <td style={{ padding: '10px 12px', textTransform: 'capitalize' }}>{p.partner_category || '—'}</td>
                     <td style={{ padding: '10px 12px', textTransform: 'capitalize' }}>{p.tier || '—'}</td>
                     <td style={{ padding: '10px 12px' }}><StatusBadge value={p.status} /></td>
+                    <td style={{ padding: '10px 12px' }}>{p.channel_manager_name || '—'}</td>
                     <td style={{ padding: '10px 12px' }}>
                       {p.activation_complete
                         ? <span style={{ color: '#166534', fontWeight: 600 }}>✔ Activated</span>

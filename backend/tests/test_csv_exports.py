@@ -157,7 +157,7 @@ def test_internal_partners_csv_export(client, db_session):
     user = make_user(db_session, UserRole.channel_manager.value)
     auth(client, user)
     r = client.get("/internal/partners?export=csv")
-    _is_csv(r, "Legal Name,Program Type,Category,Tier,Status,Activation Complete,Created Date")
+    _is_csv(r, "Legal Name,Program Type,Category,Tier,Status,Channel Manager,Activation Complete,Created Date")
 
 
 def test_internal_partner_users_csv_export(client, db_session):

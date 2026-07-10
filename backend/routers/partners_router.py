@@ -476,11 +476,16 @@ def get_partner_dashboard_summary(
 ):
     """Partner home dashboard roll-up.
 
-    Accessible to ``partner_admin`` of the same org (own-org view) and to
-    internal admins (``system_admin``, ``channel_ops_admin``,
-    ``channel_manager``) for any partner. Returns deals counts by status,
-    activation progress, and document review counts for the requested
-    partner organisation.
+    Accessible to ``partner_admin`` and ``partner_user`` of the same org
+    (own-org view) and to internal admins (``system_admin``,
+    ``channel_ops_admin``, ``channel_manager``) for any partner. Returns deals
+    counts by status, activation progress, and document review counts for the
+    requested partner organisation.
+
+    FPRM-461 (Sprint 26 PR B) — widened from partner_admin-only to also allow
+    partner_user for their OWN org (same own-org tenant scoping), mirroring the
+    FPRM-458 pipeline widening. Internal-role access is unchanged; cross-org
+    partner access still 403s so the tenant-isolation sweep stays green.
     """
     partner = db.query(PartnerOrganization).filter(PartnerOrganization.id == partner_id).first()
     if not partner:
@@ -492,13 +497,13 @@ def get_partner_dashboard_summary(
         UserRole.channel_ops_admin,
         UserRole.channel_manager,
     }
-    if role == UserRole.partner_admin:
+    if role in (UserRole.partner_admin, UserRole.partner_user):
         if current_user.partner_org_id is None or str(current_user.partner_org_id) != str(partner_id):
             raise HTTPException(status_code=403, detail="Access denied: not your organisation")
     elif role not in internal_view_roles:
         raise HTTPException(
             status_code=403,
-            detail="partner_admin or internal admin role required",
+            detail="partner_admin, partner_user, or internal admin role required",
         )
 
     def _deal_count(status_value: str) -> int:

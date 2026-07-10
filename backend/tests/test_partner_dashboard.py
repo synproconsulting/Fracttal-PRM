@@ -246,9 +246,34 @@ def test_summary_403_for_other_partner_org(client, db_session):
     assert "not your organisation" in response.json()["detail"].lower()
 
 
-def test_summary_403_for_non_partner_admin_role(client, db_session):
+def test_summary_200_for_partner_user_own_org(client, db_session):
+    """FPRM-461 (Sprint 26 PR B): partner_user may view their OWN org's summary."""
     org = _make_org(db_session)
+    _make_deal(db_session, org.id, "submitted")
     user = _make_user(db_session, UserRole.partner_user.value, partner_org_id=org.id)
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    response = client.get(f"/partners/{org.id}/dashboard/summary")
+    assert response.status_code == 200
+    assert response.json()["deals"]["submitted"] == 1
+
+
+def test_summary_403_for_partner_user_other_org(client, db_session):
+    """FPRM-461: a partner_user cannot read another org's dashboard summary."""
+    org = _make_org(db_session)
+    other_org = _make_org(db_session)
+    user = _make_user(db_session, UserRole.partner_user.value, partner_org_id=other_org.id)
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    response = client.get(f"/partners/{org.id}/dashboard/summary")
+    assert response.status_code == 403
+    assert "not your organisation" in response.json()["detail"].lower()
+
+
+def test_summary_403_for_unknown_role(client, db_session):
+    """A user whose role is neither partner-side nor internal-view is denied."""
+    org = _make_org(db_session)
+    user = _make_user(db_session, UserRole.sales_rep.value, partner_org_id=None)
     app.dependency_overrides[get_current_user] = lambda: user
 
     response = client.get(f"/partners/{org.id}/dashboard/summary")
