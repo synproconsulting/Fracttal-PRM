@@ -1350,5 +1350,7 @@ Expect `200` (admin) — `accepted → sent` retract. A `channel_manager` token 
 
 *Sprint 26 hotfix (2026-06-22, PR #195): internal invite (`POST /internal/partner-users/invite`) wired to Resend + `token` removed (FPRM-463); `PATCH`/`POST /applications` empty-string → NULL coercion for numeric/boolean/date columns, e.g. `year_established` (FPRM-464). No migration (head stays 041). +4 tests (895 → 899). Folded into fix version 11033 / sprint 1006.*
 
-*Last updated: 2026-06-22 — Sprint 26 hotfix (PR #195): internal invite Resend wiring (FPRM-463) + application empty-string coercion (FPRM-464). Prior: Sprint 26 PR A (PR #194) Resend transport (AD-47) + PUBLIC_APP_URL.*
+*Sprint 26 PR B (2026-07-10, PR #196): `GET /partners/{id}/dashboard/summary` widened to `partner_user` own-org (FPRM-461, portal home banner now populates for partner_user); `GET /internal/partners` returns first-assigned `channel_manager_name` — sortable (unassigned last), in CSV export, no N+1; `enforce_cm_scope` NOT applied (roster read) (FPRM-465); Jira cleanup closed FPRM-462/463 + all shipped Sprint 21 items (FPRM-466). No migration (head stays 041). 899 → 906 tests. Fix version 11033 / sprint 1006.*
+
+*Last updated: 2026-07-10 — Sprint 26 PR B (PR #196): partner_user dashboard summary (FPRM-461) + Channel Manager column on /internal/partners (FPRM-465) + Jira cleanup (FPRM-466). Prior: Sprint 26 hotfix (PR #195) internal invite Resend wiring + application empty-string coercion.*
 *Update this file whenever a new operational lesson is learned — do not let lessons live only in console dialogs.*

@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from audit import log_audit_event
@@ -23,6 +24,7 @@ from sorting import apply_sort
 from models import (
     PartnerActivationChecklist,
     PartnerCategory,
+    PartnerChannelManager,
     PartnerOrganization,
     PartnerStatus,
     PartnerTier,
@@ -58,6 +60,57 @@ def _enum_value(value):
     return value.value if hasattr(value, "value") else value
 
 
+# FPRM-465 (Sprint 26 PR B) — "first-assigned" channel manager per partner org.
+# Definition: the earliest ``partner_channel_managers.assigned_at`` row
+# (tie-break lowest ``id``), joined to ``users.full_name``. The timestamp
+# column is ``assigned_at`` (this table has no ``created_at``).
+#
+# Sorting uses a correlated scalar subquery in ORDER BY (below), so pagination
+# stays correct and ``apply_sort``'s ``nullslast()`` puts unassigned orgs last
+# in BOTH directions. Display names are resolved separately in one batched
+# query (``_first_assigned_cm_names``) to avoid an N+1.
+_FIRST_CM_NAME = (
+    select(User.full_name)
+    .select_from(PartnerChannelManager)
+    .join(User, User.id == PartnerChannelManager.user_id)
+    .where(PartnerChannelManager.partner_org_id == PartnerOrganization.id)
+    .order_by(PartnerChannelManager.assigned_at.asc(), PartnerChannelManager.id.asc())
+    .limit(1)
+    .scalar_subquery()
+)
+
+
+def _first_assigned_cm_names(db: Session, partner_ids) -> dict:
+    """Batch-resolve the first-assigned CM name per partner org (no N+1).
+
+    Returns ``{partner_org_id: full_name}`` for orgs that have at least one
+    assignment; orgs with none are absent from the dict. First-assigned =
+    earliest ``assigned_at`` (tie-break lowest ``id``) — same definition as the
+    ``_FIRST_CM_NAME`` sort expression.
+    """
+    if not partner_ids:
+        return {}
+    rows = (
+        db.query(
+            PartnerChannelManager.partner_org_id,
+            User.full_name,
+        )
+        .join(User, User.id == PartnerChannelManager.user_id)
+        .filter(PartnerChannelManager.partner_org_id.in_(list(partner_ids)))
+        .order_by(
+            PartnerChannelManager.partner_org_id,
+            PartnerChannelManager.assigned_at.asc(),
+            PartnerChannelManager.id.asc(),
+        )
+        .all()
+    )
+    result: dict = {}
+    for partner_org_id, full_name in rows:
+        if partner_org_id not in result:  # first row per org = earliest assigned
+            result[partner_org_id] = full_name
+    return result
+
+
 _PARTNER_SORT = {
     "legal_name": PartnerOrganization.legal_name,
     "program_type": PartnerOrganization.program_type,
@@ -65,6 +118,7 @@ _PARTNER_SORT = {
     "tier": PartnerOrganization.tier,
     "status": PartnerOrganization.status,
     "created_at": PartnerOrganization.created_at,
+    "channel_manager_name": _FIRST_CM_NAME,
 }
 
 
@@ -120,10 +174,11 @@ def list_partners_for_internal(
         if csv_org_ids:
             for c in db.query(PartnerActivationChecklist).filter(PartnerActivationChecklist.partner_org_id.in_(csv_org_ids)).all():
                 csv_activation[c.partner_org_id] = bool(c.activation_complete)
+        csv_cm_names = _first_assigned_cm_names(db, csv_org_ids)
         return csv_response(
             "partners_export",
             ["Legal Name", "Program Type", "Category", "Tier", "Status",
-             "Activation Complete", "Created Date"],
+             "Channel Manager", "Activation Complete", "Created Date"],
             [
                 [
                     p.legal_name or "",
@@ -131,6 +186,7 @@ def list_partners_for_internal(
                     _enum_value(p.partner_category),
                     _enum_value(p.tier) if p.tier is not None else "",
                     _enum_value(p.status),
+                    csv_cm_names.get(p.id) or "",
                     "Yes" if csv_activation.get(p.id, False) else "No",
                     p.created_at.date().isoformat() if p.created_at else "",
                 ]
@@ -162,6 +218,7 @@ def list_partners_for_internal(
             .all()
         )
         activation_map = {c.partner_org_id: bool(c.activation_complete) for c in checklists}
+    cm_names = _first_assigned_cm_names(db, org_ids)
 
     items = []
     for p in rows:
@@ -174,6 +231,7 @@ def list_partners_for_internal(
             "status": _enum_value(p.status),
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "activation_complete": activation_map.get(p.id, False),
+            "channel_manager_name": cm_names.get(p.id),
         })
 
     return {

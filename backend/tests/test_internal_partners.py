@@ -2,6 +2,7 @@
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,6 +18,7 @@ import models  # noqa: F401
 from models import (
     PartnerActivationChecklist,
     PartnerCategory,
+    PartnerChannelManager,
     PartnerOrganization,
     PartnerStatus,
     PartnerTier,
@@ -101,6 +103,30 @@ def _make_org(db, name, *, status=PartnerStatus.active,
 
 def _caller(user: User):
     app.dependency_overrides[get_current_user] = lambda: user
+
+
+def _make_cm(db, full_name: str) -> User:
+    u = User(
+        id=uuid.uuid4(),
+        email=f"cm-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password="x",
+        full_name=full_name,
+        role=UserRole.channel_manager.value,
+        is_active=True,
+    )
+    db.add(u); db.commit(); db.refresh(u)
+    return u
+
+
+def _assign_cm(db, org, cm, assigned_at) -> PartnerChannelManager:
+    row = PartnerChannelManager(
+        id=uuid.uuid4(),
+        partner_org_id=org.id,
+        user_id=cm.id,
+        assigned_at=assigned_at,
+    )
+    db.add(row); db.commit(); db.refresh(row)
+    return row
 
 
 # ----------------------------------------------------------------------
@@ -196,3 +222,95 @@ def test_list_partners_forbidden_for_partner_admin(client, db_session):
     _caller(pa)
     r = client.get("/internal/partners")
     assert r.status_code == 403
+
+
+# ---- FPRM-465 — Channel Manager column ---------------------------------
+
+
+def _item_by_name(body, name):
+    return next(i for i in body["items"] if i["legal_name"] == name)
+
+
+def test_channel_manager_name_first_assigned_wins(client, db_session):
+    """Two assignments on one org → the earliest-assigned CM's name is shown."""
+    admin = _make_user(db_session, UserRole.system_admin)
+    org = _make_org(db_session, "Acme Co")
+    first = _make_cm(db_session, "First Manager")
+    second = _make_cm(db_session, "Second Manager")
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    # Insert the later assignment first to prove ordering is by assigned_at,
+    # not insertion order.
+    _assign_cm(db_session, org, second, base + timedelta(days=5))
+    _assign_cm(db_session, org, first, base)
+    _caller(admin)
+
+    r = client.get("/internal/partners")
+    assert r.status_code == 200
+    assert _item_by_name(r.json(), "Acme Co")["channel_manager_name"] == "First Manager"
+
+
+def test_channel_manager_name_null_when_unassigned(client, db_session):
+    admin = _make_user(db_session, UserRole.system_admin)
+    _make_org(db_session, "Lonely Co")
+    _caller(admin)
+
+    r = client.get("/internal/partners")
+    assert r.status_code == 200
+    assert _item_by_name(r.json(), "Lonely Co")["channel_manager_name"] is None
+
+
+def test_channel_manager_name_resolved_per_org_on_page(client, db_session):
+    """Multi-org page: each org resolves its own first-assigned CM (no leak)."""
+    admin = _make_user(db_session, UserRole.system_admin)
+    org_a = _make_org(db_session, "Org A")
+    org_b = _make_org(db_session, "Org B")
+    _make_org(db_session, "Org C")  # unassigned
+    cm_a = _make_cm(db_session, "Manager A")
+    cm_b = _make_cm(db_session, "Manager B")
+    base = datetime(2026, 2, 1, 9, 0, 0)
+    _assign_cm(db_session, org_a, cm_a, base)
+    _assign_cm(db_session, org_b, cm_b, base + timedelta(hours=1))
+    _caller(admin)
+
+    body = client.get("/internal/partners", params={"page_size": 50}).json()
+    assert _item_by_name(body, "Org A")["channel_manager_name"] == "Manager A"
+    assert _item_by_name(body, "Org B")["channel_manager_name"] == "Manager B"
+    assert _item_by_name(body, "Org C")["channel_manager_name"] is None
+
+
+def test_channel_manager_sort_puts_unassigned_last_both_directions(client, db_session):
+    admin = _make_user(db_session, UserRole.system_admin)
+    org_z = _make_org(db_session, "Zeta Co")
+    org_a = _make_org(db_session, "Alpha Co")
+    _make_org(db_session, "Nomanager Co")  # unassigned
+    cm_z = _make_cm(db_session, "Zoe Manager")
+    cm_a = _make_cm(db_session, "Aaron Manager")
+    base = datetime(2026, 3, 1, 9, 0, 0)
+    _assign_cm(db_session, org_z, cm_z, base)
+    _assign_cm(db_session, org_a, cm_a, base)
+    _caller(admin)
+
+    asc = client.get("/internal/partners", params={
+        "sort_by": "channel_manager_name", "sort_dir": "asc", "page_size": 50}).json()
+    names_asc = [i["channel_manager_name"] for i in asc["items"]]
+    assert names_asc == ["Aaron Manager", "Zoe Manager", None]
+
+    desc = client.get("/internal/partners", params={
+        "sort_by": "channel_manager_name", "sort_dir": "desc", "page_size": 50}).json()
+    names_desc = [i["channel_manager_name"] for i in desc["items"]]
+    # Unassigned stays LAST even in desc (nullslast in both directions).
+    assert names_desc == ["Zoe Manager", "Aaron Manager", None]
+
+
+def test_channel_manager_included_in_csv_export(client, db_session):
+    admin = _make_user(db_session, UserRole.system_admin)
+    org = _make_org(db_session, "Csv Co")
+    cm = _make_cm(db_session, "Csv Manager")
+    _assign_cm(db_session, org, cm, datetime(2026, 4, 1, 9, 0, 0))
+    _caller(admin)
+
+    r = client.get("/internal/partners", params={"export": "csv"})
+    assert r.status_code == 200
+    text = r.content.decode("utf-8")
+    assert "Channel Manager" in text.splitlines()[0]
+    assert "Csv Manager" in text

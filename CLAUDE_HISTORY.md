@@ -2998,3 +2998,64 @@ Two bugs found during Sprint 26 PR A live verification, folded into the existing
 ### FPRM-464 live verification (gating)
 Sending an internal invite via Channel Ops → Partner Users → + Invite User to a real inbox, confirming the email lands from `noreply@contact.synproconsulting.co` and the accept-invite link works, closes both FPRM-463 **and** FPRM-462 (the deferred live-invite verification). Recorded in the PR closeout.
 
+---
+
+## Sprint 26 PR B — partner_user dashboard banner + Channel Manager column + Jira cleanup
+
+**PR:** #196 · **Migration head:** 041 (unchanged) · **Tests:** 899 → **906** · **Fix Version ID:** `11033` (Sprint 26 — existing) · **Native Sprint ID:** `1006`
+
+Second PR of Sprint 26. Two small product widenings plus a Jira/docs reconciliation. No migration; `requirements.txt` untouched; CORS / `FRONTEND_URL` untouched; `enforce_cm_scope` / `CM_SCOPED_ACTIONS` untouched; no new AD.
+
+### FPRM-461 — dashboard summary widened to partner_user own-org
+- `GET /partners/{id}/dashboard/summary` (`partners_router.py`) was `partner_admin`-only on the partner side; now `partner_admin` **and** `partner_user` may read their **own org** (`current_user.partner_org_id == partner_id`, enforced in the handler per AD-9 — never in `require_permission`). Internal-view roles (`system_admin`, `channel_ops_admin`, `channel_manager`) unchanged; cross-org partner access still 403s. Mirrors the FPRM-458 pipeline widening. The internal roll-up `GET /internal/dashboard/summary` was **not** touched.
+- Frontend: `PartnerHome.jsx` already fetched the summary unconditionally for any authenticated user with a `partner_org_id`, so a `partner_user` previously got a 403 (banner blank) and now gets 200 (banner populated) — **no JSX change required**.
+- Tests (`test_partner_dashboard.py`): replaced the obsolete `test_summary_403_for_non_partner_admin_role` (which asserted own-org `partner_user` → 403) with `test_summary_200_for_partner_user_own_org` (→ 200), `test_summary_403_for_partner_user_other_org` (cross-org → 403), and `test_summary_403_for_unknown_role` (a `sales_rep` → 403). `test_tenant_isolation_sweep.py` `dashboard_summary` entry (org-A `partner_admin` vs org-B) stays green.
+
+### FPRM-465 — Channel Manager column on GET /internal/partners
+- `internal_partners_router.py` list now returns a nullable **`channel_manager_name`** per org = the *first-assigned* channel manager (earliest `partner_channel_managers.assigned_at`, tie-break lowest `id`, joined to `users.full_name`).
+- **No N+1:** display names resolved in one batched query (`_first_assigned_cm_names`, reduced to first-per-org in Python) for the page's org ids; the CSV export path resolves the same way for its full result set and gains a **Channel Manager** column (header order: …, Status, **Channel Manager**, Activation Complete, Created Date).
+- **Sortable server-side:** a correlated scalar subquery `_FIRST_CM_NAME` is added to `_PARTNER_SORT` under key `channel_manager_name`, so `apply_sort` orders by it at the DB level (pagination stays correct) and its existing `nullslast()` puts unassigned orgs **last in both asc and desc**.
+- **Scope:** `enforce_cm_scope` is deliberately NOT added — `/internal/partners` is a roster read, not part of the AD-45 `CM_SCOPED_ACTIONS` set; CM partner-list visibility is unchanged.
+- Frontend (`InternalPartnerList.jsx`): sortable **Channel Manager** column via `SortableTh` (AD-28) placed after Status, `—` when unassigned; empty-state `colSpan` bumped (8/9). CSV download is the backend export, so it inherits the new column. No summary cards (AD-31 — roster page).
+- **NB:** the assignment table's timestamp column is `assigned_at` (this table has no `created_at`, which the prompt assumed); "first-assigned" is defined against `assigned_at`.
+- Tests (`test_internal_partners.py`, +5): two-assignments → earliest name (later row inserted first to prove ordering is by `assigned_at`, not insert order); zero → `null`; multi-org page each resolves its own CM (no leak, incl. an unassigned org); sort asc/desc puts unassigned last in both directions; CSV includes the column + value. `test_csv_exports.py` header expectation updated.
+
+### FPRM-466 — Jira cleanup + docs reconciliation
+- Created this PR: **FPRM-465** (Story, CM column) and **FPRM-466** (Task, this cleanup), both linked to Epic FPRM-299 and Sprint 26 (fix version 11033 / native 1006). The prompt assumed FPRM-465 already existed; the actual last key had been **FPRM-464**, so 465 was minted here (discrepancy resolved in-action).
+- **FPRM-462 → Done, FPRM-463 → Done** (both live-verified per the Sprint 26 hotfix closeout).
+- Audited every **open** Sprint 21 item (fixVersion Sprint 21 / native 841) against the codebase + PR history and closed all confirmed-shipped ones. No shipped-but-unrecorded item surfaced (Sprint 21 is fully covered by AD-33 + the CLAUDE_HISTORY Sprint 21 entry), so no reconciling doc note was needed beyond this entry.
+
+**FPRM-466 audit table** (each key → action + evidence):
+
+| Key | Type | Action | Evidence |
+|---|---|---|---|
+| FPRM-462 | Story | Done | Resend transport shipped (PR #194) + live-verified in the FPRM-463/464 hotfix closeout |
+| FPRM-463 | Bug | Done | Internal-invite Resend wiring shipped (PR #195) + live-verified |
+| FPRM-332 | Story | Done | Migrations 034/035/036 present in `backend/alembic/versions/` |
+| FPRM-333 | Sub-task | Done | `034_extend_partner_documents.py` |
+| FPRM-334 | Sub-task | Done | `035_create_document_references.py` + `DocumentReference` model |
+| FPRM-335 | Sub-task | Done | `036_backfill_drop_quote_documents.py` (DROPs `quote_documents`) |
+| FPRM-336 | Story | Done | `documents_router.py` registered in `main.py`; unified models shipped |
+| FPRM-337 | Sub-task | Done | `PartnerDocument` + `DocumentReference` models in `models.py` |
+| FPRM-338 | Sub-task | Done | `documents_router.py` (upload/list/metadata) |
+| FPRM-339 | Sub-task | Done | document-references handling in `documents_router.py` |
+| FPRM-340 | Sub-task | Done | migration 036 drops `quote_documents`; legacy endpoints retired (AD-33) |
+| FPRM-341 | Story | Done | quote doc picker + acceptance gate (refined in Sprint 21 hotfix FPRM-355) |
+| FPRM-342 | Sub-task | Done | acceptance gate uses `document_references` (AD-33) |
+| FPRM-343 | Sub-task | Done | `deal_status` on `GET /partners/{id}/quotes` (`quotes_router`, "Sprint 21") |
+| FPRM-344 | Sub-task | Done | `GET /internal/quotes/export` present in `quotes_router` |
+| FPRM-345 | Sub-task | Done | frontend picker + Export CSV (`PartnerDocuments.jsx`; FPRM-355/357) |
+| FPRM-346 | Story | Done | `PartnerDocuments.jsx` (portal) rebuilt on unified API |
+| FPRM-347 | Sub-task | Done | `PartnerDocuments.jsx` unified-API rebuild |
+| FPRM-348 | Sub-task | Done | internal document review rewired (Sprint 21 hotfix FPRM-356) |
+| FPRM-349 | Story | Done | Sprint 21 docs entry present in CLAUDE_HISTORY.md |
+| FPRM-350 | Sub-task | Done | AD-33 in PROJECT_CONTEXT.md + CLAUDE.md |
+| FPRM-351 | Sub-task | Done | CLAUDE_HISTORY.md Sprint 21 entry |
+| FPRM-352 | Sub-task | Done | RUNBOOK.md Sprint 21 operational notes |
+
+(FPRM-353–357 were already Done. No Epic — FPRM-299/175/121/74 — and no unshipped item was closed.)
+
+### Lessons
+1. **Audit against artefacts, not the ticket board.** Sprint 21's stories/subtasks sat "In Progress"/"To Do" long after the work merged; the codebase (migrations, models, endpoints, components) and the CLAUDE_HISTORY entry are the source of truth for "shipped," not the Jira column. Verify each key against a concrete artefact before closing — never bulk-close.
+2. **A prompt's "last key" can be stale.** The prompt named FPRM-465 as pre-existing; the board's real max was FPRM-464. Creating the ticket in-action (it deterministically took key 465) resolved it without a follow-up, per the flag-and-fix-now rule.
+
