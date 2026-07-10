@@ -13,6 +13,18 @@ Every Claude Code prompt generated for this project must contain all of the foll
 
 ---
 
+### Prompt header — Model declaration (MANDATORY — top of every prompt)
+
+Every generated Claude Code prompt must declare the model explicitly in a header line at the very top, before Section 1, e.g.:
+
+```
+# Model: Claude Sonnet 5 (claude-sonnet-5) · <one-line PR / migration summary>
+```
+
+**Claude Sonnet 5 (`claude-sonnet-5`) is the default development model for this project.** Every prompt defaults to Sonnet 5 unless a specific sprint's planning session explicitly selects a different model — in which case name that model in the header instead. Never omit the model header.
+
+---
+
 ### SECTION 1 — Pre-flight sync (MANDATORY — always first)
 
 Every prompt must open with:
